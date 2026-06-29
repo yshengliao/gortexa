@@ -20,7 +20,9 @@ import (
 )
 
 // clone returns a deep copy so callers (and concurrent readers) never share a
-// pointer with the live store.
+// pointer with the live store. This is the store's mutation-isolation boundary
+// and is intentionally kept despite the per-call copy cost (see
+// BenchmarkResourceClone); removing it would let a caller mutate stored state.
 func clone(r *resourcev1.Resource) *resourcev1.Resource {
 	return proto.Clone(r).(*resourcev1.Resource)
 }

@@ -33,7 +33,14 @@ const (
 	CatUnavailable        Category = "unavailable"
 	CatUnimplemented      Category = "unimplemented"
 	CatInternal           Category = "internal"
+	CatCanceled           Category = "canceled"
+	CatOutOfRange         Category = "out_of_range"
+	CatDataLoss           Category = "data_loss"
 )
+
+// statusClientClosedRequest is the (non-standard) HTTP status used by gateways
+// for a client-canceled request; net/http has no constant for it.
+const statusClientClosedRequest = 499
 
 // Mapping is one row of the error table.
 type Mapping struct {
@@ -59,6 +66,10 @@ func DefaultMappings() []Mapping {
 		{CatUnavailable, codes.Unavailable, http.StatusServiceUnavailable, true, "unavailable"},
 		{CatUnimplemented, codes.Unimplemented, http.StatusNotImplemented, false, "unimplemented"},
 		{CatInternal, codes.Internal, http.StatusInternalServerError, false, "internal error"},
+		// Codes that previously fell through to Internal/500.
+		{CatCanceled, codes.Canceled, statusClientClosedRequest, false, "canceled"},
+		{CatOutOfRange, codes.OutOfRange, http.StatusBadRequest, false, "out of range"},
+		{CatDataLoss, codes.DataLoss, http.StatusInternalServerError, false, "data loss"},
 	}
 }
 

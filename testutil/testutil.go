@@ -126,7 +126,9 @@ func GoleakOptions() []goleak.Option {
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/grpcsync.(*CallbackSerializer).run"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
-		goleak.IgnoreAnyFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
+		// IgnoreTopFunction (not IgnoreAnyFunction) so a real RPC goroutine parked
+		// deeper in a stack that merely passes through controlBuffer.get isn't masked.
+		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
 	}
 }
 

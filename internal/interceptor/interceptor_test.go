@@ -2,6 +2,7 @@ package interceptor_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -15,6 +16,35 @@ import (
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 	"github.com/yshengliao/gortexa/internal/interceptor"
 )
+
+func TestValidRequestID(t *testing.T) {
+	for _, ok := range []string{"abc-123", "a", strings.Repeat("a", 128), "req_1.2-3"} {
+		if !interceptor.ValidRequestID(ok) {
+			t.Errorf("%q should be valid", ok)
+		}
+	}
+	for _, bad := range []string{"", strings.Repeat("a", 129), "has space", "new\nline", "emoji🙂", "semi;colon"} {
+		if interceptor.ValidRequestID(bad) {
+			t.Errorf("%q should be invalid", bad)
+		}
+	}
+}
+
+// An invalid/oversized inbound X-Request-Id is dropped and a fresh id is minted,
+// rather than propagated and reflected.
+func TestRequestIDDropsInvalidInbound(t *testing.T) {
+	ic := interceptor.RequestID()
+	bad := strings.Repeat("x", 200)
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(interceptor.RequestIDMetadataKey, bad))
+	var seen string
+	_, _ = ic(ctx, nil, unaryInfo("/svc/M"), func(c context.Context, _ any) (any, error) {
+		seen, _ = interceptor.RequestIDFrom(c)
+		return nil, nil
+	})
+	if seen == bad || seen == "" {
+		t.Fatalf("invalid inbound id should be replaced by a fresh one, got %q", seen)
+	}
+}
 
 var jwtSecret = []byte("0123456789abcdef0123456789abcdef")
 

@@ -18,6 +18,12 @@ type LoadSheddingConfig struct {
 	MaxInflight int
 	MaxCPU      float64
 	CPUSampler  func() float64
+	// Skip exempts a method from admission counting (e.g. control-plane health
+	// checks). Critical for long-lived server streams: without it, unauthenticated
+	// Health.Watch streams — which hold an inflight slot for the whole stream
+	// lifetime and run before auth — could occupy MaxInflight and shed all other
+	// RPCs. nil skips nothing.
+	Skip SkipFunc
 }
 
 // LoadShedder rejects excess load with ResourceExhausted.
@@ -51,6 +57,9 @@ func (s *LoadShedder) admit() (release func(), err error) {
 // Unary returns the unary interceptor.
 func (s *LoadShedder) Unary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		if s.cfg.Skip != nil && s.cfg.Skip(info.FullMethod) {
+			return handler(ctx, req)
+		}
 		release, err := s.admit()
 		if err != nil {
 			return nil, err
@@ -63,6 +72,9 @@ func (s *LoadShedder) Unary() grpc.UnaryServerInterceptor {
 // Stream returns the stream interceptor.
 func (s *LoadShedder) Stream() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		if s.cfg.Skip != nil && s.cfg.Skip(info.FullMethod) {
+			return handler(srv, ss)
+		}
 		release, err := s.admit()
 		if err != nil {
 			return err

@@ -61,6 +61,10 @@ type Bridge struct {
 	reg   *apperr.Registry
 	tools map[string]ToolIR
 	order []string
+	// mcpTools is the tools/list payload, downgraded once at construction. The
+	// tool set is fixed for the bridge's lifetime, so tools/list returns this
+	// cached slice instead of re-downgrading every schema per request.
+	mcpTools []MCPTool
 }
 
 // NewBridge builds a bridge exposing the ai.v1-annotated methods of the given
@@ -79,6 +83,10 @@ func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor,
 		}
 	}
 	sort.Strings(b.order)
+	b.mcpTools = make([]MCPTool, 0, len(b.order))
+	for _, name := range b.order {
+		b.mcpTools = append(b.mcpTools, DowngradeMCP(b.tools[name]))
+	}
 	return b, nil
 }
 
@@ -125,13 +133,31 @@ func (b *Bridge) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
-			b.handlePost(w, r)
+			b.servePost(w, r)
 		case http.MethodGet:
 			b.handleGet(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+}
+
+// servePost runs handlePost under panic recovery so a panic in dispatch/toolsCall
+// (protojson, dynamicpb, etc.) becomes a clean JSON-RPC -32603 instead of an
+// abruptly dropped connection — mirroring the gRPC Recovery interceptor for the
+// HTTP/JSON-RPC surface. A panic occurs before writeRPC runs, so no response has
+// been written yet.
+func (b *Bridge) servePost(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			writeRPC(w, r, rpcResponse{
+				JSONRPC: "2.0",
+				ID:      json.RawMessage("null"),
+				Error:   &rpcError{Code: -32603, Message: "internal error"},
+			})
+		}
+	}()
+	b.handlePost(w, r)
 }
 
 func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
@@ -372,11 +398,7 @@ func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
 	case "ping":
 		resp.Result = map[string]any{}
 	case "tools/list":
-		tools := make([]MCPTool, 0, len(b.order))
-		for _, name := range b.order {
-			tools = append(tools, DowngradeMCP(b.tools[name]))
-		}
-		resp.Result = map[string]any{"tools": tools}
+		resp.Result = map[string]any{"tools": b.mcpTools}
 	case "tools/call":
 		result, rerr := b.toolsCall(r, req.Params)
 		if rerr != nil {
