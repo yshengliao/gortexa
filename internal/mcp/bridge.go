@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -24,6 +26,7 @@ import (
 const (
 	protocolVersion = "2025-03-26"
 	maxRequestBytes = 1 << 20
+	sessionHeader   = "Mcp-Session-Id"
 )
 
 // Bridge serves an MCP Streamable-HTTP endpoint backed by a gRPC loopback.
@@ -32,13 +35,21 @@ type Bridge struct {
 	reg   *apperr.Registry
 	tools map[string]ToolIR
 	order []string
+
+	sessionsMu sync.RWMutex
+	sessions   map[string]sessionState
+}
+
+type sessionState struct {
+	createdAt time.Time
+	lastSeen  time.Time
 }
 
 // NewBridge builds a bridge exposing the ai.v1-annotated methods of the given
 // services. tools/call dispatches over conn (which should be the in-process
 // loopback so the full interceptor chain applies).
 func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor, reg *apperr.Registry) (*Bridge, error) {
-	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}}
+	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}, sessions: map[string]sessionState{}}
 	for _, svc := range services {
 		irs, err := BuildIR(svc)
 		if err != nil {
@@ -118,7 +129,10 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Method == "initialize" {
-		w.Header().Set("Mcp-Session-Id", newSessionID())
+		w.Header().Set(sessionHeader, b.createSession())
+	} else if !b.touchSession(r.Header.Get(sessionHeader)) {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32001, Message: "invalid MCP session"}})
+		return
 	}
 
 	// Notifications (no id) get acknowledged with 202 and no body.
@@ -130,6 +144,11 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
+	if !b.touchSession(r.Header.Get(sessionHeader)) {
+		http.Error(w, "invalid MCP session", http.StatusUnauthorized)
+		return
+	}
+
 	// A bare GET opens an SSE stream for server→client messages. Gortexa emits
 	// none today, so it stays open until the client disconnects.
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -241,6 +260,31 @@ func writeRPC(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf)
+}
+
+func (b *Bridge) createSession() string {
+	id := newSessionID()
+	now := time.Now()
+	b.sessionsMu.Lock()
+	b.sessions[id] = sessionState{createdAt: now, lastSeen: now}
+	b.sessionsMu.Unlock()
+	return id
+}
+
+func (b *Bridge) touchSession(id string) bool {
+	if id == "" {
+		return false
+	}
+	b.sessionsMu.Lock()
+	state, ok := b.sessions[id]
+	if !ok {
+		b.sessionsMu.Unlock()
+		return false
+	}
+	state.lastSeen = time.Now()
+	b.sessions[id] = state
+	b.sessionsMu.Unlock()
+	return true
 }
 
 func newSessionID() string {

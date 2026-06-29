@@ -28,7 +28,8 @@ func TestDowngradeNilSchema(t *testing.T) {
 
 func TestBridgePing(t *testing.T) {
 	ts := newBridgeServer(t)
-	ping := rpc(t, ts.URL, "", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"})
+	sessionID := initializeSession(t, ts.URL)
+	ping, _ := rpcWithSession(t, ts.URL, "", sessionID, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"})
 	if ping["result"] == nil {
 		t.Fatalf("ping result missing: %v", ping)
 	}
@@ -47,9 +48,24 @@ func TestBridgeMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestBridgeGetOpensSSE(t *testing.T) {
+func TestBridgeGetRequiresValidSession(t *testing.T) {
 	ts := newBridgeServer(t)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("GET without session = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestBridgeGetOpensSSE(t *testing.T) {
+	ts := newBridgeServer(t)
+	sessionID := initializeSession(t, ts.URL)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Mcp-Session-Id", sessionID)
 	resp, err := http.DefaultClient.Do(req) // returns once headers are flushed
 	if err != nil {
 		t.Fatal(err)
