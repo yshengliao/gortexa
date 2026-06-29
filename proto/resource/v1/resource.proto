@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+// Package resource.v1 is the sample domain that drives Gortexa's HTTP gateway,
+// MCP bridge and AI-skill codegen end-to-end.
+package resource.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "ai/v1/annotations.proto";
+
+option go_package = "github.com/yshengliao/gortexa/gen/resource/v1;resourcev1";
+
+// Status is the lifecycle state of a Resource. Enums downgrade to string in
+// every AI-provider schema.
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_ARCHIVED = 2;
+}
+
+// Resource is the entity managed by ResourceService.
+message Resource {
+  string id = 1;
+  string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 128}];
+  string owner = 3 [(ai.v1.ai_field) = {description: "Owning user id."}];
+  Status status = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message CreateResourceRequest {
+  Resource resource = 1 [(buf.validate.field).required = true];
+}
+
+message GetResourceRequest {
+  string id = 1 [
+    (buf.validate.field).string.min_len = 1,
+    (ai.v1.ai_field) = {description: "Resource id (uuid).", required: true}
+  ];
+}
+
+message ListResourcesRequest {
+  int32 page_size = 1 [(buf.validate.field).int32 = {gte: 0, lte: 1000}];
+  string page_token = 2;
+  string owner = 3;
+}
+
+message ListResourcesResponse {
+  repeated Resource resources = 1;
+  string next_page_token = 2;
+}
+
+message UpdateResourceRequest {
+  Resource resource = 1 [(buf.validate.field).required = true];
+}
+
+message DeleteResourceRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// ResourceService is a CRUD service exercising every gateway verb plus the
+// AI-tool annotations.
+service ResourceService {
+  // CreateResource creates a resource. Mutating tool.
+  rpc CreateResource(CreateResourceRequest) returns (Resource) {
+    option (google.api.http) = {
+      post: "/v1/resources"
+      body: "resource"
+    };
+    option (ai.v1.ai_tool) = {
+      expose: true
+      name: "create_resource"
+      description: "Create a new resource. Use when a resource does not yet exist."
+      destructive: true
+    };
+  }
+
+  // GetResource fetches a single resource by id. Read-only tool.
+  rpc GetResource(GetResourceRequest) returns (Resource) {
+    option (google.api.http) = {get: "/v1/resources/{id}"};
+    option (ai.v1.ai_tool) = {
+      expose: true
+      name: "get_resource"
+      description: "Fetch a single resource by id and return its current state."
+      read_only: true
+    };
+  }
+
+  // ListResources lists resources, optionally filtered by owner. Read-only tool.
+  rpc ListResources(ListResourcesRequest) returns (ListResourcesResponse) {
+    option (google.api.http) = {get: "/v1/resources"};
+    option (ai.v1.ai_tool) = {
+      expose: true
+      name: "list_resources"
+      description: "List resources, optionally filtered by owner, with paging."
+      read_only: true
+    };
+  }
+
+  // UpdateResource partially updates a resource (PATCH + nested path + body).
+  rpc UpdateResource(UpdateResourceRequest) returns (Resource) {
+    option (google.api.http) = {
+      patch: "/v1/resources/{resource.id}"
+      body: "resource"
+    };
+  }
+
+  // DeleteResource permanently deletes a resource. Destructive tool.
+  rpc DeleteResource(DeleteResourceRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/v1/resources/{id}"};
+    option (ai.v1.ai_tool) = {
+      expose: true
+      name: "delete_resource"
+      description: "Permanently delete a resource by id."
+      destructive: true
+    };
+  }
+}

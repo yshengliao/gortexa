@@ -1,0 +1,18 @@
+version: v2
+modules:
+  - path: proto
+deps:
+  - buf.build/googleapis/googleapis
+  - buf.build/bufbuild/protovalidate
+lint:
+  use:
+    - STANDARD
+  except:
+    # Google-style resource RPCs return the resource (or Empty) directly rather
+    # than a dedicated <Method>Response message; these two rules conflict with
+    # that idiom, exactly as googleapis itself disables them.
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+breaking:
+  use:
+    - FILE
