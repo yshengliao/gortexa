@@ -65,3 +65,28 @@ func TestStateString(t *testing.T) {
 		}
 	}
 }
+
+type errorWatch struct {
+	grpc.ServerStream
+	ctx context.Context
+	err error
+}
+
+func (e *errorWatch) Send(*grpc_health_v1.HealthCheckResponse) error {
+	return e.err
+}
+
+func (e *errorWatch) Context() context.Context {
+	return e.ctx
+}
+
+func TestGRPCHealthWatchSendError(t *testing.T) {
+	r := health.NewRegistry()
+	srv := r.GRPCHealthServer()
+
+	expectedErr := context.DeadlineExceeded
+	ew := &errorWatch{ctx: context.Background(), err: expectedErr}
+	if err := srv.Watch(&grpc_health_v1.HealthCheckRequest{}, ew); err != expectedErr {
+		t.Fatalf("Watch() err = %v, want %v", err, expectedErr)
+	}
+}
