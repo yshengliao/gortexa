@@ -23,7 +23,7 @@ func writeFile(t *testing.T, name, body string) string {
 
 func TestThreeLayerPrecedence(t *testing.T) {
 	// default server.addr = ":8080"; YAML overrides; env overrides YAML.
-	yamlFile := writeFile(t, "config.yaml", "server:\n  addr: \":9000\"\n  shutdown_timeout: 30s\nlog:\n  level: warn\n")
+	yamlFile := writeFile(t, "config.yaml", "server:\n  addr: \":9000\"\n  shutdown_timeout: 30s\nauth:\n  audience: gortexa-api\nlog:\n  level: warn\n")
 	environ := func() []string {
 		return []string{
 			"GORTEXA_SERVER__ADDR=:7000",
@@ -48,6 +48,9 @@ func TestThreeLayerPrecedence(t *testing.T) {
 	}
 	if c.Auth.JWTSecret.Reveal() != validSecret {
 		t.Errorf("jwt secret not loaded from env")
+	}
+	if c.Auth.Audience != "gortexa-api" {
+		t.Errorf("auth audience = %q, want gortexa-api", c.Auth.Audience)
 	}
 }
 

@@ -10,6 +10,7 @@ auth:
   # Dev-only secret (>= 32 bytes). REPLACE in any real deployment.
   jwt_secret: "dev-only-insecure-secret-change-me-please"
   issuer: "gortexa"
+  # audience: "gortexa-clients"
   ttl: 1h
 
 log:

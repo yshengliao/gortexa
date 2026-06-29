@@ -6,6 +6,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/yshengliao/gortexa/internal/auth"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
@@ -81,5 +83,59 @@ func TestBearerTokenAndContext(t *testing.T) {
 	ctx := auth.WithClaims(context.Background(), &auth.Claims{})
 	if _, ok := auth.ClaimsFrom(ctx); !ok {
 		t.Fatal("ClaimsFrom should find stored claims")
+	}
+}
+
+func TestSignVerifyAudience(t *testing.T) {
+	v := auth.NewVerifier(secret, "gortexa", "gortexa-api")
+	tok, err := v.Sign("u", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := v.Verify(tok)
+	if err != nil {
+		t.Fatalf("token with configured audience should verify: %v", err)
+	}
+	if len(claims.Audience) != 1 || claims.Audience[0] != "gortexa-api" {
+		t.Fatalf("audience = %v, want gortexa-api", claims.Audience)
+	}
+
+	wrongAudience := auth.NewVerifier(secret, "gortexa", "other-api")
+	if _, err := wrongAudience.Verify(tok); !apperr.Is(err, apperr.CatUnauthenticated) {
+		t.Fatalf("wrong-audience err = %v, want Unauthenticated", err)
+	}
+}
+
+func TestSignSetsJWTTypeHeader(t *testing.T) {
+	v := auth.NewVerifier(secret, "gortexa")
+	tok, err := v.Sign("u", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, _, err := new(jwt.Parser).ParseUnverified(tok, &auth.Claims{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if typ := parsed.Header["typ"]; typ != "JWT" {
+		t.Fatalf("typ header = %v, want JWT", typ)
+	}
+}
+
+func TestVerifyRejectsUnexpectedTypeHeader(t *testing.T) {
+	claims := auth.Claims{RegisteredClaims: jwt.RegisteredClaims{
+		Subject:   "u",
+		Issuer:    "gortexa",
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tok.Header["typ"] = "not-jwt"
+	signed, err := tok.SignedString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := auth.NewVerifier(secret, "gortexa")
+	if _, err := v.Verify(signed); !apperr.Is(err, apperr.CatUnauthenticated) {
+		t.Fatalf("unexpected-typ err = %v, want Unauthenticated", err)
 	}
 }

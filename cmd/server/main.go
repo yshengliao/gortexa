@@ -60,7 +60,7 @@ func run() error {
 		return fmt.Errorf("setup metrics: %w", err)
 	}
 
-	verifier := auth.NewVerifier([]byte(cfg.Auth.JWTSecret.Reveal()), cfg.Auth.Issuer)
+	verifier := auth.NewVerifier([]byte(cfg.Auth.JWTSecret.Reveal()), cfg.Auth.Issuer, cfg.Auth.Audience)
 	set, err := interceptor.NewSet(interceptor.Config{
 		Logger:   log,
 		Verifier: verifier,

@@ -25,29 +25,39 @@ type Claims struct {
 
 // Verifier signs and verifies HS256 tokens for a fixed secret and issuer.
 type Verifier struct {
-	secret []byte
-	issuer string
+	secret   []byte
+	issuer   string
+	audience string
 }
 
 // NewVerifier builds a Verifier. The secret length policy (>= 32 bytes) is
 // enforced by config validation at startup.
-func NewVerifier(secret []byte, issuer string) *Verifier {
-	return &Verifier{secret: secret, issuer: issuer}
+func NewVerifier(secret []byte, issuer string, audience ...string) *Verifier {
+	var aud string
+	if len(audience) > 0 {
+		aud = audience[0]
+	}
+	return &Verifier{secret: secret, issuer: issuer, audience: aud}
 }
 
 // Sign issues a token for subject with the given roles and TTL.
 func (v *Verifier) Sign(subject string, roles []string, ttl time.Duration) (string, error) {
 	now := time.Now()
+	registered := jwt.RegisteredClaims{
+		Subject:   subject,
+		Issuer:    v.issuer,
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+	}
+	if v.audience != "" {
+		registered.Audience = jwt.ClaimStrings{v.audience}
+	}
 	claims := Claims{
-		Roles: roles,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   subject,
-			Issuer:    v.issuer,
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
-		},
+		Roles:            roles,
+		RegisteredClaims: registered,
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tok.Header["typ"] = "JWT"
 	signed, err := tok.SignedString(v.secret)
 	if err != nil {
 		return "", apperr.Wrap(apperr.CatInternal, "sign token", err)
@@ -63,7 +73,14 @@ func (v *Verifier) Verify(tokenStr string) (*Claims, error) {
 	if v.issuer != "" {
 		opts = append(opts, jwt.WithIssuer(v.issuer))
 	}
+	if v.audience != "" {
+		opts = append(opts, jwt.WithAudience(v.audience))
+	}
 	tok, err := jwt.ParseWithClaims(tokenStr, &claims, func(t *jwt.Token) (any, error) {
+		if typ, ok := t.Header["typ"].(string); ok && typ != "" && typ != "JWT" {
+			return nil, apperr.New(apperr.CatUnauthenticated, "unexpected token type")
+		}
+
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, apperr.New(apperr.CatUnauthenticated, "unexpected signing method")
 		}

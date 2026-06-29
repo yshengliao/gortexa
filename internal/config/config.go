@@ -46,6 +46,7 @@ type ServerConfig struct {
 type AuthConfig struct {
 	JWTSecret Secret        `koanf:"jwt_secret"`
 	Issuer    string        `koanf:"issuer"`
+	Audience  string        `koanf:"audience"`
 	TTL       time.Duration `koanf:"ttl"`
 }
 
