@@ -62,7 +62,7 @@ func rpc(t *testing.T, url, bearer string, payload map[string]any) map[string]an
 
 func token(t *testing.T) string {
 	t.Helper()
-	tok, err := auth.NewVerifier(testutil.DefaultSecret, "gortexa").Sign("tester", nil, time.Hour)
+	tok, err := auth.MustNewVerifier(testutil.DefaultSecret, "gortexa").Sign("tester", nil, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

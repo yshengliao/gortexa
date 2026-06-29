@@ -6,6 +6,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -29,10 +30,25 @@ type Verifier struct {
 	issuer string
 }
 
-// NewVerifier builds a Verifier. The secret length policy (>= 32 bytes) is
-// enforced by config validation at startup.
-func NewVerifier(secret []byte, issuer string) *Verifier {
-	return &Verifier{secret: secret, issuer: issuer}
+const minSecretBytes = 32
+
+// NewVerifier builds a Verifier with its own copy of the HS256 secret.
+func NewVerifier(secret []byte, issuer string) (*Verifier, error) {
+	if len(secret) < minSecretBytes {
+		return nil, fmt.Errorf("auth verifier secret must be at least %d bytes", minSecretBytes)
+	}
+	secretCopy := append([]byte(nil), secret...)
+	return &Verifier{secret: secretCopy, issuer: issuer}, nil
+}
+
+// MustNewVerifier builds a Verifier or panics. It is intended for startup paths
+// and test setup where construction failure should be fatal.
+func MustNewVerifier(secret []byte, issuer string) *Verifier {
+	v, err := NewVerifier(secret, issuer)
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 // Sign issues a token for subject with the given roles and TTL.

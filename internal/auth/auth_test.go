@@ -12,8 +12,36 @@ import (
 
 var secret = []byte("0123456789abcdef0123456789abcdef")
 
+func TestNewVerifierRejectsShortSecret(t *testing.T) {
+	if v, err := auth.NewVerifier([]byte("short secret"), "gortexa"); err == nil || v != nil {
+		t.Fatalf("NewVerifier with short secret = (%v, %v), want nil verifier and error", v, err)
+	}
+}
+
+func TestNewVerifierCopiesSecret(t *testing.T) {
+	secret := []byte("0123456789abcdef0123456789abcdef")
+	v, err := auth.NewVerifier(secret, "gortexa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := v.Sign("user-1", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range secret {
+		secret[i] = 'x'
+	}
+	claims, err := v.Verify(tok)
+	if err != nil {
+		t.Fatalf("verifier should not observe caller mutation: %v", err)
+	}
+	if claims.Subject != "user-1" {
+		t.Fatalf("subject = %q, want user-1", claims.Subject)
+	}
+}
+
 func TestSignVerifyRoundTrip(t *testing.T) {
-	v := auth.NewVerifier(secret, "gortexa")
+	v := auth.MustNewVerifier(secret, "gortexa")
 	tok, err := v.Sign("user-1", []string{"admin"}, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +56,7 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 }
 
 func TestVerifyRejectsTampered(t *testing.T) {
-	v := auth.NewVerifier(secret, "gortexa")
+	v := auth.MustNewVerifier(secret, "gortexa")
 	tok, _ := v.Sign("u", nil, time.Hour)
 	if _, err := v.Verify(tok + "x"); !apperr.Is(err, apperr.CatUnauthenticated) {
 		t.Fatalf("tampered token err = %v, want Unauthenticated", err)
@@ -36,18 +64,18 @@ func TestVerifyRejectsTampered(t *testing.T) {
 }
 
 func TestVerifyRejectsWrongSecret(t *testing.T) {
-	signer := auth.NewVerifier(secret, "gortexa")
+	signer := auth.MustNewVerifier(secret, "gortexa")
 	tok, _ := signer.Sign("u", nil, time.Hour)
-	other := auth.NewVerifier([]byte("ffffffffffffffffffffffffffffffff"), "gortexa")
+	other := auth.MustNewVerifier([]byte("ffffffffffffffffffffffffffffffff"), "gortexa")
 	if _, err := other.Verify(tok); !apperr.Is(err, apperr.CatUnauthenticated) {
 		t.Fatalf("wrong-secret err = %v, want Unauthenticated", err)
 	}
 }
 
 func TestVerifyRejectsWrongIssuer(t *testing.T) {
-	signer := auth.NewVerifier(secret, "evil")
+	signer := auth.MustNewVerifier(secret, "evil")
 	tok, _ := signer.Sign("u", nil, time.Hour)
-	v := auth.NewVerifier(secret, "gortexa")
+	v := auth.MustNewVerifier(secret, "gortexa")
 	if _, err := v.Verify(tok); !apperr.Is(err, apperr.CatUnauthenticated) {
 		t.Fatalf("wrong-issuer err = %v, want Unauthenticated", err)
 	}
@@ -56,7 +84,7 @@ func TestVerifyRejectsWrongIssuer(t *testing.T) {
 // TTL expiry is verified deterministically with a fake clock.
 func TestVerifyExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		v := auth.NewVerifier(secret, "gortexa")
+		v := auth.MustNewVerifier(secret, "gortexa")
 		tok, err := v.Sign("u", nil, time.Hour)
 		if err != nil {
 			t.Fatal(err)
