@@ -59,7 +59,13 @@ func (v *Verifier) Sign(subject string, roles []string, ttl time.Duration) (stri
 // to Unauthenticated with no internal detail leaked.
 func (v *Verifier) Verify(tokenStr string) (*Claims, error) {
 	var claims Claims
-	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{"HS256"})}
+	// WithExpirationRequired rejects tokens that omit `exp` (jwt/v5 otherwise
+	// treats a missing expiry as "never expires"). Every token Sign issues sets
+	// exp, so this only closes the door on forged/non-expiring tokens.
+	opts := []jwt.ParserOption{
+		jwt.WithValidMethods([]string{"HS256"}),
+		jwt.WithExpirationRequired(),
+	}
 	if v.issuer != "" {
 		opts = append(opts, jwt.WithIssuer(v.issuer))
 	}

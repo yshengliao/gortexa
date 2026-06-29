@@ -146,8 +146,17 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 		if !b.allow() {
 			return nil, apperr.New(apperr.CatUnavailable, "circuit open")
 		}
+		// Record the outcome in a defer so a panicking handler still counts. A
+		// panic unwinds past this frame to the outer Recovery interceptor, so a
+		// non-deferred record would be skipped entirely: the breaker would never
+		// see panic-induced failures (which map to Internal, a tripping category),
+		// and a half-open probe would never release its slot — permanently wedging
+		// the method open. Treat a panic as a failure; the panic keeps propagating
+		// after the defer runs, so Recovery still converts it to an Internal error.
+		success := false
+		defer func() { b.record(success) }()
 		resp, err := handler(ctx, req)
-		b.record(!isFailure(err))
+		success = !isFailure(err)
 		return resp, err
 	}
 }
@@ -162,8 +171,12 @@ func (c *CircuitBreaker) Stream() grpc.StreamServerInterceptor {
 		if !b.allow() {
 			return apperr.New(apperr.CatUnavailable, "circuit open")
 		}
+		// See Unary: record in a defer so a panicking handler still counts and a
+		// half-open probe slot is always released.
+		success := false
+		defer func() { b.record(success) }()
 		err := handler(srv, ss)
-		b.record(!isFailure(err))
+		success = !isFailure(err)
 		return err
 	}
 }

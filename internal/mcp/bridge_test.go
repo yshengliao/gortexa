@@ -85,6 +85,26 @@ func TestBridgeInitializeAndList(t *testing.T) {
 	}
 }
 
+func TestBridgeInitializeNegotiatesVersion(t *testing.T) {
+	ts := newBridgeServer(t)
+
+	// A supported protocol version is echoed back to the client.
+	got := rpc(t, ts.URL, "", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]any{"protocolVersion": "2024-11-05"}})
+	res, _ := got["result"].(map[string]any)
+	if res == nil || res["protocolVersion"] != "2024-11-05" {
+		t.Fatalf("supported version not echoed: %v", got)
+	}
+
+	// An unsupported version falls back to the server default.
+	got = rpc(t, ts.URL, "", map[string]any{"jsonrpc": "2.0", "id": 2, "method": "initialize",
+		"params": map[string]any{"protocolVersion": "1999-01-01"}})
+	res, _ = got["result"].(map[string]any)
+	if res == nil || res["protocolVersion"] != "2025-03-26" {
+		t.Fatalf("unsupported version should fall back to default: %v", got)
+	}
+}
+
 func TestBridgeToolsCallEnforcesAuth(t *testing.T) {
 	ts := newBridgeServer(t)
 
