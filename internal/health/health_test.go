@@ -40,6 +40,37 @@ func TestServingSemantics(t *testing.T) {
 	}
 }
 
+func TestSnapshot(t *testing.T) {
+	ctx := context.Background()
+	r := health.NewRegistry()
+
+	// Empty registry should yield an empty snapshot
+	snap := r.Snapshot(ctx)
+	if len(snap) != 0 {
+		t.Fatalf("empty registry snapshot length = %d, want 0", len(snap))
+	}
+
+	// Register checks with distinct states
+	r.Register("a", static(health.Healthy))
+	r.Register("b", static(health.Degraded))
+	r.Register("c", static(health.Unhealthy))
+
+	snap = r.Snapshot(ctx)
+	if len(snap) != 3 {
+		t.Fatalf("snapshot length = %d, want 3", len(snap))
+	}
+
+	if got := snap["a"]; got != health.Healthy {
+		t.Errorf("check 'a' state = %v, want Healthy", got)
+	}
+	if got := snap["b"]; got != health.Degraded {
+		t.Errorf("check 'b' state = %v, want Degraded", got)
+	}
+	if got := snap["c"]; got != health.Unhealthy {
+		t.Errorf("check 'c' state = %v, want Unhealthy", got)
+	}
+}
+
 func TestGRPCHealthBridge(t *testing.T) {
 	ctx := context.Background()
 	r := health.NewRegistry()
