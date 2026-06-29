@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/yshengliao/gortexa/internal/mcp"
@@ -49,7 +50,9 @@ func TestBridgeMethodNotAllowed(t *testing.T) {
 
 func TestBridgeGetOpensSSE(t *testing.T) {
 	ts := newBridgeServer(t)
+	sessionID := initializeSession(t, ts.URL)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
+	req.Header.Set("Mcp-Session-Id", sessionID)
 	resp, err := http.DefaultClient.Do(req) // returns once headers are flushed
 	if err != nil {
 		t.Fatal(err)
@@ -58,4 +61,21 @@ func TestBridgeGetOpensSSE(t *testing.T) {
 	if resp.Header.Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("GET content-type = %q, want text/event-stream", resp.Header.Get("Content-Type"))
 	}
+}
+
+func initializeSession(t *testing.T, url string) string {
+	t.Helper()
+	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	req, _ := http.NewRequest(http.MethodPost, url, body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	sessionID := resp.Header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		t.Fatal("initialize did not return Mcp-Session-Id")
+	}
+	return sessionID
 }

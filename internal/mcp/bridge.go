@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -24,7 +26,10 @@ import (
 const (
 	protocolVersion = "2025-03-26"
 	maxRequestBytes = 1 << 20
+	ssePingFrame    = ": ping\n\n"
 )
+
+var ssePingInterval = 25 * time.Second
 
 // Bridge serves an MCP Streamable-HTTP endpoint backed by a gRPC loopback.
 type Bridge struct {
@@ -32,13 +37,16 @@ type Bridge struct {
 	reg   *apperr.Registry
 	tools map[string]ToolIR
 	order []string
+
+	mu       sync.RWMutex
+	sessions map[string]struct{}
 }
 
 // NewBridge builds a bridge exposing the ai.v1-annotated methods of the given
 // services. tools/call dispatches over conn (which should be the in-process
 // loopback so the full interceptor chain applies).
 func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor, reg *apperr.Registry) (*Bridge, error) {
-	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}}
+	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}, sessions: map[string]struct{}{}}
 	for _, svc := range services {
 		irs, err := BuildIR(svc)
 		if err != nil {
@@ -118,7 +126,7 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Method == "initialize" {
-		w.Header().Set("Mcp-Session-Id", newSessionID())
+		w.Header().Set("Mcp-Session-Id", b.newSession())
 	}
 
 	// Notifications (no id) get acknowledged with 202 and no body.
@@ -130,15 +138,31 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
-	// A bare GET opens an SSE stream for server→client messages. Gortexa emits
-	// none today, so it stays open until the client disconnects.
+	if lastID := strings.TrimSpace(r.Header.Get("Last-Event-ID")); lastID != "" {
+		http.Error(w, "event resume is not supported", http.StatusConflict)
+		return
+	}
+	if !b.validSession(r.Header.Get("Mcp-Session-Id")) {
+		http.Error(w, "missing or invalid MCP session", http.StatusUnauthorized)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	flush(w)
+
+	ticker := time.NewTicker(ssePingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			_, _ = io.WriteString(w, ssePingFrame)
+			flush(w)
+		}
 	}
-	<-r.Context().Done()
 }
 
 func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
@@ -236,6 +260,7 @@ func writeRPC(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", buf)
+		flush(w)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -247,4 +272,29 @@ func newSessionID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+func (b *Bridge) newSession() string {
+	id := newSessionID()
+	b.mu.Lock()
+	b.sessions[id] = struct{}{}
+	b.mu.Unlock()
+	return id
+}
+
+func (b *Bridge) validSession(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	b.mu.RLock()
+	_, ok := b.sessions[id]
+	b.mu.RUnlock()
+	return ok
+}
+
+func flush(w http.ResponseWriter) {
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
