@@ -4,10 +4,11 @@
 package logic
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"sort"
+	"slices"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -89,7 +90,7 @@ func (s *ResourceService) ListResources(_ context.Context, req *resourcev1.ListR
 		}
 	}
 	s.mu.RUnlock()
-	sort.Slice(out, func(i, j int) bool { return out[i].GetId() < out[j].GetId() })
+	slices.SortFunc(out, func(a, b *resourcev1.Resource) int { return cmp.Compare(a.GetId(), b.GetId()) })
 	return &resourcev1.ListResourcesResponse{Resources: out}, nil
 }
 

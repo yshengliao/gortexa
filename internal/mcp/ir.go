@@ -6,8 +6,9 @@
 package mcp
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -101,7 +102,7 @@ func BuildIR(svc protoreflect.ServiceDescriptor) ([]ToolIR, error) {
 			Destructive: opt.GetDestructive(),
 		})
 	}
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
+	slices.SortFunc(tools, func(a, b ToolIR) int { return cmp.Compare(a.Name, b.Name) })
 	return tools, nil
 }
 
