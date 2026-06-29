@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/yshengliao/gortexa/internal/logic"
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
+	"github.com/yshengliao/gortexa/internal/logic"
 )
 
 func TestResourceService_ListResources(t *testing.T) {
