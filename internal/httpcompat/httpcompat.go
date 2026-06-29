@@ -7,10 +7,12 @@ package httpcompat
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/textproto"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/yshengliao/gortexa/internal/auth"
@@ -24,7 +26,24 @@ func NewServeMux(reg *apperr.Registry) *runtime.ServeMux {
 		runtime.WithErrorHandler(errorHandler(reg)),
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, jsonMarshaler()),
 		runtime.WithIncomingHeaderMatcher(incomingHeaderMatcher),
+		runtime.WithMetadata(clientIPMetadata),
 	)
+}
+
+// clientIPMetadata carries the gateway's observed client IP across the in-process
+// loopback so the rate limiter (and audit logging) can key on the real peer
+// instead of the synthetic "bufconn" address shared by all gateway traffic. It
+// uses the gateway's own r.RemoteAddr — never an inbound X-Forwarded-For header,
+// which an untrusted client could spoof (the header matcher also drops it).
+func clientIPMetadata(_ context.Context, r *http.Request) metadata.MD {
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if host == "" {
+		return nil
+	}
+	return metadata.Pairs(interceptor.ForwardedForMetaKey, host)
 }
 
 func jsonMarshaler() *runtime.JSONPb {

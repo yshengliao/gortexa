@@ -6,6 +6,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/yshengliao/gortexa/internal/auth"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
@@ -69,6 +71,23 @@ func TestVerifyExpiry(t *testing.T) {
 			t.Fatalf("expired token err = %v, want Unauthenticated", err)
 		}
 	})
+}
+
+// A token without an exp claim must be rejected: jwt/v5 otherwise treats a
+// missing expiry as "never expires", so WithExpirationRequired closes that gap.
+func TestVerifyRejectsTokenWithoutExpiry(t *testing.T) {
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": "u",
+		"iss": "gortexa",
+	})
+	signed, err := tok.SignedString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := auth.NewVerifier(secret, "gortexa")
+	if _, err := v.Verify(signed); !apperr.Is(err, apperr.CatUnauthenticated) {
+		t.Fatalf("no-exp token err = %v, want Unauthenticated", err)
+	}
 }
 
 func TestBearerTokenAndContext(t *testing.T) {

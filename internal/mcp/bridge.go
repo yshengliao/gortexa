@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -25,6 +26,29 @@ const (
 	protocolVersion = "2025-03-26"
 	maxRequestBytes = 1 << 20
 )
+
+// supportedProtocolVersions are the MCP revisions Gortexa can speak. On
+// initialize the server echoes the client's requested version when it is one of
+// these (the MCP spec's version negotiation), otherwise it offers its own
+// default and lets the client decide whether to proceed.
+var supportedProtocolVersions = map[string]bool{
+	"2025-03-26": true,
+	"2024-11-05": true,
+}
+
+// negotiateVersion picks the protocol version to advertise in the initialize
+// result: the client's requested version if supported, else the server default.
+func negotiateVersion(params json.RawMessage) string {
+	if len(params) > 0 {
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if err := json.Unmarshal(params, &p); err == nil && supportedProtocolVersions[p.ProtocolVersion] {
+			return p.ProtocolVersion
+		}
+	}
+	return protocolVersion
+}
 
 // Bridge serves an MCP Streamable-HTTP endpoint backed by a gRPC loopback.
 type Bridge struct {
@@ -146,7 +170,7 @@ func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
 	switch req.Method {
 	case "initialize":
 		resp.Result = map[string]any{
-			"protocolVersion": protocolVersion,
+			"protocolVersion": negotiateVersion(req.Params),
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "gortexa", "version": "0.1.0"},
 		}
@@ -200,6 +224,12 @@ func (b *Bridge) toolsCall(r *http.Request, params json.RawMessage) (any, *rpcEr
 	if rid := r.Header.Get("X-Request-Id"); rid != "" {
 		md.Set("x-request-id", rid) // matches interceptor.RequestIDMetadataKey
 	}
+	// Carry the real client IP across the loopback so the rate limiter keys on
+	// the caller, not the shared "bufconn" peer. Derived from our own RemoteAddr,
+	// never a client-supplied header. Matches interceptor.ForwardedForMetaKey.
+	if ip := clientIP(r); ip != "" {
+		md.Set("x-forwarded-for", ip)
+	}
 	if len(md) > 0 {
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
@@ -247,4 +277,13 @@ func newSessionID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
+}
+
+// clientIP returns the host portion of the request's remote address.
+func clientIP(r *http.Request) string {
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return host
 }

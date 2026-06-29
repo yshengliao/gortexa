@@ -159,6 +159,44 @@ func TestCircuitBreakerHalfOpen(t *testing.T) {
 	})
 }
 
+// A panicking handler must still be recorded by the breaker: panics unwind past
+// the breaker frame to Recovery, so without a deferred record they would never
+// trip the breaker and a half-open probe would leak its slot (wedging the
+// method open forever).
+func TestCircuitBreakerRecordsPanic(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cb := interceptor.NewCircuitBreaker(interceptor.CBConfig{MaxFailures: 2, OpenInterval: time.Second, HalfOpenMax: 1})
+		ic := cb.Unary()
+		info := unaryInfo("/svc/M")
+		panicky := grpc.UnaryHandler(func(context.Context, any) (any, error) { panic("boom") })
+
+		callRecover := func(h grpc.UnaryHandler) {
+			defer func() { _ = recover() }() // the breaker re-panics for Recovery
+			_, _ = ic(context.Background(), nil, info, h)
+		}
+
+		// Two panics trip the breaker (panic → Internal, a failing category).
+		callRecover(panicky)
+		callRecover(panicky)
+
+		called := false
+		probe := func(context.Context, any) (any, error) { called = true; return "ok", nil }
+		if _, err := ic(context.Background(), nil, info, probe); !apperr.Is(err, apperr.CatUnavailable) || called {
+			t.Fatalf("breaker should be open after panics: err=%v called=%v", err, called)
+		}
+
+		// A half-open probe that panics must release its slot so the breaker can
+		// recover, rather than wedging the method permanently.
+		time.Sleep(2 * time.Second)
+		callRecover(panicky) // half-open probe panics
+		time.Sleep(2 * time.Second)
+		called = false
+		if _, err := ic(context.Background(), nil, info, probe); err != nil || !called {
+			t.Fatalf("breaker wedged after panicking probe: err=%v called=%v", err, called)
+		}
+	})
+}
+
 func TestLoadShedding(t *testing.T) {
 	// concurrency signal
 	block := make(chan struct{})

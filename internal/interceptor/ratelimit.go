@@ -3,11 +3,13 @@ package interceptor
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 
 	apperr "github.com/yshengliao/gortexa/internal/errors"
@@ -70,18 +72,56 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 
 func (l *RateLimiter) enabled() bool { return l.rps > 0 }
 
+// ForwardedForMetaKey carries the real client IP across the in-process loopback.
+// The HTTP gateway and MCP bridge forward every request through one bufconn
+// connection, so their gRPC peer is always the synthetic address "bufconn";
+// without this, all gateway+MCP traffic would collapse into a single shared
+// rate-limit bucket. The gateway/MCP set it from their own observed client
+// address, never from an untrusted inbound header.
+const ForwardedForMetaKey = "x-forwarded-for"
+
+// loopbackNetwork is the net.Addr network reported by grpc's bufconn listener.
+const loopbackNetwork = "bufconn"
+
 // peerKey keys the limiter by client IP only. Including the ephemeral port
 // would let a client reset its bucket by reconnecting (rate-limit bypass) and
 // would grow the entries map unbounded (one entry per connection).
 func peerKey(ctx context.Context) string {
-	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
-		addr := p.Addr.String()
-		if host, _, err := net.SplitHostPort(addr); err == nil {
-			return host
-		}
-		return addr
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return "unknown"
 	}
-	return "unknown"
+	// Calls forwarded by the HTTP gateway / MCP bridge arrive over the in-process
+	// bufconn loopback, where every call shares the peer "bufconn". Trust a
+	// forwarded client IP ONLY on that loopback — an external gRPC client has a
+	// real network peer, so it can neither reach this branch nor spoof the key.
+	if p.Addr.Network() == loopbackNetwork {
+		if ip := forwardedIP(ctx); ip != "" {
+			return ip
+		}
+	}
+	addr := p.Addr.String()
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
+}
+
+// forwardedIP returns the first entry of the x-forwarded-for metadata, if any.
+func forwardedIP(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	vals := md.Get(ForwardedForMetaKey)
+	if len(vals) == 0 || vals[0] == "" {
+		return ""
+	}
+	first := vals[0]
+	if i := strings.IndexByte(first, ','); i >= 0 {
+		first = first[:i] // X-Forwarded-For may be a list; the first is the origin.
+	}
+	return strings.TrimSpace(first)
 }
 
 func (l *RateLimiter) allow(ctx context.Context) bool {
