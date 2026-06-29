@@ -42,13 +42,15 @@ type OpenAIFuncBody struct {
 // OpenAISchema mirrors JSONSchema but, for strict mode, lists every property as
 // required and forbids additional properties.
 type OpenAISchema struct {
-	Type                 string                   `json:"type"`
-	Description          string                   `json:"description,omitempty"`
-	Properties           map[string]*OpenAISchema `json:"properties,omitempty"`
-	Required             []string                 `json:"required,omitempty"`
-	Items                *OpenAISchema            `json:"items,omitempty"`
-	Enum                 []string                 `json:"enum,omitempty"`
-	AdditionalProperties *bool                    `json:"additionalProperties,omitempty"`
+	Type        string                   `json:"type"`
+	Description string                   `json:"description,omitempty"`
+	Properties  map[string]*OpenAISchema `json:"properties,omitempty"`
+	// Required is a pointer so an object with no properties still emits
+	// `"required": []` (OpenAI strict mode), while non-object schemas omit it.
+	Required             *[]string     `json:"required,omitempty"`
+	Items                *OpenAISchema `json:"items,omitempty"`
+	Enum                 []string      `json:"enum,omitempty"`
+	AdditionalProperties *bool         `json:"additionalProperties,omitempty"`
 }
 
 // DowngradeOpenAI renders the IR as an OpenAI strict function tool.
@@ -73,19 +75,20 @@ func toOpenAISchema(s *JSONSchema) *OpenAISchema {
 		out.Items = toOpenAISchema(s.Items)
 	}
 	if s.Type == "object" {
-		// Strict mode: additionalProperties:false and every property required.
+		// Strict mode: additionalProperties:false and every property required
+		// (an empty object still emits `required: []`).
 		no := false
 		out.AdditionalProperties = &no
+		names := []string{}
 		if len(s.Properties) > 0 {
 			out.Properties = make(map[string]*OpenAISchema, len(s.Properties))
-			names := make([]string, 0, len(s.Properties))
 			for name, ps := range s.Properties {
 				out.Properties[name] = toOpenAISchema(ps)
 				names = append(names, name)
 			}
 			sort.Strings(names)
-			out.Required = names
 		}
+		out.Required = &names
 	}
 	return out
 }

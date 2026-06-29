@@ -51,8 +51,11 @@ func TestOpenAIStrictInvariants(t *testing.T) {
 		if p == nil || p.AdditionalProperties == nil || *p.AdditionalProperties {
 			t.Fatalf("%s: additionalProperties must be false", ir.Name)
 		}
-		if len(p.Properties) != len(p.Required) {
-			t.Fatalf("%s: strict requires all %d props required, got %d", ir.Name, len(p.Properties), len(p.Required))
+		if p.Required == nil {
+			t.Fatalf("%s: object schema must always emit required (even empty)", ir.Name)
+		}
+		if len(p.Properties) != len(*p.Required) {
+			t.Fatalf("%s: strict requires all %d props required, got %d", ir.Name, len(p.Properties), len(*p.Required))
 		}
 	}
 }

@@ -15,21 +15,28 @@ import (
 
 // RateLimitConfig configures the per-peer token bucket. RPS <= 0 disables limiting.
 type RateLimitConfig struct {
-	RPS   float64       // tokens per second per peer
-	Burst int           // bucket size
-	TTL   time.Duration // evict idle peers after this long
+	RPS        float64       // tokens per second per peer
+	Burst      int           // bucket size
+	TTL        time.Duration // evict idle peers after this long
+	MaxEntries int           // hard cap on tracked peers (memory bound); <=0 → default
 }
 
-// RateLimiter is a per-peer token-bucket limiter with lazy TTL eviction (no
-// background goroutine, so nothing to leak or close).
-type RateLimiter struct {
-	rps   rate.Limit
-	burst int
-	ttl   time.Duration
+// evictBatch bounds how many entries a single call scans for stale eviction, so
+// the lock is never held for an O(N) sweep over the whole map.
+const evictBatch = 128
 
-	mu        sync.Mutex
-	entries   map[string]*rlEntry
-	lastSweep time.Time
+// RateLimiter is a per-peer token-bucket limiter. Eviction is incremental
+// (bounded work per call) and the entry count is capped, so a distributed surge
+// of distinct IPs can neither OOM the process nor cause a single request to do
+// O(N) work under the lock. No background goroutine, so nothing to leak.
+type RateLimiter struct {
+	rps        rate.Limit
+	burst      int
+	ttl        time.Duration
+	maxEntries int
+
+	mu      sync.Mutex
+	entries map[string]*rlEntry
 }
 
 type rlEntry struct {
@@ -47,11 +54,16 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 	if ttl <= 0 {
 		ttl = 10 * time.Minute
 	}
+	maxEntries := cfg.MaxEntries
+	if maxEntries <= 0 {
+		maxEntries = 100_000
+	}
 	return &RateLimiter{
-		rps:     rate.Limit(cfg.RPS),
-		burst:   burst,
-		ttl:     ttl,
-		entries: make(map[string]*rlEntry),
+		rps:        rate.Limit(cfg.RPS),
+		burst:      burst,
+		ttl:        ttl,
+		maxEntries: maxEntries,
+		entries:    make(map[string]*rlEntry),
 	}
 }
 
@@ -80,20 +92,31 @@ func (l *RateLimiter) allow(ctx context.Context) bool {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if now.Sub(l.lastSweep) > l.ttl {
-		for k, e := range l.entries {
-			if now.Sub(e.seen) > l.ttl {
-				delete(l.entries, k)
-			}
+
+	// Incremental eviction: scan at most evictBatch entries (map iteration is
+	// randomized, giving a fair sample) and drop the stale ones. Bounded work.
+	scanned := 0
+	for k, e := range l.entries {
+		if scanned >= evictBatch {
+			break
 		}
-		l.lastSweep = now
+		scanned++
+		if now.Sub(e.seen) > l.ttl {
+			delete(l.entries, k)
+		}
 	}
-	e := l.entries[key]
-	if e == nil {
-		e = &rlEntry{lim: rate.NewLimiter(l.rps, l.burst)}
-		l.entries[key] = e
+
+	if e, ok := l.entries[key]; ok {
+		e.seen = now
+		return e.lim.Allow()
 	}
-	e.seen = now
+	// New peer: enforce the cap to bound memory under a distributed surge.
+	// Shedding the request (treating it as rate-limited) is preferable to OOM.
+	if len(l.entries) >= l.maxEntries {
+		return false
+	}
+	e := &rlEntry{lim: rate.NewLimiter(l.rps, l.burst), seen: now}
+	l.entries[key] = e
 	return e.lim.Allow()
 }
 
