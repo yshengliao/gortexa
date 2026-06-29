@@ -106,9 +106,13 @@ func (b *Bridge) Handler() http.Handler {
 }
 
 func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
 	if err != nil {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return
+	}
+	if len(body) > maxRequestBytes {
+		writeRPCStatus(w, r, http.StatusRequestEntityTooLarge, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32000, Message: "request entity too large"}})
 		return
 	}
 	var req rpcRequest
@@ -227,6 +231,10 @@ func (b *Bridge) toolError(err error) map[string]any {
 }
 
 func writeRPC(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
+	writeRPCStatus(w, r, http.StatusOK, resp)
+}
+
+func writeRPCStatus(w http.ResponseWriter, r *http.Request, status int, resp rpcResponse) {
 	buf, err := json.Marshal(resp)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -239,7 +247,7 @@ func writeRPC(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_, _ = w.Write(buf)
 }
 
