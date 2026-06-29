@@ -1,5 +1,10 @@
 # Gortexa
 
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Status](https://img.shields.io/badge/status-active-brightgreen)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![AI generated](https://img.shields.io/badge/AI%20generated-Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
+
 A contract-first, batteries-included **gRPC framework** for Go 1.25 — the gRPC
 analogue of the `gortex` HTTP framework. Protobuf is the single source of truth;
 **one h2c port** multiplexes three protocols:
@@ -61,3 +66,20 @@ curl localhost:8080/v1/resources/x                            # 401 (auth shared
   corrected module proxy env; run `setup.sh` once if building outside `make`.
 - Integration tests needing real PgBouncer/Kafka are behind the `integration`
   build tag (`make test-integration`); the default suite needs no services.
+
+## Provenance
+
+Gortexa was built with AI-assisted development and hardened through **three
+independent model review rounds** — correctness, concurrency, security, and
+protocol conformance — with every actionable finding fixed and verified
+(`make build / vet / test -race / lint`):
+
+| Model | Role |
+|---|---|
+| **Claude Opus 4.8** | Design, implementation, and consolidation |
+| **Gemini 3.1 Pro** (Jules) | Second independent review |
+| **Codex 5.5** | Third independent review |
+
+## License
+
+Released under the [MIT License](LICENSE).
