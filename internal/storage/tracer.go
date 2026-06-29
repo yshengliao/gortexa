@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -41,6 +42,7 @@ func (t *DBTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 	}
 	if data.Err != nil {
 		span.RecordError(data.Err)
+		span.SetStatus(otelcodes.Error, data.Err.Error())
 	}
 	span.SetAttributes(attribute.String("db.command_tag", data.CommandTag.String()))
 	span.End()

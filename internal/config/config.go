@@ -158,6 +158,7 @@ func Build(opts ...Option) (*Config, error) {
 		Tag: "koanf",
 		DecoderConfig: &mapstructure.DecoderConfig{
 			Result:           &c,
+			TagName:          "koanf",
 			WeaklyTypedInput: true,
 			DecodeHook:       mapstructure.StringToTimeDurationHookFunc(),
 		},

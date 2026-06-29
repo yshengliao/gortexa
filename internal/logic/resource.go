@@ -10,12 +10,19 @@ import (
 	"sort"
 	"sync"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
+
+// clone returns a deep copy so callers (and concurrent readers) never share a
+// pointer with the live store.
+func clone(r *resourcev1.Resource) *resourcev1.Resource {
+	return proto.Clone(r).(*resourcev1.Resource)
+}
 
 // ResourceService is an in-memory implementation of resource.v1.ResourceService.
 type ResourceService struct {
@@ -58,7 +65,7 @@ func (s *ResourceService) CreateResource(_ context.Context, req *resourcev1.Crea
 	s.mu.Lock()
 	s.store[out.Id] = out
 	s.mu.Unlock()
-	return out, nil
+	return clone(out), nil
 }
 
 // GetResource returns a resource by id.
@@ -69,7 +76,7 @@ func (s *ResourceService) GetResource(_ context.Context, req *resourcev1.GetReso
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "resource not found")
 	}
-	return r, nil
+	return clone(r), nil
 }
 
 // ListResources returns resources, optionally filtered by owner.
@@ -78,7 +85,7 @@ func (s *ResourceService) ListResources(_ context.Context, req *resourcev1.ListR
 	out := make([]*resourcev1.Resource, 0, len(s.store))
 	for _, r := range s.store {
 		if req.GetOwner() == "" || r.GetOwner() == req.GetOwner() {
-			out = append(out, r)
+			out = append(out, clone(r))
 		}
 	}
 	s.mu.RUnlock()
@@ -103,7 +110,7 @@ func (s *ResourceService) UpdateResource(_ context.Context, req *resourcev1.Upda
 	if r.GetStatus() != resourcev1.Status_STATUS_UNSPECIFIED {
 		existing.Status = r.GetStatus()
 	}
-	return existing, nil
+	return clone(existing), nil
 }
 
 // DeleteResource removes a resource by id.

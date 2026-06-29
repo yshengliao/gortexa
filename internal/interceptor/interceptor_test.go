@@ -109,6 +109,22 @@ func TestRateLimiterRefill(t *testing.T) {
 	})
 }
 
+func TestRateLimiterKeysByIPNotPort(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		rl := interceptor.NewRateLimiter(interceptor.RateLimitConfig{RPS: 1, Burst: 1, TTL: time.Minute})
+		ic := rl.Unary()
+		info := unaryInfo("/svc/M")
+		// Same client IP, different ephemeral ports must share one bucket
+		// (otherwise reconnecting would bypass the limit).
+		if _, err := ic(peerCtx("5.5.5.5:1111"), nil, info, okHandler); err != nil {
+			t.Fatalf("first call should pass: %v", err)
+		}
+		if _, err := ic(peerCtx("5.5.5.5:2222"), nil, info, okHandler); !apperr.Is(err, apperr.CatResourceExhausted) {
+			t.Fatalf("second call from same IP/different port should be limited: %v", err)
+		}
+	})
+}
+
 func TestCircuitBreakerHalfOpen(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cb := interceptor.NewCircuitBreaker(interceptor.CBConfig{MaxFailures: 2, OpenInterval: time.Second, HalfOpenMax: 1})

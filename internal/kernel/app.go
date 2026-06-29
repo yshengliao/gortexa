@@ -251,7 +251,18 @@ func (a *App) Shutdown(ctx context.Context) error {
 			_ = a.loopbackConn.Close()
 		}
 		if a.grpcSrv != nil {
-			a.grpcSrv.Stop()
+			// Drain in-flight RPCs gracefully, but fall back to a hard stop if
+			// the bounded shutdown deadline expires.
+			stopped := make(chan struct{})
+			go func() {
+				a.grpcSrv.GracefulStop()
+				close(stopped)
+			}()
+			select {
+			case <-stopped:
+			case <-tctx.Done():
+				a.grpcSrv.Stop()
+			}
 		}
 		if a.loopbackLis != nil {
 			_ = a.loopbackLis.Close()

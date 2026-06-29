@@ -2,6 +2,7 @@ package interceptor
 
 import (
 	"context"
+	"net"
 	"sync"
 	"time"
 
@@ -56,9 +57,16 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 
 func (l *RateLimiter) enabled() bool { return l.rps > 0 }
 
+// peerKey keys the limiter by client IP only. Including the ephemeral port
+// would let a client reset its bucket by reconnecting (rate-limit bypass) and
+// would grow the entries map unbounded (one entry per connection).
 func peerKey(ctx context.Context) string {
 	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
-		return p.Addr.String()
+		addr := p.Addr.String()
+		if host, _, err := net.SplitHostPort(addr); err == nil {
+			return host
+		}
+		return addr
 	}
 	return "unknown"
 }

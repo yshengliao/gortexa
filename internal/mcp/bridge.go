@@ -193,8 +193,15 @@ func (b *Bridge) toolsCall(r *http.Request, params json.RawMessage) (any, *rpcEr
 	out := dynamicpb.NewMessage(tool.Output)
 
 	ctx := r.Context()
+	md := metadata.MD{}
 	if authz := r.Header.Get("Authorization"); authz != "" {
-		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs(auth.MetadataKey, authz))
+		md.Set(auth.MetadataKey, authz)
+	}
+	if rid := r.Header.Get("X-Request-Id"); rid != "" {
+		md.Set("x-request-id", rid) // matches interceptor.RequestIDMetadataKey
+	}
+	if len(md) > 0 {
+		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
 	if err := b.conn.Invoke(ctx, tool.FullMethod, in, out); err != nil {
 		return b.toolError(err), nil // tool errors are results with isError:true, not RPC errors
