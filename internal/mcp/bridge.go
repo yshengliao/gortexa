@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -111,12 +112,67 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
-	var req rpcRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
 
+	switch body[0] {
+	case '[':
+		b.handleBatchPost(w, r, body)
+	case '{':
+		req, ok := decodeRPCRequest(w, r, body)
+		if !ok {
+			return
+		}
+		b.handleSinglePost(w, r, req)
+	default:
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32600, Message: "invalid request"}})
+	}
+}
+
+func (b *Bridge) handleBatchPost(w http.ResponseWriter, r *http.Request, body []byte) {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(body, &raws); err != nil {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return
+	}
+	if len(raws) == 0 {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32600, Message: "invalid request"}})
+		return
+	}
+
+	responses := make([]rpcResponse, 0, len(raws))
+	for _, raw := range raws {
+		raw = bytes.TrimSpace(raw)
+		if len(raw) == 0 || raw[0] != '{' {
+			responses = append(responses, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32600, Message: "invalid request"}})
+			continue
+		}
+
+		var req rpcRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			responses = append(responses, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32600, Message: "invalid request"}})
+			continue
+		}
+		if req.Method == "initialize" {
+			w.Header().Set("Mcp-Session-Id", newSessionID())
+		}
+		if len(req.ID) == 0 {
+			continue
+		}
+		responses = append(responses, b.dispatch(r, req))
+	}
+
+	if len(responses) == 0 {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	writeRPCValue(w, r, responses)
+}
+
+func (b *Bridge) handleSinglePost(w http.ResponseWriter, r *http.Request, req rpcRequest) {
 	if req.Method == "initialize" {
 		w.Header().Set("Mcp-Session-Id", newSessionID())
 	}
@@ -127,6 +183,15 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeRPC(w, r, b.dispatch(r, req))
+}
+
+func decodeRPCRequest(w http.ResponseWriter, r *http.Request, body []byte) (rpcRequest, bool) {
+	var req rpcRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return rpcRequest{}, false
+	}
+	return req, true
 }
 
 func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -227,7 +292,11 @@ func (b *Bridge) toolError(err error) map[string]any {
 }
 
 func writeRPC(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
-	buf, err := json.Marshal(resp)
+	writeRPCValue(w, r, resp)
+}
+
+func writeRPCValue(w http.ResponseWriter, r *http.Request, value any) {
+	buf, err := json.Marshal(value)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
