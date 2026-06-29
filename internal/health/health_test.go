@@ -15,19 +15,62 @@ func static(s health.State) health.Check {
 }
 
 func TestOverallWorstOf(t *testing.T) {
-	ctx := context.Background()
-	r := health.NewRegistry()
-	if r.Overall(ctx) != health.Healthy {
-		t.Fatal("empty registry should be Healthy")
+	cases := []struct {
+		name   string
+		checks map[string]health.State
+		want   health.State
+	}{
+		{
+			name:   "empty registry is healthy",
+			checks: nil,
+			want:   health.Healthy,
+		},
+		{
+			name: "all healthy",
+			checks: map[string]health.State{
+				"a": health.Healthy,
+				"b": health.Healthy,
+			},
+			want: health.Healthy,
+		},
+		{
+			name: "degraded overrides healthy",
+			checks: map[string]health.State{
+				"a": health.Healthy,
+				"b": health.Degraded,
+				"c": health.Healthy,
+			},
+			want: health.Degraded,
+		},
+		{
+			name: "unhealthy overrides degraded",
+			checks: map[string]health.State{
+				"a": health.Healthy,
+				"b": health.Degraded,
+				"c": health.Unhealthy,
+			},
+			want: health.Unhealthy,
+		},
+		{
+			name: "all unhealthy",
+			checks: map[string]health.State{
+				"a": health.Unhealthy,
+				"b": health.Unhealthy,
+			},
+			want: health.Unhealthy,
+		},
 	}
-	r.Register("a", static(health.Healthy))
-	r.Register("b", static(health.Degraded))
-	if got := r.Overall(ctx); got != health.Degraded {
-		t.Fatalf("overall = %v, want Degraded", got)
-	}
-	r.Register("c", static(health.Unhealthy))
-	if got := r.Overall(ctx); got != health.Unhealthy {
-		t.Fatalf("overall = %v, want Unhealthy", got)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := health.NewRegistry()
+			for name, state := range tc.checks {
+				r.Register(name, static(state))
+			}
+			if got := r.Overall(context.Background()); got != tc.want {
+				t.Fatalf("Overall() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
