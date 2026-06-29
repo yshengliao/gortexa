@@ -53,12 +53,31 @@ func TestCORS(t *testing.T) {
 		t.Fatal("disabled CORS should not add headers")
 	}
 
-	// enabled → adds headers; preflight short-circuits
-	on := CORS(next, config.ServerConfig{EnableCORS: true})
+	// enabled (wildcard) → adds headers; preflight short-circuits
+	onWildcard := CORS(next, config.ServerConfig{EnableCORS: true, CORSOrigins: []string{"*"}})
 	rec = httptest.NewRecorder()
-	on.ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/", nil))
+	onWildcard.ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/", nil))
 	if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("preflight = %d, origin=%q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	// enabled (specific origin) allowed
+	onSpecific := CORS(next, config.ServerConfig{EnableCORS: true, CORSOrigins: []string{"https://example.com"}})
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodOptions, "/", nil)
+	req.Header.Set("Origin", "https://example.com")
+	onSpecific.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != "https://example.com" {
+		t.Fatalf("preflight specific allowed = %d, origin=%q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	// enabled (specific origin) denied
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodOptions, "/", nil)
+	req.Header.Set("Origin", "https://attacker.com")
+	onSpecific.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("preflight specific denied = %d, origin=%q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
 	}
 }
 
