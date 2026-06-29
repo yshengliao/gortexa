@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cespare/xxhash/v2"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -23,23 +24,35 @@ type RateLimitConfig struct {
 	MaxEntries int           // hard cap on tracked peers (memory bound); <=0 → default
 }
 
-// evictBatch bounds how many entries a single call scans for stale eviction, so
-// the lock is never held for an O(N) sweep over the whole map.
-const evictBatch = 128
+const (
+	// evictBatch bounds how many entries a single call scans for stale eviction,
+	// so a lock is never held for an O(N) sweep over a whole map.
+	evictBatch = 128
+	// shardCount splits the peer map into independently-locked shards so RPCs for
+	// different peers don't contend on one global mutex. Must be a power of two
+	// for the mask in shardFor.
+	shardCount = 16
+)
 
-// RateLimiter is a per-peer token-bucket limiter. Eviction is incremental
-// (bounded work per call) and the entry count is capped, so a distributed surge
-// of distinct IPs can neither OOM the process nor cause a single request to do
-// O(N) work under the lock. No background goroutine, so nothing to leak.
-type RateLimiter struct {
-	rps        rate.Limit
-	burst      int
-	ttl        time.Duration
-	maxEntries int
-
+// rlShard is one independently-locked partition of the peer map.
+type rlShard struct {
 	mu         sync.Mutex
 	entries    map[string]*rlEntry
 	evictCount uint64
+}
+
+// RateLimiter is a per-peer token-bucket limiter, sharded by peer key to cut lock
+// contention. Eviction is incremental (bounded work per call) and the per-shard
+// entry count is capped, so a distributed surge of distinct IPs can neither OOM
+// the process nor cause a single request to do O(N) work under a lock. No
+// background goroutine, so nothing to leak.
+type RateLimiter struct {
+	rps   rate.Limit
+	burst int
+	ttl   time.Duration
+	// maxEntriesShard is the per-shard cap; the global bound is this × shardCount.
+	maxEntriesShard int
+	shards          [shardCount]*rlShard
 }
 
 type rlEntry struct {
@@ -61,13 +74,25 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 	if maxEntries <= 0 {
 		maxEntries = 100_000
 	}
-	return &RateLimiter{
-		rps:        rate.Limit(cfg.RPS),
-		burst:      burst,
-		ttl:        ttl,
-		maxEntries: maxEntries,
-		entries:    make(map[string]*rlEntry),
+	perShard := maxEntries / shardCount
+	if perShard < 1 {
+		perShard = 1
 	}
+	l := &RateLimiter{
+		rps:             rate.Limit(cfg.RPS),
+		burst:           burst,
+		ttl:             ttl,
+		maxEntriesShard: perShard,
+	}
+	for i := range l.shards {
+		l.shards[i] = &rlShard{entries: make(map[string]*rlEntry)}
+	}
+	return l
+}
+
+// shardFor selects the shard owning key (shardCount is a power of two).
+func (l *RateLimiter) shardFor(key string) *rlShard {
+	return l.shards[xxhash.Sum64String(key)&(shardCount-1)]
 }
 
 func (l *RateLimiter) enabled() bool { return l.rps > 0 }
@@ -131,38 +156,39 @@ func (l *RateLimiter) allow(ctx context.Context) bool {
 	key := peerKey(ctx)
 	now := time.Now()
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	sh := l.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
 
 	// Amortized incremental eviction: run the bounded sweep only once every
 	// evictBatch calls, so the average eviction cost is ~1 step/request and the
-	// global lock isn't held for O(evictBatch) on every request (this is a
-	// process-wide interceptor). The entry cap below is the hard memory bound.
-	l.evictCount++
-	if l.evictCount%evictBatch == 0 {
+	// shard lock isn't held for O(evictBatch) on every request. The per-shard cap
+	// below is the hard memory bound.
+	sh.evictCount++
+	if sh.evictCount%evictBatch == 0 {
 		scanned := 0
-		for k, e := range l.entries {
+		for k, e := range sh.entries {
 			if scanned >= evictBatch {
 				break
 			}
 			scanned++
 			if now.Sub(e.seen) > l.ttl {
-				delete(l.entries, k)
+				delete(sh.entries, k)
 			}
 		}
 	}
 
-	if e, ok := l.entries[key]; ok {
+	if e, ok := sh.entries[key]; ok {
 		e.seen = now
 		return e.lim.Allow()
 	}
-	// New peer: enforce the cap to bound memory under a distributed surge.
-	// Shedding the request (treating it as rate-limited) is preferable to OOM.
-	if len(l.entries) >= l.maxEntries {
+	// New peer: enforce the per-shard cap to bound memory under a distributed
+	// surge. Shedding the request (treating it as rate-limited) is preferable to OOM.
+	if len(sh.entries) >= l.maxEntriesShard {
 		return false
 	}
 	e := &rlEntry{lim: rate.NewLimiter(l.rps, l.burst), seen: now}
-	l.entries[key] = e
+	sh.entries[key] = e
 	return e.lim.Allow()
 }
 

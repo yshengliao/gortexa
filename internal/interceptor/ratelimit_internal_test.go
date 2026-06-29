@@ -65,18 +65,24 @@ func TestRateLimiterForwardedForOnLoopback(t *testing.T) {
 	}
 }
 
-// A flood of distinct client IPs must not grow the entries map past the cap,
-// so a distributed surge cannot OOM the process.
+// A flood of distinct client IPs must not grow the (now sharded) entries past
+// the cap, so a distributed surge cannot OOM the process.
 func TestRateLimiterBoundedGrowth(t *testing.T) {
 	l := NewRateLimiter(RateLimitConfig{RPS: 1000, Burst: 1000, TTL: time.Hour, MaxEntries: 50})
-	for i := 0; i < 500; i++ {
-		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: rlFakeAddr(fmt.Sprintf("10.0.0.%d:12345", i))})
+	for i := 0; i < 5000; i++ {
+		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: rlFakeAddr(fmt.Sprintf("10.%d.%d.%d:12345", i/65536, (i/256)%256, i%256))})
 		l.allow(ctx)
 	}
-	l.mu.Lock()
-	n := len(l.entries)
-	l.mu.Unlock()
-	if n > 50 {
-		t.Fatalf("entries = %d, want <= 50 (capped)", n)
+	total := 0
+	for _, sh := range l.shards {
+		sh.mu.Lock()
+		if len(sh.entries) > l.maxEntriesShard {
+			t.Errorf("shard has %d entries, want <= per-shard cap %d", len(sh.entries), l.maxEntriesShard)
+		}
+		total += len(sh.entries)
+		sh.mu.Unlock()
+	}
+	if total > 50 {
+		t.Fatalf("total entries = %d, want <= 50 (global cap)", total)
 	}
 }
