@@ -1,6 +1,7 @@
 package kernel_test
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +14,12 @@ type Greeter interface{ Greet() string }
 type englishGreeter struct{}
 
 func (englishGreeter) Greet() string { return "hello" }
+
+type selfCycle struct{}
+
+type indirectCycleA struct{}
+
+type indirectCycleB struct{}
 
 func TestRegisterValueAndGet(t *testing.T) {
 	c := kernel.NewContainer()
@@ -86,5 +93,60 @@ func TestConcurrentResolveBuildsOnce(t *testing.T) {
 	wg.Wait()
 	if built.Load() != 1 {
 		t.Fatalf("built %d times under concurrency, want 1", built.Load())
+	}
+}
+
+func TestDirectSelfCycle(t *testing.T) {
+	c := kernel.NewContainer()
+	var cycleErr error
+	kernel.Register(c, func() *selfCycle {
+		_, cycleErr = kernel.Get[*selfCycle](c)
+		return &selfCycle{}
+	})
+
+	if _, err := kernel.Get[*selfCycle](c); err != nil {
+		t.Fatalf("Get[*selfCycle] unexpected outer error: %v", err)
+	}
+	if cycleErr == nil {
+		t.Fatal("expected dependency cycle error")
+	}
+	if got, want := cycleErr.Error(), "kernel: dependency cycle: *kernel_test.selfCycle -> *kernel_test.selfCycle"; got != want {
+		t.Fatalf("cycle error = %q, want %q", got, want)
+	}
+}
+
+func TestIndirectCycle(t *testing.T) {
+	c := kernel.NewContainer()
+	var cycleErr error
+	kernel.Register(c, func() *indirectCycleA {
+		if _, err := kernel.Get[*indirectCycleB](c); err != nil {
+			t.Fatalf("Get[*indirectCycleB] unexpected error: %v", err)
+		}
+		return &indirectCycleA{}
+	})
+	kernel.Register(c, func() *indirectCycleB {
+		_, cycleErr = kernel.Get[*indirectCycleA](c)
+		return &indirectCycleB{}
+	})
+
+	if _, err := kernel.Get[*indirectCycleA](c); err != nil {
+		t.Fatalf("Get[*indirectCycleA] unexpected outer error: %v", err)
+	}
+	if cycleErr == nil {
+		t.Fatal("expected dependency cycle error")
+	}
+	got := cycleErr.Error()
+	for _, want := range []string{
+		"kernel: dependency cycle: ",
+		"*kernel_test.indirectCycleA",
+		"*kernel_test.indirectCycleB",
+		" -> ",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("cycle error = %q, want substring %q", got, want)
+		}
+	}
+	if want := "*kernel_test.indirectCycleA -> *kernel_test.indirectCycleB -> *kernel_test.indirectCycleA"; !strings.Contains(got, want) {
+		t.Fatalf("cycle error = %q, want path %q", got, want)
 	}
 }
