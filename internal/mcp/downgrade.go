@@ -110,7 +110,7 @@ type GeminiFunctionDeclaration struct {
 	Parameters  *GeminiSchema `json:"parameters"`
 }
 
-// GeminiSchema is the Gemini-compatible schema subset (no additionalProperties).
+// GeminiSchema is the Gemini-compatible schema subset.
 type GeminiSchema struct {
 	Type        string                   `json:"type"`
 	Description string                   `json:"description,omitempty"`
@@ -118,6 +118,10 @@ type GeminiSchema struct {
 	Required    []string                 `json:"required,omitempty"`
 	Items       *GeminiSchema            `json:"items,omitempty"`
 	Enum        []string                 `json:"enum,omitempty"`
+	// AdditionalProperties carries a proto map's value schema (*GeminiSchema) or
+	// `true` for a free-form Struct, mirroring the MCP/OpenAI downgrades so map
+	// and Struct fields aren't silently flattened to a closed object.
+	AdditionalProperties any `json:"additionalProperties,omitempty"`
 }
 
 // DowngradeGemini renders the IR as a Gemini FunctionDeclaration.
@@ -136,6 +140,12 @@ func toGeminiSchema(s *JSONSchema) *GeminiSchema {
 	out := &GeminiSchema{Type: s.Type, Description: s.Description, Required: s.Required, Enum: s.Enum}
 	if s.Items != nil {
 		out.Items = toGeminiSchema(s.Items)
+	}
+	switch ap := s.AdditionalProperties.(type) {
+	case *JSONSchema:
+		out.AdditionalProperties = toGeminiSchema(ap)
+	case bool:
+		out.AdditionalProperties = ap
 	}
 	if len(s.Properties) > 0 {
 		out.Properties = make(map[string]*GeminiSchema, len(s.Properties))

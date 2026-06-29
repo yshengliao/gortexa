@@ -71,7 +71,7 @@ func incomingHeaderMatcher(key string) (string, bool) {
 func errorHandler(reg *apperr.Registry) runtime.ErrorHandlerFunc {
 	return func(_ context.Context, _ *runtime.ServeMux, m runtime.Marshaler, w http.ResponseWriter, r *http.Request, err error) {
 		code, body := reg.ToHTTP(err)
-		if rid := r.Header.Get("X-Request-Id"); rid != "" {
+		if rid := r.Header.Get("X-Request-Id"); interceptor.ValidRequestID(rid) {
 			body.RequestID = rid
 		}
 		w.Header().Set("Content-Type", m.ContentType(body))

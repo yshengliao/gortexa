@@ -26,9 +26,33 @@ func newRequestID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// maxRequestIDLen bounds a client-supplied request id. UUID/hex ids fit easily;
+// the cap stops an unbounded id from being stored, logged, and reflected.
+const maxRequestIDLen = 128
+
+// ValidRequestID reports whether s is a safe-to-reflect request id: non-empty,
+// within maxRequestIDLen, and limited to an unambiguous, log-safe charset. The
+// gateway/MCP layers reuse it before echoing a client-supplied X-Request-Id.
+func ValidRequestID(s string) bool {
+	if s == "" || len(s) > maxRequestIDLen {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '-', c == '_', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func incomingRequestID(ctx context.Context) string {
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if vals := md.Get(RequestIDMetadataKey); len(vals) > 0 && vals[0] != "" {
+		// An invalid/oversized inbound id is dropped so a fresh one is minted,
+		// rather than propagated and reflected.
+		if vals := md.Get(RequestIDMetadataKey); len(vals) > 0 && ValidRequestID(vals[0]) {
 			return vals[0]
 		}
 	}

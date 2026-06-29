@@ -83,6 +83,32 @@ func TestDowngradeOpenAIPreservesMapAdditionalProperties(t *testing.T) {
 	}
 }
 
+// Gemini downgrade must also carry a proto map's value schema via
+// additionalProperties (not silently flatten it to a closed object).
+func TestDowngradeGeminiPreservesMapAdditionalProperties(t *testing.T) {
+	sch, err := schemaForMessage(mapTestMessage(t), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := DowngradeGemini(ToolIR{Name: "map_tool", InputSchema: sch}).Parameters
+	if params == nil {
+		t.Fatal("parameters nil")
+	}
+	for _, name := range []string{"labels", "counts", "statuses"} {
+		prop := params.Properties[name]
+		if prop == nil {
+			t.Fatalf("missing property %q", name)
+		}
+		ap, ok := prop.AdditionalProperties.(*GeminiSchema)
+		if !ok || ap == nil {
+			t.Fatalf("%s additionalProperties = %#v, want *GeminiSchema", name, prop.AdditionalProperties)
+		}
+		if ap.Type != "string" {
+			t.Fatalf("%s map value type = %q, want string", name, ap.Type)
+		}
+	}
+}
+
 func mapTestMessage(t *testing.T) protoreflect.MessageDescriptor {
 	t.Helper()
 	file, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{

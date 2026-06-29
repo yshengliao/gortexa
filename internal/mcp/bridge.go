@@ -125,13 +125,31 @@ func (b *Bridge) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
-			b.handlePost(w, r)
+			b.servePost(w, r)
 		case http.MethodGet:
 			b.handleGet(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+}
+
+// servePost runs handlePost under panic recovery so a panic in dispatch/toolsCall
+// (protojson, dynamicpb, etc.) becomes a clean JSON-RPC -32603 instead of an
+// abruptly dropped connection — mirroring the gRPC Recovery interceptor for the
+// HTTP/JSON-RPC surface. A panic occurs before writeRPC runs, so no response has
+// been written yet.
+func (b *Bridge) servePost(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			writeRPC(w, r, rpcResponse{
+				JSONRPC: "2.0",
+				ID:      json.RawMessage("null"),
+				Error:   &rpcError{Code: -32603, Message: "internal error"},
+			})
+		}
+	}()
+	b.handlePost(w, r)
 }
 
 func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
