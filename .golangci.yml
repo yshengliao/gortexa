@@ -1,0 +1,14 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: standard
+  exclusions:
+    generated: lax
+    paths:
+      - gen
+      - third_party
+formatters:
+  enable:
+    - gofmt
+    - goimports
