@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -26,19 +27,31 @@ const (
 	maxRequestBytes = 1 << 20
 )
 
+var supportedProtocolVersions = map[string]struct{}{
+	"2024-11-05": {},
+	"2025-03-26": {},
+}
+
 // Bridge serves an MCP Streamable-HTTP endpoint backed by a gRPC loopback.
 type Bridge struct {
 	conn  *grpc.ClientConn
 	reg   *apperr.Registry
 	tools map[string]ToolIR
 	order []string
+
+	mu       sync.Mutex
+	sessions map[string]sessionState
+}
+
+type sessionState struct {
+	protocolVersion string
 }
 
 // NewBridge builds a bridge exposing the ai.v1-annotated methods of the given
 // services. tools/call dispatches over conn (which should be the in-process
 // loopback so the full interceptor chain applies).
 func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor, reg *apperr.Registry) (*Bridge, error) {
-	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}}
+	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}, sessions: map[string]sessionState{}}
 	for _, svc := range services {
 		irs, err := BuildIR(svc)
 		if err != nil {
@@ -117,8 +130,10 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionID := ""
 	if req.Method == "initialize" {
-		w.Header().Set("Mcp-Session-Id", newSessionID())
+		sessionID = newSessionID()
+		w.Header().Set("Mcp-Session-Id", sessionID)
 	}
 
 	// Notifications (no id) get acknowledged with 202 and no body.
@@ -126,7 +141,7 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	writeRPC(w, r, b.dispatch(r, req))
+	writeRPC(w, r, b.dispatch(r, req, sessionID))
 }
 
 func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -141,12 +156,17 @@ func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
 	<-r.Context().Done()
 }
 
-func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
+func (b *Bridge) dispatch(r *http.Request, req rpcRequest, sessionID string) rpcResponse {
 	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
 	switch req.Method {
 	case "initialize":
+		negotiated, rerr := b.initialize(req.Params, sessionID)
+		if rerr != nil {
+			resp.Error = rerr
+			break
+		}
 		resp.Result = map[string]any{
-			"protocolVersion": protocolVersion,
+			"protocolVersion": negotiated,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "gortexa", "version": "0.1.0"},
 		}
@@ -169,6 +189,29 @@ func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
 		resp.Error = &rpcError{Code: -32601, Message: "method not found: " + req.Method}
 	}
 	return resp
+}
+
+func (b *Bridge) initialize(params json.RawMessage, sessionID string) (string, *rpcError) {
+	var p struct {
+		ProtocolVersion string          `json:"protocolVersion"`
+		Capabilities    json.RawMessage `json:"capabilities"`
+		ClientInfo      json.RawMessage `json:"clientInfo"`
+	}
+	if len(params) == 0 {
+		return "", &rpcError{Code: -32602, Message: "invalid params"}
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return "", &rpcError{Code: -32602, Message: "invalid params"}
+	}
+	if _, ok := supportedProtocolVersions[p.ProtocolVersion]; p.ProtocolVersion == "" || !ok {
+		return "", &rpcError{Code: -32602, Message: "invalid params"}
+	}
+	if sessionID != "" {
+		b.mu.Lock()
+		b.sessions[sessionID] = sessionState{protocolVersion: p.ProtocolVersion}
+		b.mu.Unlock()
+	}
+	return p.ProtocolVersion, nil
 }
 
 func (b *Bridge) toolsCall(r *http.Request, params json.RawMessage) (any, *rpcError) {

@@ -72,7 +72,16 @@ func token(t *testing.T) string {
 func TestBridgeInitializeAndList(t *testing.T) {
 	ts := newBridgeServer(t)
 
-	init := rpc(t, ts.URL, "", map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+	init := rpc(t, ts.URL, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-03-26",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "0.1.0"},
+		},
+	})
 	if init["result"] == nil {
 		t.Fatalf("initialize result missing: %v", init)
 	}
@@ -82,6 +91,71 @@ func TestBridgeInitializeAndList(t *testing.T) {
 	tools, _ := result["tools"].([]any)
 	if len(tools) != 4 {
 		t.Fatalf("tools/list returned %d tools, want 4", len(tools))
+	}
+}
+
+func TestBridgeInitializeNegotiatesSupportedVersion(t *testing.T) {
+	ts := newBridgeServer(t)
+
+	init := rpc(t, ts.URL, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      10,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "0.1.0"},
+		},
+	})
+	result, _ := init["result"].(map[string]any)
+	if result == nil {
+		t.Fatalf("initialize result missing: %v", init)
+	}
+	if got := result["protocolVersion"]; got != "2024-11-05" {
+		t.Fatalf("protocolVersion = %v, want 2024-11-05", got)
+	}
+}
+
+func TestBridgeInitializeRejectsMissingVersion(t *testing.T) {
+	ts := newBridgeServer(t)
+
+	init := rpc(t, ts.URL, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      11,
+		"method":  "initialize",
+		"params": map[string]any{
+			"capabilities": map[string]any{},
+			"clientInfo":   map[string]any{"name": "test", "version": "0.1.0"},
+		},
+	})
+	errorResult, _ := init["error"].(map[string]any)
+	if errorResult == nil {
+		t.Fatalf("initialize should reject missing protocolVersion: %v", init)
+	}
+	if got := errorResult["code"]; got != float64(-32602) {
+		t.Fatalf("error code = %v, want -32602", got)
+	}
+}
+
+func TestBridgeInitializeRejectsUnsupportedVersion(t *testing.T) {
+	ts := newBridgeServer(t)
+
+	init := rpc(t, ts.URL, "", map[string]any{
+		"jsonrpc": "2.0",
+		"id":      12,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2099-01-01",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "test", "version": "0.1.0"},
+		},
+	})
+	errorResult, _ := init["error"].(map[string]any)
+	if errorResult == nil {
+		t.Fatalf("initialize should reject unsupported protocolVersion: %v", init)
+	}
+	if got := errorResult["code"]; got != float64(-32602) {
+		t.Fatalf("error code = %v, want -32602", got)
 	}
 }
 
