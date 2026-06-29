@@ -65,3 +65,25 @@ func TestStateString(t *testing.T) {
 		}
 	}
 }
+
+type errorFakeWatch struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (f *errorFakeWatch) Send(*grpc_health_v1.HealthCheckResponse) error {
+	return context.Canceled
+}
+func (f *errorFakeWatch) Context() context.Context { return f.ctx }
+
+func TestGRPCHealthWatchSendError(t *testing.T) {
+	r := health.NewRegistry()
+	srv := r.GRPCHealthServer()
+
+	ctx := context.Background()
+	fw := &errorFakeWatch{ctx: ctx}
+	err := srv.Watch(&grpc_health_v1.HealthCheckRequest{}, fw)
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
