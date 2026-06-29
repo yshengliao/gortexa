@@ -47,10 +47,12 @@ type OpenAISchema struct {
 	Properties  map[string]*OpenAISchema `json:"properties,omitempty"`
 	// Required is a pointer so an object with no properties still emits
 	// `"required": []` (OpenAI strict mode), while non-object schemas omit it.
-	Required             *[]string     `json:"required,omitempty"`
-	Items                *OpenAISchema `json:"items,omitempty"`
-	Enum                 []string      `json:"enum,omitempty"`
-	AdditionalProperties *bool         `json:"additionalProperties,omitempty"`
+	Required *[]string     `json:"required,omitempty"`
+	Items    *OpenAISchema `json:"items,omitempty"`
+	Enum     []string      `json:"enum,omitempty"`
+	// AdditionalProperties is `false` for a closed object (strict mode), a
+	// *OpenAISchema for a proto map's value, or `true` for a free-form Struct.
+	AdditionalProperties any `json:"additionalProperties,omitempty"`
 }
 
 // DowngradeOpenAI renders the IR as an OpenAI strict function tool.
@@ -75,10 +77,18 @@ func toOpenAISchema(s *JSONSchema) *OpenAISchema {
 		out.Items = toOpenAISchema(s.Items)
 	}
 	if s.Type == "object" {
-		// Strict mode: additionalProperties:false and every property required
-		// (an empty object still emits `required: []`).
-		no := false
-		out.AdditionalProperties = &no
+		// Strict mode: every declared property is required (an empty object still
+		// emits `required: []`). A proto map preserves its value schema as
+		// additionalProperties; a free-form Struct stays open; a closed message
+		// forbids undeclared keys.
+		switch ap := s.AdditionalProperties.(type) {
+		case *JSONSchema:
+			out.AdditionalProperties = toOpenAISchema(ap)
+		case bool:
+			out.AdditionalProperties = ap
+		default:
+			out.AdditionalProperties = false
+		}
 		names := []string{}
 		if len(s.Properties) > 0 {
 			out.Properties = make(map[string]*OpenAISchema, len(s.Properties))

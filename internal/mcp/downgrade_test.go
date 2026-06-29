@@ -48,8 +48,13 @@ func TestOpenAIStrictInvariants(t *testing.T) {
 	for _, ir := range irTools(t) {
 		fn := mcp.DowngradeOpenAI(ir)
 		p := fn.Function.Parameters
-		if p == nil || p.AdditionalProperties == nil || *p.AdditionalProperties {
-			t.Fatalf("%s: additionalProperties must be false", ir.Name)
+		if p == nil {
+			t.Fatalf("%s: parameters nil", ir.Name)
+		}
+		// These tool inputs are closed messages (no proto map / Struct), so strict
+		// mode must forbid undeclared keys: additionalProperties == false.
+		if ap, ok := p.AdditionalProperties.(bool); !ok || ap {
+			t.Fatalf("%s: additionalProperties must be false, got %#v", ir.Name, p.AdditionalProperties)
 		}
 		if p.Required == nil {
 			t.Fatalf("%s: object schema must always emit required (even empty)", ir.Name)

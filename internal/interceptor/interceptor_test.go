@@ -59,7 +59,7 @@ func TestRequestIDMintsAndStores(t *testing.T) {
 }
 
 func TestAuthInterceptor(t *testing.T) {
-	v := auth.NewVerifier(jwtSecret, "gortexa")
+	v := auth.MustNewVerifier(jwtSecret, "gortexa")
 	ic := interceptor.Auth(v, nil)
 	info := unaryInfo("/svc/M")
 
@@ -289,7 +289,7 @@ func TestUnaryChainFailLoud(t *testing.T) {
 
 func TestNewSetBuildsChains(t *testing.T) {
 	set, err := interceptor.NewSet(interceptor.Config{
-		Verifier: auth.NewVerifier(jwtSecret, "gortexa"),
+		Verifier: auth.MustNewVerifier(jwtSecret, "gortexa"),
 	})
 	if err != nil {
 		t.Fatal(err)

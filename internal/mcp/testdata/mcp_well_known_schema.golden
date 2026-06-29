@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "boolWrapper": {
+      "type": "boolean"
+    },
+    "bytesWrapper": {
+      "type": "string"
+    },
+    "doubleWrapper": {
+      "type": "number"
+    },
+    "fieldMask": {
+      "type": "string",
+      "description": "Comma-separated protobuf field paths, e.g. foo.bar,baz."
+    },
+    "int32Wrapper": {
+      "type": "integer"
+    },
+    "int64Wrapper": {
+      "type": "string"
+    },
+    "stringWrapper": {
+      "type": "string"
+    },
+    "structValue": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

@@ -59,7 +59,7 @@ func TestLoggerStream(t *testing.T) {
 }
 
 func TestAuthStream(t *testing.T) {
-	v := auth.NewVerifier(jwtSecret, "gortexa")
+	v := auth.MustNewVerifier(jwtSecret, "gortexa")
 	ic := interceptor.AuthStream(v, nil)
 
 	// missing creds

@@ -1,15 +1,20 @@
 package mcp
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
+	"mime"
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -130,14 +135,47 @@ func (b *Bridge) Handler() http.Handler {
 }
 
 func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes))
+	if !isSupportedJSONContentType(r.Header.Get("Content-Type")) {
+		http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
+		return
+	}
+	// Read one byte past the cap so an oversized body is reported as 413 rather
+	// than being silently truncated into a parse error.
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
 	if err != nil {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
-	var req rpcRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	if len(body) > maxRequestBytes {
+		writeRPCStatus(w, r, http.StatusRequestEntityTooLarge,
+			rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32000, Message: "request entity too large"}})
+		return
+	}
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return
+	}
+
+	switch body[0] {
+	case '[':
+		b.handleBatchPost(w, r, body)
+	case '{':
+		b.handleSinglePost(w, r, body)
+	default:
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32600, Message: "invalid request"}})
+	}
+}
+
+func (b *Bridge) handleSinglePost(w http.ResponseWriter, r *http.Request, body []byte) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return
+	}
+	req, id, rerr := validateRPCRequest(fields)
+	if rerr != nil {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: id, Error: rerr})
 		return
 	}
 
@@ -153,16 +191,173 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 	writeRPC(w, r, b.dispatch(r, req))
 }
 
+// handleBatchPost dispatches a JSON-RPC batch (an array of requests). Each entry
+// is validated and dispatched independently; notification entries (no id) yield
+// no response, an empty array is rejected with -32600, and an all-notification
+// batch is acknowledged with 202.
+func (b *Bridge) handleBatchPost(w http.ResponseWriter, r *http.Request, body []byte) {
+	var raws []json.RawMessage
+	if err := json.Unmarshal(body, &raws); err != nil {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return
+	}
+	if len(raws) == 0 {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32600, Message: "invalid request"}})
+		return
+	}
+
+	responses := make([]rpcResponse, 0, len(raws))
+	for _, raw := range raws {
+		raw = bytes.TrimSpace(raw)
+		var fields map[string]json.RawMessage
+		if len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &fields) != nil {
+			responses = append(responses, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32600, Message: "invalid request"}})
+			continue
+		}
+		req, id, rerr := validateRPCRequest(fields)
+		if rerr != nil {
+			responses = append(responses, rpcResponse{JSONRPC: "2.0", ID: id, Error: rerr})
+			continue
+		}
+		if req.Method == "initialize" {
+			w.Header().Set("Mcp-Session-Id", newSessionID())
+		}
+		if len(req.ID) == 0 {
+			continue // notification: no response
+		}
+		responses = append(responses, b.dispatch(r, req))
+	}
+
+	if len(responses) == 0 {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	writeRPCValue(w, r, http.StatusOK, responses)
+}
+
+// validateRPCRequest enforces the JSON-RPC 2.0 request shape, returning a
+// -32600 (invalid request) error with the request id (or null when it can't be
+// determined) for malformed payloads.
+func validateRPCRequest(fields map[string]json.RawMessage) (rpcRequest, json.RawMessage, *rpcError) {
+	invalid := &rpcError{Code: -32600, Message: "invalid request"}
+	nullID := json.RawMessage("null")
+
+	jsonrpc, ok := fields["jsonrpc"]
+	if !ok || string(jsonrpc) != `"2.0"` {
+		return rpcRequest{}, requestID(fields, nullID), invalid
+	}
+
+	methodRaw, ok := fields["method"]
+	if !ok {
+		return rpcRequest{}, requestID(fields, nullID), invalid
+	}
+	var method string
+	if err := json.Unmarshal(methodRaw, &method); err != nil {
+		return rpcRequest{}, requestID(fields, nullID), invalid
+	}
+
+	id := json.RawMessage(nil)
+	if raw, ok := fields["id"]; ok {
+		if !validRPCID(raw) {
+			return rpcRequest{}, nullID, invalid
+		}
+		id = raw
+	}
+
+	params := json.RawMessage(nil)
+	if raw, ok := fields["params"]; ok {
+		if !validRPCParams(method, raw) {
+			return rpcRequest{}, idOrNull(id), invalid
+		}
+		params = raw
+	}
+
+	return rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}, id, nil
+}
+
+func requestID(fields map[string]json.RawMessage, fallback json.RawMessage) json.RawMessage {
+	if raw, ok := fields["id"]; ok && validRPCID(raw) {
+		return raw
+	}
+	return fallback
+}
+
+func idOrNull(id json.RawMessage) json.RawMessage {
+	if len(id) == 0 {
+		return json.RawMessage("null")
+	}
+	return id
+}
+
+// validRPCID accepts null, a string, or an integer-valued JSON number (JSON-RPC
+// 2.0 disallows fractional ids).
+func validRPCID(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+	if len(trimmed) == 0 {
+		return false
+	}
+	switch trimmed[0] {
+	case '"':
+		var s string
+		return json.Unmarshal(trimmed, &s) == nil
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		var n json.Number
+		dec := json.NewDecoder(bytes.NewReader(trimmed))
+		dec.UseNumber()
+		if err := dec.Decode(&n); err != nil {
+			return false
+		}
+		if err := dec.Decode(&struct{}{}); err != io.EOF {
+			return false
+		}
+		rat, ok := new(big.Rat).SetString(n.String())
+		return ok && rat.IsInt()
+	default:
+		return false
+	}
+}
+
+func validRPCParams(method string, raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	switch method {
+	case "tools/call":
+		return trimmed[0] == '{' && json.Valid(trimmed)
+	default:
+		return (trimmed[0] == '{' || trimmed[0] == '[') && json.Valid(trimmed)
+	}
+}
+
+// ssePingInterval bounds how long an idle SSE stream sits silent; a periodic
+// comment frame keeps intermediaries (proxies, load balancers) from dropping it.
+const ssePingInterval = 25 * time.Second
+
 func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
 	// A bare GET opens an SSE stream for server→client messages. Gortexa emits
-	// none today, so it stays open until the client disconnects.
+	// none today, so it stays open (with keep-alives) until the client leaves.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	flush(w)
+
+	ticker := time.NewTicker(ssePingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
+				return
+			}
+			flush(w)
+		}
 	}
-	<-r.Context().Done()
 }
 
 func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
@@ -257,20 +452,99 @@ func (b *Bridge) toolError(err error) map[string]any {
 }
 
 func writeRPC(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
-	buf, err := json.Marshal(resp)
+	writeRPCStatus(w, r, http.StatusOK, resp)
+}
+
+func writeRPCStatus(w http.ResponseWriter, r *http.Request, status int, resp rpcResponse) {
+	writeRPCValue(w, r, status, resp)
+}
+
+// writeRPCValue renders a JSON-RPC response (a single object or a batch array),
+// honoring the client's Accept header: SSE when requested, JSON otherwise, and
+// 406 when neither is acceptable.
+func writeRPCValue(w http.ResponseWriter, r *http.Request, status int, value any) {
+	responseType, ok := negotiateResponseType(r.Header.Get("Accept"))
+	if !ok {
+		http.Error(w, "not acceptable", http.StatusNotAcceptable)
+		return
+	}
+	buf, err := json.Marshal(value)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+	if responseType == "text/event-stream" {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", buf)
+		flush(w)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_, _ = w.Write(buf)
+}
+
+// isSupportedJSONContentType requires POST bodies to be JSON (application/json
+// or a +json media type) so the bridge never guesses at non-JSON payloads.
+func isSupportedJSONContentType(contentType string) bool {
+	if contentType == "" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	mediaType = strings.ToLower(mediaType)
+	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+}
+
+// negotiateResponseType chooses the response media type from the Accept header,
+// honoring q-values (q=0 marks a type unacceptable) and preferring SSE when the
+// client explicitly accepts it. An empty Accept defaults to JSON.
+func negotiateResponseType(accept string) (string, bool) {
+	if strings.TrimSpace(accept) == "" {
+		return "application/json", true
+	}
+
+	jsonAcceptable := false
+	eventStreamAcceptable := false
+	for _, part := range strings.Split(accept, ",") {
+		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+		if err != nil {
+			continue
+		}
+		if q, ok := params["q"]; ok {
+			quality, err := strconv.ParseFloat(q, 64)
+			if err != nil || quality <= 0 {
+				continue
+			}
+		}
+		switch strings.ToLower(mediaType) {
+		case "text/event-stream":
+			eventStreamAcceptable = true
+		case "application/json", "application/*", "*/*":
+			jsonAcceptable = true
+		default:
+			if strings.HasSuffix(strings.ToLower(mediaType), "+json") {
+				jsonAcceptable = true
+			}
+		}
+	}
+
+	if eventStreamAcceptable {
+		return "text/event-stream", true
+	}
+	if jsonAcceptable {
+		return "application/json", true
+	}
+	return "", false
+}
+
+func flush(w http.ResponseWriter) {
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func newSessionID() string {
