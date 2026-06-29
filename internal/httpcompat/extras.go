@@ -13,11 +13,29 @@ func CORS(next http.Handler, cfg config.ServerConfig) http.Handler {
 	if !cfg.EnableCORS {
 		return next
 	}
+
+	allowed := make(map[string]bool, len(cfg.CORSOrigins))
+	for _, o := range cfg.CORSOrigins {
+		allowed[o] = true
+	}
+	allowAll := allowed["*"]
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-Id")
+		origin := r.Header.Get("Origin")
+
+		if allowAll {
+			h.Set("Access-Control-Allow-Origin", "*")
+		} else if origin != "" && allowed[origin] {
+			h.Set("Access-Control-Allow-Origin", origin)
+			h.Add("Vary", "Origin")
+		}
+
+		if allowAll || (origin != "" && allowed[origin]) {
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-Id")
+		}
+
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

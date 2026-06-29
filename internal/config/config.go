@@ -35,6 +35,7 @@ type ServerConfig struct {
 	Addr            string        `koanf:"addr"`
 	ShutdownTimeout time.Duration `koanf:"shutdown_timeout"`
 	EnableCORS      bool          `koanf:"enable_cors"`
+	CORSOrigins     []string      `koanf:"cors_origins"`
 	OpenAPI         bool          `koanf:"openapi"`
 }
 
