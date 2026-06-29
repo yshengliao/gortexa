@@ -32,11 +32,15 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr            string        `koanf:"addr"`
-	ShutdownTimeout time.Duration `koanf:"shutdown_timeout"`
-	EnableCORS      bool          `koanf:"enable_cors"`
-	CORSOrigins     []string      `koanf:"cors_origins"`
-	OpenAPI         bool          `koanf:"openapi"`
+	Addr              string        `koanf:"addr"`
+	ShutdownTimeout   time.Duration `koanf:"shutdown_timeout"`
+	ReadTimeout       time.Duration `koanf:"read_timeout"`
+	WriteTimeout      time.Duration `koanf:"write_timeout"`
+	IdleTimeout       time.Duration `koanf:"idle_timeout"`
+	ReadHeaderTimeout time.Duration `koanf:"read_header_timeout"`
+	EnableCORS        bool          `koanf:"enable_cors"`
+	CORSOrigins       []string      `koanf:"cors_origins"`
+	OpenAPI           bool          `koanf:"openapi"`
 }
 
 type AuthConfig struct {
@@ -77,20 +81,24 @@ type ObservConfig struct {
 
 func defaults() map[string]any {
 	return map[string]any{
-		"server.addr":             ":8080",
-		"server.shutdown_timeout": "20s",
-		"server.enable_cors":      false,
-		"server.openapi":          true,
-		"auth.issuer":             "gortexa",
-		"auth.ttl":                "1h",
-		"db.max_conns":            10,
-		"cache.addr":              "localhost:6379",
-		"cache.ttl":               "5m",
-		"mq.driver":               "nats",
-		"log.level":               "info",
-		"log.format":              "json",
-		"observ.service_name":     "gortexa",
-		"observ.sample_ratio":     1.0,
+		"server.addr":                ":8080",
+		"server.shutdown_timeout":    "20s",
+		"server.read_timeout":        "15s",
+		"server.write_timeout":       "15s",
+		"server.idle_timeout":        "60s",
+		"server.read_header_timeout": "5s",
+		"server.enable_cors":         false,
+		"server.openapi":             true,
+		"auth.issuer":                "gortexa",
+		"auth.ttl":                   "1h",
+		"db.max_conns":               10,
+		"cache.addr":                 "localhost:6379",
+		"cache.ttl":                  "5m",
+		"mq.driver":                  "nats",
+		"log.level":                  "info",
+		"log.format":                 "json",
+		"observ.service_name":        "gortexa",
+		"observ.sample_ratio":        1.0,
 	}
 }
 

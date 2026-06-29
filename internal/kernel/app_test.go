@@ -21,7 +21,14 @@ func quietLogger() *slog.Logger {
 
 func newApp(t *testing.T, addr string) *kernel.App {
 	t.Helper()
-	cfg := &config.Config{Server: config.ServerConfig{Addr: addr, ShutdownTimeout: 2 * time.Second}}
+	cfg := &config.Config{Server: config.ServerConfig{
+		Addr:              addr,
+		ShutdownTimeout:   2 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+	}}
 	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()))
 	if err != nil {
 		t.Fatal(err)

@@ -87,7 +87,14 @@ func New(opts ...Option) (*App, error) {
 		o(ac)
 	}
 	if ac.cfg == nil {
-		ac.cfg = &config.Config{Server: config.ServerConfig{Addr: ":8080", ShutdownTimeout: 20 * time.Second}}
+		ac.cfg = &config.Config{Server: config.ServerConfig{
+			Addr:              ":8080",
+			ShutdownTimeout:   20 * time.Second,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			IdleTimeout:       60 * time.Second,
+			ReadHeaderTimeout: 5 * time.Second,
+		}}
 	}
 	if ac.log == nil {
 		ac.log = slog.Default()
@@ -221,7 +228,14 @@ func (a *App) Run(ctx context.Context) error {
 // serve runs against a provided listener (used by Run and by tests).
 func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	a.started.Store(true)
-	a.httpSrv = &http.Server{Handler: a.handler(), Protocols: h2cProtocols()}
+	a.httpSrv = &http.Server{
+		Handler:           a.handler(),
+		Protocols:         h2cProtocols(),
+		ReadTimeout:       a.cfg.Server.ReadTimeout,
+		WriteTimeout:      a.cfg.Server.WriteTimeout,
+		IdleTimeout:       a.cfg.Server.IdleTimeout,
+		ReadHeaderTimeout: a.cfg.Server.ReadHeaderTimeout,
+	}
 	a.log.Info("gortexa serving", "addr", ln.Addr().String())
 
 	// Serve the in-process loopback so gateway/MCP forwarding flows through the
