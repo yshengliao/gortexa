@@ -18,7 +18,7 @@ import (
 
 func authCtx(t *testing.T) context.Context {
 	t.Helper()
-	v := auth.NewVerifier(testutil.DefaultSecret, "gortexa")
+	v := auth.MustNewVerifier(testutil.DefaultSecret, "gortexa")
 	tok, err := v.Sign("tester", []string{"admin"}, time.Hour)
 	if err != nil {
 		t.Fatal(err)

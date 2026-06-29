@@ -22,7 +22,7 @@ import (
 
 func token(t *testing.T) string {
 	t.Helper()
-	tok, err := auth.NewVerifier(testutil.DefaultSecret, "gortexa").Sign("tester", []string{"admin"}, time.Hour)
+	tok, err := auth.MustNewVerifier(testutil.DefaultSecret, "gortexa").Sign("tester", []string{"admin"}, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

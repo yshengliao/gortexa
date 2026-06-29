@@ -6,6 +6,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -13,6 +14,11 @@ import (
 
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
+
+// minSecretBytes is the minimum HS256 secret length. Config validation enforces
+// the same bound at startup; NewVerifier re-checks it so the verifier can never
+// be built with a weak key regardless of how it's constructed.
+const minSecretBytes = 32
 
 // MetadataKey is the gRPC metadata / HTTP header carrying the bearer token.
 const MetadataKey = "authorization"
@@ -29,10 +35,24 @@ type Verifier struct {
 	issuer string
 }
 
-// NewVerifier builds a Verifier. The secret length policy (>= 32 bytes) is
-// enforced by config validation at startup.
-func NewVerifier(secret []byte, issuer string) *Verifier {
-	return &Verifier{secret: secret, issuer: issuer}
+// NewVerifier builds a Verifier with its own copy of the HS256 secret (so a
+// caller mutating the passed slice can't change the key), rejecting secrets
+// shorter than minSecretBytes.
+func NewVerifier(secret []byte, issuer string) (*Verifier, error) {
+	if len(secret) < minSecretBytes {
+		return nil, fmt.Errorf("auth: verifier secret must be at least %d bytes", minSecretBytes)
+	}
+	return &Verifier{secret: append([]byte(nil), secret...), issuer: issuer}, nil
+}
+
+// MustNewVerifier builds a Verifier or panics. Intended for startup and test
+// setup where construction failure should be fatal (fail-loud).
+func MustNewVerifier(secret []byte, issuer string) *Verifier {
+	v, err := NewVerifier(secret, issuer)
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 // Sign issues a token for subject with the given roles and TTL.

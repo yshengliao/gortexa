@@ -15,7 +15,7 @@ import (
 var secret = []byte("0123456789abcdef0123456789abcdef")
 
 func TestSignVerifyRoundTrip(t *testing.T) {
-	v := auth.NewVerifier(secret, "gortexa")
+	v := auth.MustNewVerifier(secret, "gortexa")
 	tok, err := v.Sign("user-1", []string{"admin"}, time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +30,7 @@ func TestSignVerifyRoundTrip(t *testing.T) {
 }
 
 func TestVerifyRejectsTampered(t *testing.T) {
-	v := auth.NewVerifier(secret, "gortexa")
+	v := auth.MustNewVerifier(secret, "gortexa")
 	tok, _ := v.Sign("u", nil, time.Hour)
 	if _, err := v.Verify(tok + "x"); !apperr.Is(err, apperr.CatUnauthenticated) {
 		t.Fatalf("tampered token err = %v, want Unauthenticated", err)
@@ -38,18 +38,18 @@ func TestVerifyRejectsTampered(t *testing.T) {
 }
 
 func TestVerifyRejectsWrongSecret(t *testing.T) {
-	signer := auth.NewVerifier(secret, "gortexa")
+	signer := auth.MustNewVerifier(secret, "gortexa")
 	tok, _ := signer.Sign("u", nil, time.Hour)
-	other := auth.NewVerifier([]byte("ffffffffffffffffffffffffffffffff"), "gortexa")
+	other := auth.MustNewVerifier([]byte("ffffffffffffffffffffffffffffffff"), "gortexa")
 	if _, err := other.Verify(tok); !apperr.Is(err, apperr.CatUnauthenticated) {
 		t.Fatalf("wrong-secret err = %v, want Unauthenticated", err)
 	}
 }
 
 func TestVerifyRejectsWrongIssuer(t *testing.T) {
-	signer := auth.NewVerifier(secret, "evil")
+	signer := auth.MustNewVerifier(secret, "evil")
 	tok, _ := signer.Sign("u", nil, time.Hour)
-	v := auth.NewVerifier(secret, "gortexa")
+	v := auth.MustNewVerifier(secret, "gortexa")
 	if _, err := v.Verify(tok); !apperr.Is(err, apperr.CatUnauthenticated) {
 		t.Fatalf("wrong-issuer err = %v, want Unauthenticated", err)
 	}
@@ -58,7 +58,7 @@ func TestVerifyRejectsWrongIssuer(t *testing.T) {
 // TTL expiry is verified deterministically with a fake clock.
 func TestVerifyExpiry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		v := auth.NewVerifier(secret, "gortexa")
+		v := auth.MustNewVerifier(secret, "gortexa")
 		tok, err := v.Sign("u", nil, time.Hour)
 		if err != nil {
 			t.Fatal(err)
@@ -84,9 +84,35 @@ func TestVerifyRejectsTokenWithoutExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := auth.NewVerifier(secret, "gortexa")
+	v := auth.MustNewVerifier(secret, "gortexa")
 	if _, err := v.Verify(signed); !apperr.Is(err, apperr.CatUnauthenticated) {
 		t.Fatalf("no-exp token err = %v, want Unauthenticated", err)
+	}
+}
+
+func TestNewVerifierRejectsShortSecret(t *testing.T) {
+	if _, err := auth.NewVerifier([]byte("too-short"), "gortexa"); err == nil {
+		t.Fatal("NewVerifier should reject a secret shorter than 32 bytes")
+	}
+}
+
+// NewVerifier must copy the secret so a caller mutating the slice afterwards
+// can't change the verifier's key.
+func TestNewVerifierCopiesSecret(t *testing.T) {
+	s := append([]byte(nil), secret...)
+	v, err := auth.NewVerifier(s, "gortexa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := v.Sign("u", nil, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range s {
+		s[i] ^= 0xff // scribble over the caller's slice
+	}
+	if _, err := v.Verify(tok); err != nil {
+		t.Fatalf("verifier must keep its own secret copy: %v", err)
 	}
 }
 

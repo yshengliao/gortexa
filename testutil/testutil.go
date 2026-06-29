@@ -62,7 +62,7 @@ func NewTestServer(t *testing.T, register func(*grpc.Server), opts ...TestServer
 		set = *cfg.set
 	} else {
 		s, err := interceptor.NewSet(interceptor.Config{
-			Verifier: auth.NewVerifier(cfg.secret, "gortexa"),
+			Verifier: auth.MustNewVerifier(cfg.secret, "gortexa"),
 		})
 		if err != nil {
 			t.Fatalf("testutil: build interceptors: %v", err)
