@@ -53,15 +53,19 @@ func TestNamesAndSnapshot(t *testing.T) {
 }
 
 func TestStateString(t *testing.T) {
-	cases := map[health.State]string{
-		health.Healthy:   "healthy",
-		health.Degraded:  "degraded",
-		health.Unhealthy: "unhealthy",
-		health.State(99): "unknown",
+	tests := []struct {
+		state health.State
+		want  string
+	}{
+		{health.Healthy, "healthy"},
+		{health.Degraded, "degraded"},
+		{health.Unhealthy, "unhealthy"},
+		{health.State(99), "unknown"},
 	}
-	for s, want := range cases {
-		if s.String() != want {
-			t.Errorf("State(%d).String() = %q, want %q", s, s.String(), want)
+
+	for _, tt := range tests {
+		if got := tt.state.String(); got != tt.want {
+			t.Errorf("State(%d).String() = %q, want %q", tt.state, got, tt.want)
 		}
 	}
 }
