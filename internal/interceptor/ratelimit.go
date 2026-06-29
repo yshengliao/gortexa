@@ -35,8 +35,9 @@ type RateLimiter struct {
 	ttl        time.Duration
 	maxEntries int
 
-	mu      sync.Mutex
-	entries map[string]*rlEntry
+	mu         sync.Mutex
+	entries    map[string]*rlEntry
+	evictCount uint64
 }
 
 type rlEntry struct {
@@ -93,16 +94,21 @@ func (l *RateLimiter) allow(ctx context.Context) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// Incremental eviction: scan at most evictBatch entries (map iteration is
-	// randomized, giving a fair sample) and drop the stale ones. Bounded work.
-	scanned := 0
-	for k, e := range l.entries {
-		if scanned >= evictBatch {
-			break
-		}
-		scanned++
-		if now.Sub(e.seen) > l.ttl {
-			delete(l.entries, k)
+	// Amortized incremental eviction: run the bounded sweep only once every
+	// evictBatch calls, so the average eviction cost is ~1 step/request and the
+	// global lock isn't held for O(evictBatch) on every request (this is a
+	// process-wide interceptor). The entry cap below is the hard memory bound.
+	l.evictCount++
+	if l.evictCount%evictBatch == 0 {
+		scanned := 0
+		for k, e := range l.entries {
+			if scanned >= evictBatch {
+				break
+			}
+			scanned++
+			if now.Sub(e.seen) > l.ttl {
+				delete(l.entries, k)
+			}
 		}
 	}
 
