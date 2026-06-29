@@ -11,13 +11,17 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/stats"
+	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/yshengliao/gortexa/internal/config"
 	"github.com/yshengliao/gortexa/internal/health"
 	"github.com/yshengliao/gortexa/internal/interceptor"
 )
+
+const loopbackBufSize = 1024 * 1024
 
 // App is Gortexa's composition root and lifecycle owner. It holds the gRPC
 // server (built with the interceptor chain + StatsHandler), the optional HTTP
@@ -36,6 +40,11 @@ type App struct {
 	shutdownFns  []func(context.Context) error
 	shutdownOnce sync.Once
 	started      atomic.Bool
+
+	loopbackLis  *bufconn.Listener
+	loopbackConn *grpc.ClientConn
+	loopbackOnce sync.Once
+	loopbackErr  error
 }
 
 // Option configures an App.
@@ -101,10 +110,34 @@ func New(opts ...Option) (*App, error) {
 		mcp:         ac.mcp,
 		httpWrap:    ac.httpWrap,
 		shutdownFns: ac.shutdownFns,
+		loopbackLis: bufconn.Listen(loopbackBufSize),
 	}
 	a.grpcSrv = grpc.NewServer(serverOpts...)
 	grpc_health_v1.RegisterHealthServer(a.grpcSrv, a.health.GRPCHealthServer())
 	return a, nil
+}
+
+// SetGateway installs the HTTP/JSON gateway handler (built after service
+// registration, so it is a setter rather than a New option).
+func (a *App) SetGateway(h http.Handler) { a.gateway = h }
+
+// SetMCPHandler installs the MCP Streamable HTTP handler.
+func (a *App) SetMCPHandler(h http.Handler) { a.mcp = h }
+
+// Loopback returns an in-process client connection to this App's own gRPC
+// server. Calls flow through the full interceptor chain, so the gateway and MCP
+// bridge inherit auth/validation/etc. The server starts serving the loopback
+// listener in Run.
+func (a *App) Loopback() (*grpc.ClientConn, error) {
+	a.loopbackOnce.Do(func() {
+		a.loopbackConn, a.loopbackErr = grpc.NewClient("passthrough:///gortexa-loopback",
+			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+				return a.loopbackLis.DialContext(ctx)
+			}),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+	})
+	return a.loopbackConn, a.loopbackErr
 }
 
 // Container returns the DI container.
@@ -180,6 +213,10 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	a.httpSrv = &http.Server{Handler: a.handler(), Protocols: h2cProtocols()}
 	a.log.Info("gortexa serving", "addr", ln.Addr().String())
 
+	// Serve the in-process loopback so gateway/MCP forwarding flows through the
+	// interceptor chain.
+	go func() { _ = a.grpcSrv.Serve(a.loopbackLis) }()
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- a.httpSrv.Serve(ln) }()
 
@@ -210,8 +247,14 @@ func (a *App) Shutdown(ctx context.Context) error {
 				retErr = err
 			}
 		}
+		if a.loopbackConn != nil {
+			_ = a.loopbackConn.Close()
+		}
 		if a.grpcSrv != nil {
 			a.grpcSrv.Stop()
+		}
+		if a.loopbackLis != nil {
+			_ = a.loopbackLis.Close()
 		}
 		for _, fn := range a.shutdownFns {
 			if err := fn(tctx); err != nil && retErr == nil {

@@ -1,0 +1,95 @@
+[
+  {
+    "name": "create_resource",
+    "description": "Create a new resource. Use when a resource does not yet exist.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "type": "object",
+          "properties": {
+            "createdAt": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string",
+              "description": "Owning user id."
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "STATUS_UNSPECIFIED",
+                "STATUS_ACTIVE",
+                "STATUS_ARCHIVED"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "delete_resource",
+    "description": "Permanently delete a resource by id.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "destructiveHint": true
+    }
+  },
+  {
+    "name": "get_resource",
+    "description": "Fetch a single resource by id and return its current state.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Resource id (uuid)."
+        }
+      },
+      "required": [
+        "id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "list_resources",
+    "description": "List resources, optionally filtered by owner, with paging.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "owner": {
+          "type": "string"
+        },
+        "pageSize": {
+          "type": "integer"
+        },
+        "pageToken": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  }
+]
