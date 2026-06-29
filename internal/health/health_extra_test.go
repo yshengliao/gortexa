@@ -2,6 +2,7 @@ package health_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -12,11 +13,15 @@ import (
 
 type fakeWatch struct {
 	grpc.ServerStream
-	ctx  context.Context
-	sent []*grpc_health_v1.HealthCheckResponse
+	ctx     context.Context
+	sent    []*grpc_health_v1.HealthCheckResponse
+	sendErr error
 }
 
 func (f *fakeWatch) Send(r *grpc_health_v1.HealthCheckResponse) error {
+	if f.sendErr != nil {
+		return f.sendErr
+	}
 	f.sent = append(f.sent, r)
 	return nil
 }
@@ -35,6 +40,22 @@ func TestGRPCHealthWatchEmitsStatus(t *testing.T) {
 	}
 	if len(fw.sent) != 1 || fw.sent[0].GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
 		t.Fatalf("watch sent = %+v", fw.sent)
+	}
+}
+
+func TestGRPCHealthWatchSendError(t *testing.T) {
+	r := health.NewRegistry()
+	srv := r.GRPCHealthServer()
+
+	expectedErr := errors.New("send error")
+	fw := &fakeWatch{
+		ctx:     context.Background(),
+		sendErr: expectedErr,
+	}
+
+	err := srv.Watch(&grpc_health_v1.HealthCheckRequest{}, fw)
+	if err != expectedErr {
+		t.Fatalf("expected error %v, got %v", expectedErr, err)
 	}
 }
 
