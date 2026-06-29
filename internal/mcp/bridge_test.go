@@ -148,3 +148,58 @@ func TestBridgeUnknownMethod(t *testing.T) {
 }
 
 func TestMain(m *testing.M) { testutil.VerifyTestMain(m) }
+
+func rpcRaw(t *testing.T, url, body string) map[string]any {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	return out
+}
+
+func assertInvalidRequest(t *testing.T, resp map[string]any, wantID any) {
+	t.Helper()
+	errObj, _ := resp["error"].(map[string]any)
+	if errObj == nil {
+		t.Fatalf("error missing: %v", resp)
+	}
+	if errObj["code"] != float64(-32600) {
+		t.Fatalf("code = %v, want -32600 in %v", errObj["code"], resp)
+	}
+	if got := resp["id"]; got != wantID {
+		t.Fatalf("id = %#v, want %#v in %v", got, wantID, resp)
+	}
+}
+
+func TestBridgeInvalidRequests(t *testing.T) {
+	ts := newBridgeServer(t)
+
+	tests := []struct {
+		name   string
+		body   string
+		wantID any
+	}{
+		{name: "empty object", body: `{}`, wantID: nil},
+		{name: "wrong jsonrpc", body: `{"jsonrpc":"1.0","method":"ping"}`, wantID: nil},
+		{name: "method object", body: `{"jsonrpc":"2.0","id":12,"method":{}}`, wantID: float64(12)},
+		{name: "method number", body: `{"jsonrpc":"2.0","id":"abc","method":7}`, wantID: "abc"},
+		{name: "id object", body: `{"jsonrpc":"2.0","id":{},"method":"ping"}`, wantID: nil},
+		{name: "id fractional", body: `{"jsonrpc":"2.0","id":1.25,"method":"ping"}`, wantID: nil},
+		{name: "tools call params array", body: `{"jsonrpc":"2.0","id":13,"method":"tools/call","params":[]}`, wantID: float64(13)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertInvalidRequest(t, rpcRaw(t, ts.URL, tt.body), tt.wantID)
+		})
+	}
+}

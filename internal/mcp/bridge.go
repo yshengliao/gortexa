@@ -1,11 +1,13 @@
 package mcp
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"sort"
 	"strings"
@@ -111,9 +113,14 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
-	var req rpcRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		return
+	}
+	req, id, rerr := validateRPCRequest(fields)
+	if rerr != nil {
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: id, Error: rerr})
 		return
 	}
 
@@ -127,6 +134,99 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeRPC(w, r, b.dispatch(r, req))
+}
+
+func validateRPCRequest(fields map[string]json.RawMessage) (rpcRequest, json.RawMessage, *rpcError) {
+	invalid := &rpcError{Code: -32600, Message: "invalid request"}
+	nullID := json.RawMessage("null")
+
+	jsonrpc, ok := fields["jsonrpc"]
+	if !ok || string(jsonrpc) != `"2.0"` {
+		return rpcRequest{}, requestID(fields, nullID), invalid
+	}
+
+	methodRaw, ok := fields["method"]
+	if !ok {
+		return rpcRequest{}, requestID(fields, nullID), invalid
+	}
+	var method string
+	if err := json.Unmarshal(methodRaw, &method); err != nil {
+		return rpcRequest{}, requestID(fields, nullID), invalid
+	}
+
+	id := json.RawMessage(nil)
+	if raw, ok := fields["id"]; ok {
+		if !validRPCID(raw) {
+			return rpcRequest{}, nullID, invalid
+		}
+		id = raw
+	}
+
+	params := json.RawMessage(nil)
+	if raw, ok := fields["params"]; ok {
+		if !validRPCParams(method, raw) {
+			return rpcRequest{}, idOrNull(id), invalid
+		}
+		params = raw
+	}
+
+	return rpcRequest{JSONRPC: "2.0", ID: id, Method: method, Params: params}, id, nil
+}
+
+func requestID(fields map[string]json.RawMessage, fallback json.RawMessage) json.RawMessage {
+	if raw, ok := fields["id"]; ok && validRPCID(raw) {
+		return raw
+	}
+	return fallback
+}
+
+func idOrNull(id json.RawMessage) json.RawMessage {
+	if len(id) == 0 {
+		return json.RawMessage("null")
+	}
+	return id
+}
+
+func validRPCID(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+	if len(trimmed) == 0 {
+		return false
+	}
+	switch trimmed[0] {
+	case '"':
+		var s string
+		return json.Unmarshal(trimmed, &s) == nil
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		var n json.Number
+		dec := json.NewDecoder(bytes.NewReader(trimmed))
+		dec.UseNumber()
+		if err := dec.Decode(&n); err != nil {
+			return false
+		}
+		if err := dec.Decode(&struct{}{}); err != io.EOF {
+			return false
+		}
+		rat, ok := new(big.Rat).SetString(n.String())
+		return ok && rat.IsInt()
+	default:
+		return false
+	}
+}
+
+func validRPCParams(method string, raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return false
+	}
+	switch method {
+	case "tools/call":
+		return trimmed[0] == '{' && json.Valid(trimmed)
+	default:
+		return (trimmed[0] == '{' || trimmed[0] == '[') && json.Valid(trimmed)
+	}
 }
 
 func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
