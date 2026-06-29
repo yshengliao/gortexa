@@ -1,0 +1,22 @@
+# Gortexa sample config (development defaults). Override per-environment via
+# GORTEXA_* env vars (e.g. GORTEXA_AUTH__JWT_SECRET) — never commit real secrets.
+server:
+  addr: ":8080"
+  shutdown_timeout: 20s
+  enable_cors: true
+  openapi: true
+
+auth:
+  # Dev-only secret (>= 32 bytes). REPLACE in any real deployment.
+  jwt_secret: "dev-only-insecure-secret-change-me-please"
+  issuer: "gortexa"
+  ttl: 1h
+
+log:
+  level: "info"
+  format: "json"
+
+observ:
+  service_name: "gortexa"
+  # tracing_otlp: "localhost:4317"   # uncomment to export OTLP traces
+  sample_ratio: 1.0

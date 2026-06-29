@@ -11,7 +11,7 @@ export GOPRIVATE :=
 export GOINSECURE :=
 export PATH := $(GOBIN):$(PATH)
 
-.PHONY: bootstrap gen build test test-integration cover lint vet vuln tidy clean run skills
+.PHONY: bootstrap gen sqlc build test test-integration cover lint vet vuln tidy clean run skills
 
 bootstrap:
 	bash setup.sh
@@ -19,6 +19,9 @@ bootstrap:
 gen:
 	buf dep update
 	buf generate
+
+sqlc:
+	sqlc generate
 
 build:
 	$(GO) build ./...
