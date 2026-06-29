@@ -54,6 +54,15 @@ func TestGRPCHealthBridge(t *testing.T) {
 		t.Fatalf("status = %v, want SERVING", resp.GetStatus())
 	}
 
+	r.Register("svc", static(health.Degraded))
+	resp, err = srv.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		t.Fatalf("status = %v, want SERVING for degraded state", resp.GetStatus())
+	}
+
 	r.Register("svc", static(health.Unhealthy))
 	resp, _ = srv.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
 	if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_NOT_SERVING {
