@@ -148,3 +148,73 @@ func TestBridgeUnknownMethod(t *testing.T) {
 }
 
 func TestMain(m *testing.M) { testutil.VerifyTestMain(m) }
+
+func postRPCWithHeaders(t *testing.T, url string, contentType string, accept string) *http.Response {
+	t.Helper()
+	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if accept != "" {
+		req.Header.Set("Accept", accept)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
+func TestBridgePostRequiresJSONContentType(t *testing.T) {
+	ts := newBridgeServer(t)
+
+	t.Run("missing content type", func(t *testing.T) {
+		resp := postRPCWithHeaders(t, ts.URL, "", "")
+		if resp.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("POST without content type = %d, want 415", resp.StatusCode)
+		}
+	})
+
+	t.Run("text plain", func(t *testing.T) {
+		resp := postRPCWithHeaders(t, ts.URL, "text/plain", "")
+		if resp.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("POST with text/plain = %d, want 415", resp.StatusCode)
+		}
+	})
+
+	t.Run("json content type", func(t *testing.T) {
+		resp := postRPCWithHeaders(t, ts.URL, "application/json; charset=utf-8", "")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("POST with application/json = %d, want 200", resp.StatusCode)
+		}
+		if got := resp.Header.Get("Content-Type"); got != "application/json" {
+			t.Fatalf("content-type = %q, want application/json", got)
+		}
+	})
+}
+
+func TestBridgePostNegotiatesAccept(t *testing.T) {
+	ts := newBridgeServer(t)
+
+	t.Run("text event stream", func(t *testing.T) {
+		resp := postRPCWithHeaders(t, ts.URL, "application/json", "text/event-stream")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("POST with Accept text/event-stream = %d, want 200", resp.StatusCode)
+		}
+		if got := resp.Header.Get("Content-Type"); got != "text/event-stream" {
+			t.Fatalf("content-type = %q, want text/event-stream", got)
+		}
+	})
+
+	t.Run("text event stream q zero", func(t *testing.T) {
+		resp := postRPCWithHeaders(t, ts.URL, "application/json", "text/event-stream;q=0")
+		if resp.StatusCode != http.StatusNotAcceptable {
+			t.Fatalf("POST with Accept text/event-stream;q=0 = %d, want 406", resp.StatusCode)
+		}
+	})
+}

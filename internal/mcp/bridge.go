@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -106,6 +108,11 @@ func (b *Bridge) Handler() http.Handler {
 }
 
 func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
+	if !isSupportedJSONContentType(r.Header.Get("Content-Type")) {
+		http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
+		return
+	}
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes))
 	if err != nil {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
@@ -227,12 +234,18 @@ func (b *Bridge) toolError(err error) map[string]any {
 }
 
 func writeRPC(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
+	responseType, ok := negotiateResponseType(r.Header.Get("Accept"))
+	if !ok {
+		http.Error(w, "not acceptable", http.StatusNotAcceptable)
+		return
+	}
+
 	buf, err := json.Marshal(resp)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+	if responseType == "text/event-stream" {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", buf)
@@ -241,6 +254,58 @@ func writeRPC(w http.ResponseWriter, r *http.Request, resp rpcResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf)
+}
+
+func isSupportedJSONContentType(contentType string) bool {
+	if contentType == "" {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	mediaType = strings.ToLower(mediaType)
+	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
+}
+
+func negotiateResponseType(accept string) (string, bool) {
+	if strings.TrimSpace(accept) == "" {
+		return "application/json", true
+	}
+
+	jsonAcceptable := false
+	eventStreamAcceptable := false
+	for _, part := range strings.Split(accept, ",") {
+		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+		if err != nil {
+			continue
+		}
+		if q, ok := params["q"]; ok {
+			quality, err := strconv.ParseFloat(q, 64)
+			if err != nil || quality <= 0 {
+				continue
+			}
+		}
+
+		switch strings.ToLower(mediaType) {
+		case "text/event-stream":
+			eventStreamAcceptable = true
+		case "application/json", "application/*", "*/*":
+			jsonAcceptable = true
+		default:
+			if strings.HasSuffix(strings.ToLower(mediaType), "+json") {
+				jsonAcceptable = true
+			}
+		}
+	}
+
+	if eventStreamAcceptable {
+		return "text/event-stream", true
+	}
+	if jsonAcceptable {
+		return "application/json", true
+	}
+	return "", false
 }
 
 func newSessionID() string {
