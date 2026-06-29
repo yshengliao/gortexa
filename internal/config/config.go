@@ -68,10 +68,10 @@ type LogConfig struct {
 }
 
 type ObservConfig struct {
-	ServiceName  string `koanf:"service_name"`
-	TracingOTLP  string `koanf:"tracing_otlp"`  // OTLP endpoint; empty disables
-	MetricsOTLP  string `koanf:"metrics_otlp"`  // OTLP endpoint; empty disables
-	SampleRatio  float64 `koanf:"sample_ratio"`
+	ServiceName string  `koanf:"service_name"`
+	TracingOTLP string  `koanf:"tracing_otlp"` // OTLP endpoint; empty disables
+	MetricsOTLP string  `koanf:"metrics_otlp"` // OTLP endpoint; empty disables
+	SampleRatio float64 `koanf:"sample_ratio"`
 }
 
 func defaults() map[string]any {

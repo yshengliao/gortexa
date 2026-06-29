@@ -107,9 +107,9 @@ func (e *Error) GRPCStatus() *status.Status { return Default.ToGRPCStatus(e) }
 
 // Registry maps categories to transport codes. Safe for concurrent use.
 type Registry struct {
-	mu      sync.RWMutex
-	byCat   map[Category]Mapping
-	byCode  map[codes.Code]Category
+	mu     sync.RWMutex
+	byCat  map[Category]Mapping
+	byCode map[codes.Code]Category
 }
 
 // NewRegistry builds a registry seeded with the given mappings.
@@ -184,8 +184,11 @@ func (r *Registry) resolve(err error) (Mapping, string) {
 	return in, in.SafeMessage
 }
 
-// ToGRPCStatus maps any error to a gRPC status.
+// ToGRPCStatus maps any error to a gRPC status. A nil error maps to OK.
 func (r *Registry) ToGRPCStatus(err error) *status.Status {
+	if err == nil {
+		return status.New(codes.OK, "")
+	}
 	m, msg := r.resolve(err)
 	return status.New(m.GRPCCode, msg)
 }

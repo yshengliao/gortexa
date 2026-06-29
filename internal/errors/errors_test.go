@@ -59,7 +59,7 @@ func TestMappingMatrix(t *testing.T) {
 func TestInternalNeverLeaks(t *testing.T) {
 	secret := "connection to 10.0.0.5 failed: password=hunter2"
 	errs := []error{
-		stderrors.New(secret),                              // raw, non-*Error
+		stderrors.New(secret), // raw, non-*Error
 		apperr.Wrap(apperr.CatInternal, secret, stderrors.New(secret)), // explicit internal
 	}
 	for _, err := range errs {
