@@ -168,9 +168,9 @@ func schemaForSingular(f protoreflect.FieldDescriptor, depth int) *JSONSchema {
 
 func enumValues(ed protoreflect.EnumDescriptor) []string {
 	vals := ed.Values()
-	out := make([]string, 0, vals.Len())
+	out := make([]string, vals.Len())
 	for i := 0; i < vals.Len(); i++ {
-		out = append(out, string(vals.Get(i).Name()))
+		out[i] = string(vals.Get(i).Name())
 	}
 	return out
 }

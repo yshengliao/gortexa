@@ -78,10 +78,12 @@ func toOpenAISchema(s *JSONSchema) *OpenAISchema {
 		out.AdditionalProperties = &no
 		if len(s.Properties) > 0 {
 			out.Properties = make(map[string]*OpenAISchema, len(s.Properties))
-			names := make([]string, 0, len(s.Properties))
+			names := make([]string, len(s.Properties))
+			i := 0
 			for name, ps := range s.Properties {
 				out.Properties[name] = toOpenAISchema(ps)
-				names = append(names, name)
+				names[i] = name
+				i++
 			}
 			sort.Strings(names)
 			out.Required = names
