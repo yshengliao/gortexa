@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -51,13 +52,31 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	app, err := buildApp(ctx, cfg, log)
+	if err != nil {
+		return err
+	}
+
+	// Register the gRPC service and a self health check.
+	resourcev1.RegisterResourceServiceServer(app.GRPCServer(), logic.NewResourceService())
+	app.Health().Register("self", func(context.Context) health.State { return health.Healthy })
+
+	if err := setupGateways(ctx, app); err != nil {
+		return err
+	}
+
+	log.Info("gortexa starting", "addr", cfg.Server.Addr)
+	return app.Run(ctx)
+}
+
+func buildApp(ctx context.Context, cfg *config.Config, log *slog.Logger) (*kernel.App, error) {
 	traceShutdown, err := observability.SetupTracing(ctx, cfg.Observ)
 	if err != nil {
-		return fmt.Errorf("setup tracing: %w", err)
+		return nil, fmt.Errorf("setup tracing: %w", err)
 	}
 	metricShutdown, err := observability.SetupMetrics(ctx, cfg.Observ)
 	if err != nil {
-		return fmt.Errorf("setup metrics: %w", err)
+		return nil, fmt.Errorf("setup metrics: %w", err)
 	}
 
 	verifier := auth.NewVerifier([]byte(cfg.Auth.JWTSecret.Reveal()), cfg.Auth.Issuer)
@@ -71,7 +90,7 @@ func run() error {
 		LoadShedding:   interceptor.LoadSheddingConfig{MaxInflight: 1024},
 	})
 	if err != nil {
-		return fmt.Errorf("build interceptors: %w", err)
+		return nil, fmt.Errorf("build interceptors: %w", err)
 	}
 
 	app, err := kernel.New(
@@ -84,13 +103,12 @@ func run() error {
 		kernel.WithShutdownHook(metricShutdown),
 	)
 	if err != nil {
-		return fmt.Errorf("build app: %w", err)
+		return nil, fmt.Errorf("build app: %w", err)
 	}
+	return app, nil
+}
 
-	// Register the gRPC service and a self health check.
-	resourcev1.RegisterResourceServiceServer(app.GRPCServer(), logic.NewResourceService())
-	app.Health().Register("self", func(context.Context) health.State { return health.Healthy })
-
+func setupGateways(ctx context.Context, app *kernel.App) error {
 	// The gateway and MCP bridge forward through the in-process loopback so they
 	// share the full interceptor chain.
 	conn, err := app.Loopback()
@@ -114,6 +132,5 @@ func run() error {
 	}
 	app.SetMCPHandler(bridge.Handler())
 
-	log.Info("gortexa starting", "addr", cfg.Server.Addr)
-	return app.Run(ctx)
+	return nil
 }
