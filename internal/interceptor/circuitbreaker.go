@@ -85,6 +85,10 @@ func (b *breaker) record(success bool) {
 			b.state = cbOpen
 			b.openedAt = time.Now()
 		}
+	case cbOpen:
+		// A probe result that arrives after the breaker has already re-opened
+		// (another concurrent half-open probe failed first) is intentionally
+		// dropped: the open timer governs the next probe window.
 	}
 }
 

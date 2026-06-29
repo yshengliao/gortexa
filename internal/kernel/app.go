@@ -3,6 +3,7 @@ package kernel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -41,10 +42,12 @@ type App struct {
 	shutdownOnce sync.Once
 	started      atomic.Bool
 
-	loopbackLis  *bufconn.Listener
-	loopbackConn *grpc.ClientConn
-	loopbackOnce sync.Once
-	loopbackErr  error
+	loopbackLis    *bufconn.Listener
+	loopbackMu     sync.Mutex
+	loopbackConn   *grpc.ClientConn
+	loopbackErr    error
+	loopbackInit   bool
+	loopbackClosed bool
 }
 
 // Option configures an App.
@@ -129,14 +132,22 @@ func (a *App) SetMCPHandler(h http.Handler) { a.mcp = h }
 // bridge inherit auth/validation/etc. The server starts serving the loopback
 // listener in Run.
 func (a *App) Loopback() (*grpc.ClientConn, error) {
-	a.loopbackOnce.Do(func() {
+	a.loopbackMu.Lock()
+	defer a.loopbackMu.Unlock()
+	if a.loopbackClosed {
+		// Refuse to create a connection that Shutdown has already passed, which
+		// would otherwise leak (Shutdown won't see it).
+		return nil, errors.New("kernel: app is shutting down")
+	}
+	if !a.loopbackInit {
 		a.loopbackConn, a.loopbackErr = grpc.NewClient("passthrough:///gortexa-loopback",
 			grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 				return a.loopbackLis.DialContext(ctx)
 			}),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
 		)
-	})
+		a.loopbackInit = true
+	}
 	return a.loopbackConn, a.loopbackErr
 }
 
@@ -244,11 +255,21 @@ func (a *App) Shutdown(ctx context.Context) error {
 		}
 		if a.httpSrv != nil {
 			if err := a.httpSrv.Shutdown(tctx); err != nil {
+				// Graceful shutdown timed out (e.g. a hung MCP SSE stream that
+				// never goes idle). Force-close so connections and their
+				// goroutines don't leak — mirrors the grpcSrv.Stop fallback below.
+				_ = a.httpSrv.Close()
 				retErr = err
 			}
 		}
-		if a.loopbackConn != nil {
-			_ = a.loopbackConn.Close()
+		// Close the loopback under the same lock that guards its creation, and
+		// mark it closed so a concurrent Loopback() can't create a conn we miss.
+		a.loopbackMu.Lock()
+		a.loopbackClosed = true
+		loopbackConn := a.loopbackConn
+		a.loopbackMu.Unlock()
+		if loopbackConn != nil {
+			_ = loopbackConn.Close()
 		}
 		if a.grpcSrv != nil {
 			// Drain in-flight RPCs gracefully, but fall back to a hard stop if
