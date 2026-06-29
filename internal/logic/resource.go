@@ -72,11 +72,14 @@ func (s *ResourceService) CreateResource(_ context.Context, req *resourcev1.Crea
 func (s *ResourceService) GetResource(_ context.Context, req *resourcev1.GetResourceRequest) (*resourcev1.Resource, error) {
 	s.mu.RLock()
 	r, ok := s.store[req.GetId()]
+	if ok {
+		r = clone(r)
+	}
 	s.mu.RUnlock()
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "resource not found")
 	}
-	return clone(r), nil
+	return r, nil
 }
 
 // ListResources returns resources, optionally filtered by owner.
@@ -105,12 +108,14 @@ func (s *ResourceService) UpdateResource(_ context.Context, req *resourcev1.Upda
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "resource not found")
 	}
-	existing.Name = r.GetName()
-	existing.Owner = r.GetOwner()
+	out := clone(existing)
+	out.Name = r.GetName()
+	out.Owner = r.GetOwner()
 	if r.GetStatus() != resourcev1.Status_STATUS_UNSPECIFIED {
-		existing.Status = r.GetStatus()
+		out.Status = r.GetStatus()
 	}
-	return clone(existing), nil
+	s.store[out.Id] = out
+	return clone(out), nil
 }
 
 // DeleteResource removes a resource by id.
