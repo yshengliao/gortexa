@@ -2,6 +2,7 @@ package interceptor_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,6 +127,52 @@ func TestRateLimitStreamDenies(t *testing.T) {
 	if err := ic(nil, &fakeStream{ctx: ctx}, streamInfo(), okStream); !apperr.Is(err, apperr.CatResourceExhausted) {
 		t.Fatalf("second stream err = %v, want ResourceExhausted", err)
 	}
+}
+
+// A skipped (health) stream must NOT consume an inflight slot, so a flood of
+// long-lived Health.Watch streams can't shed real traffic. This is the fix for
+// the unauthenticated load-shedding DoS.
+func TestLoadSheddingSkipsHealthStream(t *testing.T) {
+	skip := func(m string) bool { return strings.HasPrefix(m, "/grpc.health.") }
+	ls := interceptor.NewLoadShedder(interceptor.LoadSheddingConfig{MaxInflight: 1, Skip: skip})
+	ic := ls.Stream()
+	healthInfo := &grpc.StreamServerInfo{FullMethod: "/grpc.health.v1.Health/Watch"}
+
+	block := make(chan struct{})
+	started := make(chan struct{})
+	go func() {
+		_ = ic(nil, &fakeStream{ctx: context.Background()}, healthInfo, func(any, grpc.ServerStream) error {
+			close(started)
+			<-block
+			return nil
+		})
+	}()
+	<-started
+	// The skipped Health.Watch stream holds open but did NOT take the single slot,
+	// so a normal RPC is still admitted (the DoS is neutralized).
+	if err := ic(nil, &fakeStream{ctx: context.Background()}, streamInfo(), okStream); err != nil {
+		t.Fatalf("normal stream should be admitted while a skipped Health.Watch is in flight: %v", err)
+	}
+	close(block)
+
+	// Sanity: without skip, an in-flight non-health stream DOES hold the slot and
+	// sheds the next call — proving the skip is what neutralizes the DoS.
+	ls2 := interceptor.NewLoadShedder(interceptor.LoadSheddingConfig{MaxInflight: 1})
+	ic2 := ls2.Stream()
+	block2 := make(chan struct{})
+	started2 := make(chan struct{})
+	go func() {
+		_ = ic2(nil, &fakeStream{ctx: context.Background()}, streamInfo(), func(any, grpc.ServerStream) error {
+			close(started2)
+			<-block2
+			return nil
+		})
+	}()
+	<-started2
+	if err := ic2(nil, &fakeStream{ctx: context.Background()}, streamInfo(), okStream); !apperr.Is(err, apperr.CatResourceExhausted) {
+		t.Fatalf("non-skipped stream should be shed when the slot is held: %v", err)
+	}
+	close(block2)
 }
 
 func TestStreamChainFailLoud(t *testing.T) {

@@ -71,7 +71,12 @@ func run() error {
 		AuthSkip:       func(method string) bool { return strings.HasPrefix(method, "/grpc.health.") },
 		RateLimit:      interceptor.RateLimitConfig{RPS: 200, Burst: 100, TTL: 10 * time.Minute},
 		CircuitBreaker: interceptor.CBConfig{MaxFailures: 5, OpenInterval: 10 * time.Second, HalfOpenMax: 2},
-		LoadShedding:   interceptor.LoadSheddingConfig{MaxInflight: 1024},
+		// Exempt control-plane health checks from the inflight budget so a flood of
+		// long-lived (unauthenticated) Health.Watch streams can't shed real traffic.
+		LoadShedding: interceptor.LoadSheddingConfig{
+			MaxInflight: 1024,
+			Skip:        func(method string) bool { return strings.HasPrefix(method, "/grpc.health.") },
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("build interceptors: %w", err)
