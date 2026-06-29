@@ -48,7 +48,10 @@ func TestOpenAIStrictInvariants(t *testing.T) {
 	for _, ir := range irTools(t) {
 		fn := mcp.DowngradeOpenAI(ir)
 		p := fn.Function.Parameters
-		if p == nil || p.AdditionalProperties == nil || *p.AdditionalProperties {
+		if p == nil {
+			t.Fatalf("%s: parameters nil", ir.Name)
+		}
+		if got, ok := p.AdditionalProperties.(bool); !ok || got {
 			t.Fatalf("%s: additionalProperties must be false", ir.Name)
 		}
 		if p.Required == nil {

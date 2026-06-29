@@ -25,12 +25,13 @@ const (
 // It deliberately avoids oneOf/default/exclusiveMin/Max (rejected by OpenAI
 // strict and Gemini) and renders every enum and int64 as a string.
 type JSONSchema struct {
-	Type        string                 `json:"type"`
-	Description string                 `json:"description,omitempty"`
-	Properties  map[string]*JSONSchema `json:"properties,omitempty"`
-	Required    []string               `json:"required,omitempty"`
-	Items       *JSONSchema            `json:"items,omitempty"`
-	Enum        []string               `json:"enum,omitempty"`
+	Type                 string                 `json:"type"`
+	Description          string                 `json:"description,omitempty"`
+	Properties           map[string]*JSONSchema `json:"properties,omitempty"`
+	Required             []string               `json:"required,omitempty"`
+	Items                *JSONSchema            `json:"items,omitempty"`
+	Enum                 []string               `json:"enum,omitempty"`
+	AdditionalProperties *JSONSchema            `json:"additionalProperties,omitempty"`
 }
 
 // ToolIR is the provider-neutral description of one exposed RPC.
@@ -130,7 +131,7 @@ func schemaForMessage(md protoreflect.MessageDescriptor, depth int) *JSONSchema 
 
 func schemaForField(f protoreflect.FieldDescriptor, depth int) *JSONSchema {
 	if f.IsMap() {
-		return &JSONSchema{Type: "object"}
+		return &JSONSchema{Type: "object", AdditionalProperties: schemaForSingular(f.MapValue(), depth)}
 	}
 	if f.IsList() {
 		return &JSONSchema{Type: "array", Items: schemaForSingular(f, depth)}

@@ -50,7 +50,7 @@ type OpenAISchema struct {
 	Required             *[]string     `json:"required,omitempty"`
 	Items                *OpenAISchema `json:"items,omitempty"`
 	Enum                 []string      `json:"enum,omitempty"`
-	AdditionalProperties *bool         `json:"additionalProperties,omitempty"`
+	AdditionalProperties any           `json:"additionalProperties,omitempty"`
 }
 
 // DowngradeOpenAI renders the IR as an OpenAI strict function tool.
@@ -75,10 +75,14 @@ func toOpenAISchema(s *JSONSchema) *OpenAISchema {
 		out.Items = toOpenAISchema(s.Items)
 	}
 	if s.Type == "object" {
-		// Strict mode: additionalProperties:false and every property required
-		// (an empty object still emits `required: []`).
-		no := false
-		out.AdditionalProperties = &no
+		// Strict mode: every declared property is required. For closed objects,
+		// forbid undeclared keys; for proto maps, preserve the value schema as
+		// additionalProperties so arbitrary map keys remain valid.
+		if s.AdditionalProperties != nil {
+			out.AdditionalProperties = toOpenAISchema(s.AdditionalProperties)
+		} else {
+			out.AdditionalProperties = false
+		}
 		names := []string{}
 		if len(s.Properties) > 0 {
 			out.Properties = make(map[string]*OpenAISchema, len(s.Properties))
@@ -126,6 +130,10 @@ func toGeminiSchema(s *JSONSchema) *GeminiSchema {
 	out := &GeminiSchema{Type: s.Type, Description: s.Description, Required: s.Required, Enum: s.Enum}
 	if s.Items != nil {
 		out.Items = toGeminiSchema(s.Items)
+	}
+	if s.AdditionalProperties != nil {
+		// Gemini's compatible subset has no additionalProperties, so represent
+		// maps as open objects there.
 	}
 	if len(s.Properties) > 0 {
 		out.Properties = make(map[string]*GeminiSchema, len(s.Properties))
