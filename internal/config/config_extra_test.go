@@ -35,8 +35,67 @@ func TestBuildMissingConfigFile(t *testing.T) {
 }
 
 func TestValidateDirect(t *testing.T) {
-	c := &config.Config{}
-	if err := c.Validate(); err == nil {
-		t.Fatal("empty config should fail validation")
+	tests := []struct {
+		name    string
+		config  config.Config
+		wantErr string
+	}{
+		{
+			name: "valid config",
+			config: config.Config{
+				Server: config.ServerConfig{Addr: ":8080"},
+				Auth:   config.AuthConfig{JWTSecret: validSecret},
+			},
+			wantErr: "",
+		},
+		{
+			name: "missing server addr",
+			config: config.Config{
+				Server: config.ServerConfig{Addr: ""},
+				Auth:   config.AuthConfig{JWTSecret: validSecret},
+			},
+			wantErr: "invalid config: server.addr is required",
+		},
+		{
+			name: "missing jwt secret",
+			config: config.Config{
+				Server: config.ServerConfig{Addr: ":8080"},
+				Auth:   config.AuthConfig{JWTSecret: ""},
+			},
+			wantErr: "invalid config: auth.jwt_secret is required",
+		},
+		{
+			name: "short jwt secret",
+			config: config.Config{
+				Server: config.ServerConfig{Addr: ":8080"},
+				Auth:   config.AuthConfig{JWTSecret: "short"},
+			},
+			wantErr: "invalid config: auth.jwt_secret must be at least 32 bytes",
+		},
+		{
+			name: "multiple errors",
+			config: config.Config{
+				Server: config.ServerConfig{Addr: ""},
+				Auth:   config.AuthConfig{JWTSecret: "short"},
+			},
+			wantErr: "invalid config: server.addr is required; auth.jwt_secret must be at least 32 bytes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("expected error %q, got nil", tt.wantErr)
+				} else if err.Error() != tt.wantErr {
+					t.Errorf("expected error %q, got %q", tt.wantErr, err.Error())
+				}
+			}
+		})
 	}
 }
