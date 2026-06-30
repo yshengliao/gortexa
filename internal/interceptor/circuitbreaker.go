@@ -42,25 +42,28 @@ type breaker struct {
 	probes   int
 }
 
-func (b *breaker) allow() bool {
+// allow returns whether the request may proceed, plus state-change details for
+// the Open→HalfOpen probe transition so the caller can record the metric/span.
+func (b *breaker) allow() (ok bool, from, to cbState, changed bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	prev := b.state
 	switch b.state {
 	case cbOpen:
 		if time.Since(b.openedAt) >= b.openFor {
 			b.state = cbHalfOpen
 			b.probes = 1
-			return true
+			return true, prev, b.state, true
 		}
-		return false
+		return false, prev, b.state, false
 	case cbHalfOpen:
 		if b.probes < b.halfOpenMax {
 			b.probes++
-			return true
+			return true, prev, b.state, false
 		}
-		return false
+		return false, prev, b.state, false
 	default: // cbClosed
-		return true
+		return true, prev, b.state, false
 	}
 }
 
@@ -173,9 +176,11 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 			return handler(ctx, req)
 		}
 		b := c.get(info.FullMethod)
-		if !b.allow() {
+		ok, from, to, changed := b.allow()
+		if !ok {
 			return nil, apperr.New(apperr.CatUnavailable, "circuit open")
 		}
+		c.recordChange(ctx, info.FullMethod, from, to, changed)
 		// Record the outcome in a defer so a panicking handler still counts. A
 		// panic unwinds past this frame to the outer Recovery interceptor, so a
 		// non-deferred record would be skipped entirely: the breaker would never
@@ -200,9 +205,11 @@ func (c *CircuitBreaker) Stream() grpc.StreamServerInterceptor {
 			return handler(srv, ss)
 		}
 		b := c.get(info.FullMethod)
-		if !b.allow() {
+		ok, from, to, changed := b.allow()
+		if !ok {
 			return apperr.New(apperr.CatUnavailable, "circuit open")
 		}
+		c.recordChange(ss.Context(), info.FullMethod, from, to, changed)
 		// See Unary: record in a defer so a panicking handler still counts and a
 		// half-open probe slot is always released.
 		success := false

@@ -5,9 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![AI generated](https://img.shields.io/badge/AI%20generated-Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
 
-A contract-first, batteries-included **gRPC framework** for Go 1.26 — the gRPC
-analogue of the `gortex` HTTP framework. Protobuf is the single source of truth;
-**one h2c port** multiplexes three protocols:
+A contract-first, batteries-included **gRPC framework** for Go 1.26. Protobuf is
+the single source of truth; **one h2c port** multiplexes three protocols:
 
 - **gRPC** (native, over cleartext HTTP/2)
 - **HTTP/JSON** via grpc-gateway (`google.api.http` annotations)
@@ -69,7 +68,7 @@ Then, against the running server (health is open; `/v1/resources/x` returns 401 
 
 ```bash
 curl localhost:8080/healthz
-curl -XPOST localhost:8080/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl -XPOST localhost:8080/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 curl localhost:8080/v1/resources/x
 ```
 
@@ -95,7 +94,7 @@ curl localhost:8080/v1/resources/x
 | `gen/` | Generated code — **never hand-edit**, gitignored, produced by `make gen`. |
 | `internal/` | Framework packages (kernel, interceptor, errors, httpcompat, mcp, …). |
 | `cmd/server/` | Sample server wiring everything onto one port. |
-| `cmd/gortexa/` | The `gortexa` developer CLI (create / gen / regen / run / tools / skills). |
+| `cmd/gortexa/` | The `gortexa` developer CLI (create / gen / regen / run / tools / skills / doctor). |
 | `tools/` | Pinned dev toolchain as go.mod `tool` directives (buf, protoc plugins, sqlc, …). |
 | `.skills/` | Cross-tool AI skills (proto-regen, generating-apis, scaffolding-projects, …) for Claude/Codex/Copilot/Antigravity. |
 
@@ -124,8 +123,8 @@ error resolver swapped the reflection-based `errors.As` for the new generic
 | `errors.AsType` (after) | 144.8 | 104 | **2** |
 | **Δ** | **−40%** | **−7%** | **−33%** (p=0.000) |
 
-The toolchain bump itself (Green Tea GC, size-classed malloc, faster
-`io.ReadAll`) is allocation-neutral on the other hot paths — no regressions, with
+The toolchain bump itself (Green Tea GC, faster `io.ReadAll`) is
+allocation-neutral on the other hot paths — no regressions, with
 the measurable framework win coming from the `errors.AsType` adoption above.
 
 **Framework hot paths** (`go1.26.4`, `-benchmem -count=8`):
