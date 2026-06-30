@@ -24,8 +24,7 @@ func NewValidator() (protovalidate.Validator, error) { return protovalidate.New(
 // internals.
 func validationDetails(err error) (field, message string) {
 	field, message = "unknown", "validation failed"
-	var verr *protovalidate.ValidationError
-	if errors.As(err, &verr) && verr != nil {
+	if verr, ok := errors.AsType[*protovalidate.ValidationError](err); ok && verr != nil {
 		message = strings.Join(strings.Fields(verr.Error()), " ")
 		for _, v := range verr.Violations {
 			if v.FieldDescriptor != nil {

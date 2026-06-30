@@ -46,8 +46,7 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, err error, dur
 		attrs = append(attrs, "request_id", id)
 	}
 	if err != nil {
-		var e *apperr.Error
-		if errors.As(err, &e) && e != nil {
+		if e, ok := errors.AsType[*apperr.Error](err); ok && e != nil {
 			retryable := false
 			if m, ok := apperr.Default.Lookup(e.Category); ok {
 				retryable = m.Retryable
