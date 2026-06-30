@@ -1,11 +1,11 @@
 # Gortexa
 
-[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Status](https://img.shields.io/badge/status-active-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![AI generated](https://img.shields.io/badge/AI%20generated-Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
 
-A contract-first, batteries-included **gRPC framework** for Go 1.25 — the gRPC
+A contract-first, batteries-included **gRPC framework** for Go 1.26 — the gRPC
 analogue of the `gortex` HTTP framework. Protobuf is the single source of truth;
 **one h2c port** multiplexes three protocols:
 
@@ -35,8 +35,23 @@ analogue of the `gortex` HTTP framework. Protobuf is the single source of truth;
 
 ## Quickstart
 
+Install the dev toolchain with the one-line installer (Homebrew-style — corrects
+the Go env, installs the pinned tools), then scaffold and run with the CLI:
+
 ```bash
-make bootstrap   # install buf + protoc plugins + sqlc, fix the Go env, pull go1.25
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/yshengliao/gortexa/main/install.sh)"
+go install github.com/yshengliao/gortexa/cmd/gortexa@latest    # the gortexa CLI
+
+gortexa create myapp --module github.com/me/myapp   # scaffold a batteries-included project
+cd myapp
+gortexa gen billing/v1 Invoice                      # proto + logic stub + wiring + codegen
+gortexa run                                         # one h2c port on :8080
+```
+
+Or work in this repo directly with `make`:
+
+```bash
+make bootstrap   # install the pinned toolchain (tools/go.mod) + fix the Go env
 make gen         # generate gRPC/gateway/OpenAPI from proto (buf lint → breaking → generate)
 make test        # race tests with in-process fakes (bufconn/httptest/miniredis/embedded-nats)
 make run         # start the sample server on :8080
@@ -50,6 +65,20 @@ curl -XPOST localhost:8080/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"
 curl localhost:8080/v1/resources/x                            # 401 (auth shared with gRPC)
 ```
 
+## Developer CLI
+
+`gortexa` (in `cmd/gortexa`) makes the framework batteries-included:
+
+| Command | What |
+|---|---|
+| `gortexa create <path>` | Scaffold a new project (clone the layout, rewrite the module path). |
+| `gortexa gen <domain>/<v> [Entity]` | Generate a CRUD API end-to-end: proto + logic stub + server wiring, then regenerate. |
+| `gortexa regen` | Regenerate from proto (buf lint → breaking → generate). |
+| `gortexa run` | Build and run the dev server. |
+| `gortexa tools install` / `sync` | Install / re-pin the dev toolchain (`tools/go.mod` directives). |
+| `gortexa skills install` / `list` | Wire the AI-assist skills into Claude/Codex/Copilot/Antigravity. |
+| `gortexa doctor` | Check the Go toolchain and proto tools. |
+
 ## Layout
 
 | Path | What |
@@ -58,12 +87,18 @@ curl localhost:8080/v1/resources/x                            # 401 (auth shared
 | `gen/` | Generated code — **never hand-edit**, gitignored, produced by `make gen`. |
 | `internal/` | Framework packages (kernel, interceptor, errors, httpcompat, mcp, …). |
 | `cmd/server/` | Sample server wiring everything onto one port. |
-| `.skills/proto-regen/` | Cross-tool AI skill for regenerating proto (Claude/Codex/Copilot/Antigravity). |
+| `cmd/gortexa/` | The `gortexa` developer CLI (create / gen / regen / run / tools / skills). |
+| `tools/` | Pinned dev toolchain as go.mod `tool` directives (buf, protoc plugins, sqlc, …). |
+| `.skills/` | Cross-tool AI skills (proto-regen, generating-apis, scaffolding-projects, …) for Claude/Codex/Copilot/Antigravity. |
 
 ## Notes
 
-- Requires Go 1.25 (auto-downloaded via `GOTOOLCHAIN`). `make` exports the
+- Requires Go 1.26 (auto-downloaded via `GOTOOLCHAIN`). `make` exports the
   corrected module proxy env; run `install.sh` once if building outside `make`.
+- Built and measured on **Go 1.26** (Green Tea GC, `errors.AsType`, `b.Loop`
+  benchmarks): adopting `errors.AsType` drops an allocation on the error hot path
+  (3→2 allocs, ~−33% time); the toolchain bump is otherwise allocation-neutral on
+  the framework's measured hot paths.
 - Integration tests needing real PgBouncer/Kafka are behind the `integration`
   build tag (`make test-integration`); the default suite needs no services.
 
