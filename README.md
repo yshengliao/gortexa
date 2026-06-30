@@ -108,8 +108,8 @@ curl localhost:8080/v1/resources/x
 
 ## Performance
 
-Measured on **Go 1.26** with `benchstat` (`-benchmem -count=8`) on a shared
-Intel Xeon @ 2.8 GHz. `allocs/op` and `B/op` are the machine-independent signals;
+Measured on **Go 1.26** with `go test -benchmem -count=8` (summarized with
+`benchstat`) on a shared Intel Xeon @ 2.8 GHz. `allocs/op` and `B/op` are the machine-independent signals;
 `ns/op` is indicative (shared CI CPU). Reproduce with
 `go test -run='^$' -bench=. -benchmem -count=8 ./internal/...`.
 
