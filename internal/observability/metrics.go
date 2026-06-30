@@ -1,8 +1,6 @@
 package observability
 
 import (
-	"context"
-
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -44,11 +42,12 @@ func NewGovernanceMetrics() (*GovernanceMetrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &GovernanceMetrics{load, rl, cb, auth, val, health}, nil
-}
-
-func (g *GovernanceMetrics) RecordHealth(ctx context.Context, component string, state int64) {
-	if g != nil {
-		g.HealthStateGauge.Record(ctx, state, metric.WithAttributes())
-	}
+	return &GovernanceMetrics{
+		LoadShedTotal:    load,
+		RateLimitTotal:   rl,
+		CBStateChanges:   cb,
+		AuthDenied:       auth,
+		ValidationFails:  val,
+		HealthStateGauge: health,
+	}, nil
 }

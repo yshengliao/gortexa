@@ -2,6 +2,7 @@ package interceptor
 
 import (
 	"context"
+	"errors"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -82,13 +83,12 @@ func authReason(err error) string {
 	if err == nil {
 		return ""
 	}
-	if e, ok := err.(*apperr.Error); ok {
-		switch e.Msg {
-		case "missing authorization":
-			return "missing"
-		case "malformed authorization":
-			return "invalid"
-		}
+	if errors.Is(err, authpkg.ErrExpiredToken) {
+		return "expired"
+	}
+	var e *apperr.Error
+	if errors.As(err, &e) && e.Msg == "missing authorization" {
+		return "missing"
 	}
 	return "invalid"
 }

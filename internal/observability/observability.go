@@ -74,7 +74,10 @@ func (f fanoutHandler) WithGroup(name string) slog.Handler {
 // SetupLogs builds the process logger and, when configured, an OTel Logs exporter.
 func SetupLogs(ctx context.Context, logCfg config.LogConfig, obsCfg config.ObservConfig) (*slog.Logger, ShutdownFunc, error) {
 	opts := &slog.HandlerOptions{Level: parseLevel(logCfg.Level)}
-	stdout := slog.NewJSONHandler(os.Stdout, opts)
+	var stdout slog.Handler = slog.NewJSONHandler(os.Stdout, opts)
+	if logCfg.Format == "text" {
+		stdout = slog.NewTextHandler(os.Stdout, opts)
+	}
 	if obsCfg.LogsOTLP == "" {
 		return slog.New(stdout), noopShutdown, nil
 	}

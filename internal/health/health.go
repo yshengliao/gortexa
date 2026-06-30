@@ -128,8 +128,10 @@ func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_h
 	return nil
 }
 
-// StartMetricsExport periodically records component health states.
-func (r *Registry) StartMetricsExport(metrics *observability.GovernanceMetrics, interval time.Duration) {
+// StartMetricsExport records component health states every interval until ctx is
+// cancelled. The goroutine exits on ctx.Done so it never outlives the server
+// (goleak-safe); pass interval <= 0 for the 15s default.
+func (r *Registry) StartMetricsExport(ctx context.Context, metrics *observability.GovernanceMetrics, interval time.Duration) {
 	if metrics == nil {
 		return
 	}
@@ -139,10 +141,14 @@ func (r *Registry) StartMetricsExport(metrics *observability.GovernanceMetrics, 
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		for range ticker.C {
-			ctx := context.Background()
-			for component, state := range r.Snapshot(ctx) {
-				metrics.HealthStateGauge.Record(ctx, int64(state), metric.WithAttributes(attribute.String("component", component), attribute.Int("state", int(state))))
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for component, state := range r.Snapshot(ctx) {
+					metrics.HealthStateGauge.Record(ctx, int64(state), metric.WithAttributes(attribute.String("component", component), attribute.Int("state", int(state))))
+				}
 			}
 		}
 	}()

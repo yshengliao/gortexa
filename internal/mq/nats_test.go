@@ -1,4 +1,4 @@
-//go:build !unit
+//go:build integration
 
 package mq_test
 

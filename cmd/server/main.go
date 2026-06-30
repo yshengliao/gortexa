@@ -47,10 +47,14 @@ func configOptions() []config.Option {
 
 func run() error {
 	cfg := config.MustBuild(configOptions()...)
-	log := observability.NewLogger(cfg.Log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	log, logShutdown, err := observability.SetupLogs(ctx, cfg.Log, cfg.Observ)
+	if err != nil {
+		return fmt.Errorf("setup logs: %w", err)
+	}
 
 	traceShutdown, err := observability.SetupTracing(ctx, cfg.Observ)
 	if err != nil {
@@ -60,6 +64,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("setup metrics: %w", err)
 	}
+	// Governance metrics use the global meter provider installed by SetupMetrics
+	// (a no-op provider when no OTLP endpoint is configured, so this is safe).
+	govMetrics, err := observability.NewGovernanceMetrics()
+	if err != nil {
+		return fmt.Errorf("setup governance metrics: %w", err)
+	}
 
 	verifier, err := auth.NewVerifier([]byte(cfg.Auth.JWTSecret.Reveal()), cfg.Auth.Issuer)
 	if err != nil {
@@ -68,6 +78,7 @@ func run() error {
 	set, err := interceptor.NewSet(interceptor.Config{
 		Logger:   log,
 		Verifier: verifier,
+		Metrics:  govMetrics,
 		// Health checks are unauthenticated.
 		AuthSkip:       func(method string) bool { return strings.HasPrefix(method, "/grpc.health.") },
 		RateLimit:      interceptor.RateLimitConfig{RPS: 200, Burst: 100, TTL: 10 * time.Minute},
@@ -91,6 +102,7 @@ func run() error {
 		kernel.WithHTTPWrap(func(h http.Handler) http.Handler { return httpcompat.CORS(h, cfg.Server) }),
 		kernel.WithShutdownHook(traceShutdown),
 		kernel.WithShutdownHook(metricShutdown),
+		kernel.WithShutdownHook(logShutdown),
 	)
 	if err != nil {
 		return fmt.Errorf("build app: %w", err)
@@ -100,6 +112,8 @@ func run() error {
 	resourcev1.RegisterResourceServiceServer(app.GRPCServer(), logic.NewResourceService())
 	// gortexa:register — `gortexa gen` inserts RegisterXxxServiceServer calls above this line
 	app.Health().Register("self", func(context.Context) health.State { return health.Healthy })
+	// Export component health states as an OTel gauge; the goroutine stops on ctx.
+	app.Health().StartMetricsExport(ctx, govMetrics, 0)
 
 	// The gateway and MCP bridge forward through the in-process loopback so they
 	// share the full interceptor chain.
@@ -122,7 +136,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("mcp descriptors: %w", err)
 	}
-	bridge, err := mcp.NewBridge(conn, descs, apperr.Default)
+	bridge, err := mcp.NewBridge(conn, descs, apperr.Default, cfg.Observ)
 	if err != nil {
 		return fmt.Errorf("build mcp bridge: %w", err)
 	}

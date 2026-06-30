@@ -2,6 +2,8 @@ package interceptor
 
 import (
 	"context"
+	"errors"
+	"strings"
 
 	"buf.build/go/protovalidate"
 	"go.opentelemetry.io/otel/attribute"
@@ -16,10 +18,33 @@ import (
 // NewValidator builds a shared protovalidate validator (lazy rule compilation).
 func NewValidator() (protovalidate.Validator, error) { return protovalidate.New() }
 
-func recordValidation(ctx context.Context, gm *observability.GovernanceMetrics, method string, err error) {
-	if gm != nil && err != nil {
-		gm.ValidationFails.Add(ctx, 1, metric.WithAttributes(attribute.String("method", method), attribute.String("field", "unknown")))
+// validationDetails extracts the offending field name and a client-safe message
+// from a protovalidate error. Violations describe the caller's own request (field
+// names + rule messages), so they are safe to surface — they are not server
+// internals.
+func validationDetails(err error) (field, message string) {
+	field, message = "unknown", "validation failed"
+	var verr *protovalidate.ValidationError
+	if errors.As(err, &verr) {
+		message = strings.Join(strings.Fields(verr.Error()), " ")
+		for _, v := range verr.Violations {
+			if v.FieldDescriptor != nil {
+				field = string(v.FieldDescriptor.Name())
+				break
+			}
+		}
 	}
+	return field, message
+}
+
+// failValidation records the validation-failure metric (with the offending field)
+// and returns an InvalidArgument error carrying the field-aware client message.
+func failValidation(ctx context.Context, gm *observability.GovernanceMetrics, method string, err error) error {
+	field, message := validationDetails(err)
+	if gm != nil {
+		gm.ValidationFails.Add(ctx, 1, metric.WithAttributes(attribute.String("method", method), attribute.String("field", field)))
+	}
+	return apperr.Wrap(apperr.CatInvalidArgument, message, err)
 }
 
 // Validation enforces buf.validate rules, returning InvalidArgument on failure.
@@ -32,8 +57,7 @@ func Validation(v protovalidate.Validator, metrics ...*observability.GovernanceM
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if msg, ok := req.(proto.Message); ok {
 			if err := v.Validate(msg); err != nil {
-				recordValidation(ctx, gm, info.FullMethod, err)
-				return nil, apperr.Wrap(apperr.CatInvalidArgument, "validation failed", err)
+				return nil, failValidation(ctx, gm, info.FullMethod, err)
 			}
 		}
 		return handler(ctx, req)
@@ -65,8 +89,7 @@ func (s *validatingStream) RecvMsg(m any) error {
 	}
 	if msg, ok := m.(proto.Message); ok {
 		if err := s.validator.Validate(msg); err != nil {
-			recordValidation(s.Context(), s.metrics, s.method, err)
-			return apperr.Wrap(apperr.CatInvalidArgument, "validation failed", err)
+			return failValidation(s.Context(), s.metrics, s.method, err)
 		}
 	}
 	return nil
