@@ -21,8 +21,11 @@ func TestMaskSecretsPassthrough(t *testing.T) {
 	if got := MaskSecrets("", nil); got != "" {
 		t.Errorf("empty: got %q", got)
 	}
-	if got := MaskSecrets("not json", nil); got != "not json" {
-		t.Errorf("invalid JSON should pass through: got %q", got)
+	if got := MaskSecrets("not json", nil); got != "[UNPARSEABLE JSON REDACTED]" {
+		t.Errorf("invalid JSON should be redacted: got %q", got)
+	}
+	if got := MaskSecrets(`"just a string"`, nil); got != `"[REDACTED]"` {
+		t.Errorf("bare string JSON should be redacted: got %q", got)
 	}
 }
 

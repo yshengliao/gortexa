@@ -67,9 +67,8 @@ func (b *breaker) allow() (ok bool, from, to cbState, changed bool) {
 	}
 }
 
-func (b *breaker) record(success bool) (cbState, cbState, bool) {
+func (b *breaker) record(ctx context.Context, method string, success bool, c *CircuitBreaker) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	old := b.state
 	switch b.state {
 	case cbHalfOpen:
@@ -86,7 +85,7 @@ func (b *breaker) record(success bool) (cbState, cbState, bool) {
 	case cbClosed:
 		if success {
 			b.failures = 0
-			return old, b.state, old != b.state
+			break
 		}
 		b.failures++
 		if b.failures >= b.maxFailures {
@@ -98,7 +97,14 @@ func (b *breaker) record(success bool) (cbState, cbState, bool) {
 		// (another concurrent half-open probe failed first) is intentionally
 		// dropped: the open timer governs the next probe window.
 	}
-	return old, b.state, old != b.state
+
+	newState := b.state
+	changed := old != newState
+	b.mu.Unlock() // Unlock before potentially slow/blocking metric emission
+
+	if changed {
+		c.recordChange(ctx, method, old, newState)
+	}
 }
 
 func (s cbState) String() string {
@@ -174,7 +180,9 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 		if !ok {
 			return nil, apperr.New(apperr.CatUnavailable, "circuit open")
 		}
-		c.recordChange(ctx, info.FullMethod, from, to, changed)
+		if changed {
+			c.recordChange(ctx, info.FullMethod, from, to)
+		}
 		// Record the outcome in a defer so a panicking handler still counts. A
 		// panic unwinds past this frame to the outer Recovery interceptor, so a
 		// non-deferred record would be skipped entirely: the breaker would never
@@ -184,8 +192,7 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 		// after the defer runs, so Recovery still converts it to an Internal error.
 		success := false
 		defer func() {
-			from, to, changed := b.record(success)
-			c.recordChange(ctx, info.FullMethod, from, to, changed)
+			b.record(ctx, info.FullMethod, success, c)
 		}()
 		resp, err := handler(ctx, req)
 		success = !isFailure(err)
@@ -204,13 +211,14 @@ func (c *CircuitBreaker) Stream() grpc.StreamServerInterceptor {
 		if !ok {
 			return apperr.New(apperr.CatUnavailable, "circuit open")
 		}
-		c.recordChange(ss.Context(), info.FullMethod, from, to, changed)
+		if changed {
+			c.recordChange(ss.Context(), info.FullMethod, from, to)
+		}
 		// See Unary: record in a defer so a panicking handler still counts and a
 		// half-open probe slot is always released.
 		success := false
 		defer func() {
-			from, to, changed := b.record(success)
-			c.recordChange(ss.Context(), info.FullMethod, from, to, changed)
+			b.record(ss.Context(), info.FullMethod, success, c)
 		}()
 		err := handler(srv, ss)
 		success = !isFailure(err)
@@ -218,10 +226,7 @@ func (c *CircuitBreaker) Stream() grpc.StreamServerInterceptor {
 	}
 }
 
-func (c *CircuitBreaker) recordChange(ctx context.Context, method string, from cbState, to cbState, changed bool) {
-	if !changed {
-		return
-	}
+func (c *CircuitBreaker) recordChange(ctx context.Context, method string, from cbState, to cbState) {
 	attrs := []attribute.KeyValue{attribute.String("method", method), attribute.String("from", from.String()), attribute.String("to", to.String())}
 	if c.metrics != nil {
 		c.metrics.CBStateChanges.Add(ctx, 1, metric.WithAttributes(attrs...))

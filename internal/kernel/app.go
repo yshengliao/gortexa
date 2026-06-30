@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
@@ -152,6 +153,7 @@ func (a *App) Loopback() (*grpc.ClientConn, error) {
 				return a.loopbackLis.DialContext(ctx)
 			}),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		)
 		a.loopbackInit = true
 	}
