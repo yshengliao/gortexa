@@ -87,8 +87,15 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 		if isBinary(b) || !strings.Contains(string(b), oldMod) {
 			return nil
 		}
-		nb := strings.ReplaceAll(string(b), oldMod, newMod)
-		return os.WriteFile(path, []byte(nb), info.Mode().Perm())
+		s := string(b)
+		// Avoid blindly rewriting HTTPS URLs (like the github repo in README.md)
+		// by temporarily masking them.
+		const httpsMask = "HTTPS_GORTEXA_REPO_MASK_RESERVED"
+		s = strings.ReplaceAll(s, "https://"+oldMod, httpsMask)
+		s = strings.ReplaceAll(s, oldMod, newMod)
+		s = strings.ReplaceAll(s, httpsMask, "https://"+oldMod)
+
+		return os.WriteFile(path, []byte(s), info.Mode().Perm())
 	})
 }
 

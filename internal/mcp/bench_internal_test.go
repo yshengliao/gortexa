@@ -52,10 +52,14 @@ func BenchmarkDowngradeMCP(b *testing.B) {
 // BenchmarkBridgeHandlePost drives a full tools/list request through the HTTP
 // handler (Handler → servePost → handlePost), exercising the request-body
 // io.ReadAll path that Go 1.26 makes ~2x faster / ~half the allocations.
+// We pad the body to ~512KB to meaningfully stress io.ReadAll's allocation
+// behavior on unknown-size readers.
 func BenchmarkBridgeHandlePost(b *testing.B) {
 	br := benchBridge(b)
 	h := br.Handler()
-	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	padding := bytes.Repeat([]byte(" "), 512*1024)
+	body := append([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":[`), padding...)
+	body = append(body, []byte(`]}`)...)
 	b.ReportAllocs()
 	for b.Loop() {
 		r := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
