@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 
+	"go.opentelemetry.io/otel/baggage"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -67,7 +68,7 @@ func RequestID() grpc.UnaryServerInterceptor {
 		if id == "" {
 			id = newRequestID()
 		}
-		ctx = context.WithValue(ctx, requestIDKey{}, id)
+		ctx = withRequestIDBaggage(context.WithValue(ctx, requestIDKey{}, id), id)
 		_ = grpc.SetHeader(ctx, metadata.Pairs(RequestIDMetadataKey, id))
 		return handler(ctx, req)
 	}
@@ -80,8 +81,20 @@ func RequestIDStream() grpc.StreamServerInterceptor {
 		if id == "" {
 			id = newRequestID()
 		}
-		ctx := context.WithValue(ss.Context(), requestIDKey{}, id)
+		ctx := withRequestIDBaggage(context.WithValue(ss.Context(), requestIDKey{}, id), id)
 		_ = ss.SetHeader(metadata.Pairs(RequestIDMetadataKey, id))
 		return handler(srv, wrapStream(ss, ctx))
 	}
+}
+
+func withRequestIDBaggage(ctx context.Context, id string) context.Context {
+	member, err := baggage.NewMember(RequestIDMetadataKey, id)
+	if err != nil {
+		return ctx
+	}
+	bag, err := baggage.New(member)
+	if err != nil {
+		return ctx
+	}
+	return baggage.ContextWithBaggage(ctx, bag)
 }

@@ -1,3 +1,5 @@
+//go:build !unit
+
 package mq_test
 
 import (

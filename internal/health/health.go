@@ -8,8 +8,13 @@ import (
 	"maps"
 	"sort"
 	"sync"
+	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/yshengliao/gortexa/internal/observability"
 )
 
 // State is a component's health.
@@ -121,4 +126,24 @@ func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_h
 	}
 	<-stream.Context().Done()
 	return nil
+}
+
+// StartMetricsExport periodically records component health states.
+func (r *Registry) StartMetricsExport(metrics *observability.GovernanceMetrics, interval time.Duration) {
+	if metrics == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			ctx := context.Background()
+			for component, state := range r.Snapshot(ctx) {
+				metrics.HealthStateGauge.Record(ctx, int64(state), metric.WithAttributes(attribute.String("component", component), attribute.Int("state", int(state))))
+			}
+		}
+	}()
 }

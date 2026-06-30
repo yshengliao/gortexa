@@ -9,12 +9,16 @@ import (
 	"log/slog"
 	"os"
 
+	"go.opentelemetry.io/contrib/bridges/otelslog"
+
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	otlploggrpc "go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	otlpmetricgrpc "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	otlptracegrpc "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -29,16 +33,74 @@ type ShutdownFunc func(context.Context) error
 
 func noopShutdown(context.Context) error { return nil }
 
-// NewLogger builds a slog.Logger per config (JSON by default, text optional).
-func NewLogger(cfg config.LogConfig) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: parseLevel(cfg.Level)}
-	var h slog.Handler
-	if cfg.Format == "text" {
-		h = slog.NewTextHandler(os.Stdout, opts)
-	} else {
-		h = slog.NewJSONHandler(os.Stdout, opts)
+type fanoutHandler []slog.Handler
+
+func (f fanoutHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, h := range f {
+		if h.Enabled(ctx, level) {
+			return true
+		}
 	}
-	return slog.New(h)
+	return false
+}
+
+func (f fanoutHandler) Handle(ctx context.Context, rec slog.Record) error {
+	for _, h := range f {
+		if h.Enabled(ctx, rec.Level) {
+			if err := h.Handle(ctx, rec.Clone()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (f fanoutHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	out := make(fanoutHandler, len(f))
+	for i, h := range f {
+		out[i] = h.WithAttrs(attrs)
+	}
+	return out
+}
+
+func (f fanoutHandler) WithGroup(name string) slog.Handler {
+	out := make(fanoutHandler, len(f))
+	for i, h := range f {
+		out[i] = h.WithGroup(name)
+	}
+	return out
+}
+
+// SetupLogs builds the process logger and, when configured, an OTel Logs exporter.
+func SetupLogs(ctx context.Context, logCfg config.LogConfig, obsCfg config.ObservConfig) (*slog.Logger, ShutdownFunc, error) {
+	opts := &slog.HandlerOptions{Level: parseLevel(logCfg.Level)}
+	stdout := slog.NewJSONHandler(os.Stdout, opts)
+	if obsCfg.LogsOTLP == "" {
+		return slog.New(stdout), noopShutdown, nil
+	}
+	exp, err := otlploggrpc.New(ctx, otlploggrpc.WithEndpoint(obsCfg.LogsOTLP), otlploggrpc.WithInsecure())
+	if err != nil {
+		return nil, nil, err
+	}
+	res, err := newResource(ctx, obsCfg.ServiceName, obsCfg.ServiceVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(exp)), sdklog.WithResource(res))
+	otelHandler := otelslog.NewHandler("gortexa", otelslog.WithLoggerProvider(lp))
+	return slog.New(fanoutHandler{stdout, otelHandler}), lp.Shutdown, nil
+}
+
+// NewLogger returns an explicitly supplied logger, or builds the legacy stdout logger.
+func NewLogger(cfg config.LogConfig, logger ...*slog.Logger) *slog.Logger {
+	if len(logger) > 0 && logger[0] != nil {
+		return logger[0]
+	}
+	opts := &slog.HandlerOptions{Level: parseLevel(cfg.Level)}
+	if cfg.Format == "text" {
+		return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 }
 
 func parseLevel(s string) slog.Level {
@@ -68,8 +130,12 @@ func clampRatio(r float64) float64 {
 	}
 }
 
-func newResource(ctx context.Context, service string) (*resource.Resource, error) {
-	return resource.New(ctx, resource.WithAttributes(attribute.String("service.name", service)))
+func newResource(ctx context.Context, service, version string) (*resource.Resource, error) {
+	attrs := []attribute.KeyValue{attribute.String("service.name", service)}
+	if version != "" {
+		attrs = append(attrs, attribute.String("service.version", version))
+	}
+	return resource.New(ctx, resource.WithAttributes(attrs...))
 }
 
 // SetupTracing installs the global tracer provider. With no OTLP endpoint it
@@ -86,7 +152,7 @@ func SetupTracing(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, e
 	if err != nil {
 		return nil, err
 	}
-	res, err := newResource(ctx, cfg.ServiceName)
+	res, err := newResource(ctx, cfg.ServiceName, cfg.ServiceVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +178,7 @@ func SetupMetrics(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, e
 	if err != nil {
 		return nil, err
 	}
-	res, err := newResource(ctx, cfg.ServiceName)
+	res, err := newResource(ctx, cfg.ServiceName, cfg.ServiceVersion)
 	if err != nil {
 		return nil, err
 	}

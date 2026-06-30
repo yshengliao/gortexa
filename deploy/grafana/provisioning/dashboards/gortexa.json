@@ -1,0 +1,1 @@
+{"title":"Gortexa","schemaVersion":39,"panels":[{"title":"Error rate by method","type":"timeseries"},{"title":"Latency P95 / P99 by method","type":"timeseries"},{"title":"Circuit breaker state timeline","type":"state-timeline"},{"title":"Load shed rate","type":"bargauge"},{"title":"Component health state","type":"stat"}]}

@@ -1,0 +1,24 @@
+groups:
+  - name: gortexa.slo
+    rules:
+      - alert: ErrorBudgetFastBurn
+        expr: |
+          sum(rate(rpc_server_duration_count{rpc_grpc_status_code!="0"}[1h])) /
+          sum(rate(rpc_server_duration_count[1h])) > 14.4 * 0.001
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "Fast burn: error budget consumed 14.4x in 1h window"
+      - alert: LoadSheddingSpike
+        expr: increase(gortexa_load_shed_total[5m]) > 50
+        for: 1m
+        labels: {severity: warning}
+      - alert: CircuitBreakerOpen
+        expr: increase(gortexa_cb_state_changes_total{to="open"}[5m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: "Circuit breaker opened on {{ $labels.method }}"
+      - alert: HighAuthDenialRate
+        expr: rate(gortexa_auth_denied_total[5m]) > 10
+        for: 2m
+        labels: {severity: warning}

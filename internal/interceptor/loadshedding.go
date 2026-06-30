@@ -4,9 +4,12 @@ import (
 	"context"
 	"sync/atomic"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/grpc"
 
 	apperr "github.com/yshengliao/gortexa/internal/errors"
+	"github.com/yshengliao/gortexa/internal/observability"
 )
 
 // LoadSheddingConfig configures dual-signal shedding. Both signals are optional:
@@ -30,10 +33,17 @@ type LoadSheddingConfig struct {
 type LoadShedder struct {
 	cfg      LoadSheddingConfig
 	inflight atomic.Int64
+	metrics  *observability.GovernanceMetrics
 }
 
 // NewLoadShedder builds a LoadShedder from config.
-func NewLoadShedder(cfg LoadSheddingConfig) *LoadShedder { return &LoadShedder{cfg: cfg} }
+func NewLoadShedder(cfg LoadSheddingConfig, metrics ...*observability.GovernanceMetrics) *LoadShedder {
+	var m *observability.GovernanceMetrics
+	if len(metrics) > 0 {
+		m = metrics[0]
+	}
+	return &LoadShedder{cfg: cfg, metrics: m}
+}
 
 func (s *LoadShedder) cpuOverloaded() bool {
 	return s.cfg.MaxCPU > 0 && s.cfg.CPUSampler != nil && s.cfg.CPUSampler() > s.cfg.MaxCPU
@@ -41,17 +51,17 @@ func (s *LoadShedder) cpuOverloaded() bool {
 
 // admit reports whether to accept the call; the returned release must be called
 // when the call completes (it decrements the in-flight gauge).
-func (s *LoadShedder) admit() (release func(), err error) {
+func (s *LoadShedder) admit() (release func(), signal string, err error) {
 	if s.cpuOverloaded() {
-		return func() {}, apperr.New(apperr.CatResourceExhausted, "load shedding: cpu")
+		return func() {}, "cpu", apperr.New(apperr.CatResourceExhausted, "load shedding: cpu")
 	}
 	n := s.inflight.Add(1)
 	release = func() { s.inflight.Add(-1) }
 	if s.cfg.MaxInflight > 0 && n > int64(s.cfg.MaxInflight) {
 		release()
-		return func() {}, apperr.New(apperr.CatResourceExhausted, "load shedding: concurrency")
+		return func() {}, "inflight", apperr.New(apperr.CatResourceExhausted, "load shedding: concurrency")
 	}
-	return release, nil
+	return release, "", nil
 }
 
 // Unary returns the unary interceptor.
@@ -60,8 +70,11 @@ func (s *LoadShedder) Unary() grpc.UnaryServerInterceptor {
 		if s.cfg.Skip != nil && s.cfg.Skip(info.FullMethod) {
 			return handler(ctx, req)
 		}
-		release, err := s.admit()
+		release, signal, err := s.admit()
 		if err != nil {
+			if s.metrics != nil {
+				s.metrics.LoadShedTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("method", info.FullMethod), attribute.String("signal", signal)))
+			}
 			return nil, err
 		}
 		defer release()
@@ -75,8 +88,11 @@ func (s *LoadShedder) Stream() grpc.StreamServerInterceptor {
 		if s.cfg.Skip != nil && s.cfg.Skip(info.FullMethod) {
 			return handler(srv, ss)
 		}
-		release, err := s.admit()
+		release, signal, err := s.admit()
 		if err != nil {
+			if s.metrics != nil {
+				s.metrics.LoadShedTotal.Add(ss.Context(), 1, metric.WithAttributes(attribute.String("method", info.FullMethod), attribute.String("signal", signal)))
+			}
 			return err
 		}
 		defer release()

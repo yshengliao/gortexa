@@ -8,12 +8,15 @@ import (
 	"time"
 
 	"github.com/cespare/xxhash/v2"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/time/rate"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 
 	apperr "github.com/yshengliao/gortexa/internal/errors"
+	"github.com/yshengliao/gortexa/internal/observability"
 )
 
 // RateLimitConfig configures the per-peer token bucket. RPS <= 0 disables limiting.
@@ -53,6 +56,7 @@ type RateLimiter struct {
 	// maxEntriesShard is the per-shard cap; the global bound is this × shardCount.
 	maxEntriesShard int
 	shards          [shardCount]*rlShard
+	metrics         *observability.GovernanceMetrics
 }
 
 type rlEntry struct {
@@ -61,7 +65,7 @@ type rlEntry struct {
 }
 
 // NewRateLimiter builds a RateLimiter from config.
-func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
+func NewRateLimiter(cfg RateLimitConfig, metrics ...*observability.GovernanceMetrics) *RateLimiter {
 	burst := cfg.Burst
 	if burst <= 0 {
 		burst = 1
@@ -80,6 +84,9 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 		burst:           burst,
 		ttl:             ttl,
 		maxEntriesShard: perShard,
+	}
+	if len(metrics) > 0 {
+		l.metrics = metrics[0]
 	}
 	for i := range l.shards {
 		l.shards[i] = &rlShard{entries: make(map[string]*rlEntry)}
@@ -193,6 +200,9 @@ func (l *RateLimiter) allow(ctx context.Context) bool {
 func (l *RateLimiter) Unary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		if !l.allow(ctx) {
+			if l.metrics != nil {
+				l.metrics.RateLimitTotal.Add(ctx, 1, metric.WithAttributes(attribute.String("method", info.FullMethod)))
+			}
 			return nil, apperr.New(apperr.CatResourceExhausted, "rate limit exceeded")
 		}
 		return handler(ctx, req)
@@ -203,6 +213,9 @@ func (l *RateLimiter) Unary() grpc.UnaryServerInterceptor {
 func (l *RateLimiter) Stream() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		if !l.allow(ss.Context()) {
+			if l.metrics != nil {
+				l.metrics.RateLimitTotal.Add(ss.Context(), 1, metric.WithAttributes(attribute.String("method", info.FullMethod)))
+			}
 			return apperr.New(apperr.CatResourceExhausted, "rate limit exceeded")
 		}
 		return handler(srv, ss)
