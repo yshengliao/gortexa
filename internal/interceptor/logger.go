@@ -55,7 +55,7 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, err error, dur
 			for k, v := range e.Fields() {
 				attrs = append(attrs, k, v)
 			}
-		} else {
+		} else if !ok {
 			attrs = append(attrs, "error", err.Error())
 		}
 		log.ErrorContext(ctx, "rpc", attrs...)
