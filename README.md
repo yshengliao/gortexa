@@ -63,7 +63,7 @@ curl localhost:8080/v1/resources/x                            # 401 (auth shared
 ## Notes
 
 - Requires Go 1.25 (auto-downloaded via `GOTOOLCHAIN`). `make` exports the
-  corrected module proxy env; run `setup.sh` once if building outside `make`.
+  corrected module proxy env; run `install.sh` once if building outside `make`.
 - Integration tests needing real PgBouncer/Kafka are behind the `integration`
   build tag (`make test-integration`); the default suite needs no services.
 

@@ -14,7 +14,7 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
   JSON serializes `int64` as a string. Keep proto field types aligned with
   backing columns at design time.
 - **Environment:** the container ships a broken `GOPRIVATE`/`GOPROXY` that 403s.
-  Always build through `make` (it exports the corrected env) or run `setup.sh`
+  Always build through `make` (it exports the corrected env) or run `install.sh`
   first. Never `go get`/clone the upstream `gortex` repo — it is out of scope and
   unreachable; the cross-cutting modules here are clean-room implementations.
 - **Errors never leak internals.** Return `*errors.Error` with a `Category`;
