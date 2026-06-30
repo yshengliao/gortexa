@@ -15,8 +15,12 @@ func MaskSecrets(raw string, maskFields []string) string {
 	if len(maskFields) == 0 {
 		maskFields = defaultMaskFields
 	}
+	// UseNumber keeps integers exact: decoding into `any` would otherwise turn
+	// large numbers (e.g. 64-bit IDs) into float64 and lose precision on re-marshal.
 	var v any
-	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
 		return raw
 	}
 	mask(v, maskSet(maskFields))

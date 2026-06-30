@@ -2,8 +2,20 @@ package mcp
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestMaskSecretsPreservesLargeIntegers(t *testing.T) {
+	// 2^53+1 cannot be represented exactly as float64; UseNumber must preserve it.
+	out := MaskSecrets(`{"id":9007199254740993,"password":"p"}`, nil)
+	if !strings.Contains(out, "9007199254740993") {
+		t.Errorf("large integer lost precision: %s", out)
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Errorf("secret not masked: %s", out)
+	}
+}
 
 func TestMaskSecretsPassthrough(t *testing.T) {
 	if got := MaskSecrets("", nil); got != "" {

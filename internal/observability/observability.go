@@ -18,6 +18,7 @@ import (
 	otlpmetricgrpc "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	otlptracegrpc "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -144,6 +145,9 @@ func newResource(ctx context.Context, service, version string) (*resource.Resour
 // SetupTracing installs the global tracer provider. With no OTLP endpoint it
 // installs a no-op provider and a no-op shutdown.
 func SetupTracing(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, error) {
+	// Propagate W3C trace context and baggage across services and the in-process
+	// loopback, regardless of whether this service exports spans.
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	if cfg.TracingOTLP == "" {
 		otel.SetTracerProvider(tracenoop.NewTracerProvider())
 		return noopShutdown, nil

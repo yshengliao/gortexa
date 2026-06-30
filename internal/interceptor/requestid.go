@@ -92,7 +92,9 @@ func withRequestIDBaggage(ctx context.Context, id string) context.Context {
 	if err != nil {
 		return ctx
 	}
-	bag, err := baggage.New(member)
+	// Merge into any baggage already on the context (e.g. tenant/user keys
+	// propagated from upstream) rather than replacing it.
+	bag, err := baggage.FromContext(ctx).SetMember(member)
 	if err != nil {
 		return ctx
 	}

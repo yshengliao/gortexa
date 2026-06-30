@@ -443,7 +443,7 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 	}
 	out := dynamicpb.NewMessage(tool.Output)
 
-	ctx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 	attrs := []attribute.KeyValue{attribute.String("gen_ai.tool.name", p.Name), attribute.String("mcp.method.name", "tools/call"), attribute.String("mcp.protocol.version", protocolVersion), attribute.String("jsonrpc.request.id", string(id))}
 	if sid := r.Header.Get("Mcp-Session-Id"); sid != "" {
 		attrs = append(attrs, attribute.String("mcp.session.id", sid))

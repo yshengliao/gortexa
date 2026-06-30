@@ -146,7 +146,11 @@ func (r *Registry) StartMetricsExport(ctx context.Context, metrics *observabilit
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				for component, state := range r.Snapshot(ctx) {
+				// Bound each evaluation so a hung check can't stall the exporter.
+				evalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				snapshot := r.Snapshot(evalCtx)
+				cancel()
+				for component, state := range snapshot {
 					metrics.HealthStateGauge.Record(ctx, int64(state), metric.WithAttributes(attribute.String("component", component), attribute.Int("state", int(state))))
 				}
 			}

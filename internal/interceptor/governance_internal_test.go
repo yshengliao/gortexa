@@ -1,14 +1,38 @@
 package interceptor
 
 import (
+	"context"
 	"testing"
 
 	"buf.build/go/protovalidate"
+	"go.opentelemetry.io/otel/baggage"
 
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 	authpkg "github.com/yshengliao/gortexa/internal/auth"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
+
+func TestWithRequestIDBaggagePreservesUpstream(t *testing.T) {
+	up, err := baggage.NewMember("tenant", "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upBag, err := baggage.New(up)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := baggage.ContextWithBaggage(context.Background(), upBag)
+
+	ctx = withRequestIDBaggage(ctx, "req-123")
+
+	b := baggage.FromContext(ctx)
+	if got := b.Member("tenant").Value(); got != "acme" {
+		t.Errorf("upstream baggage dropped: tenant=%q", got)
+	}
+	if got := b.Member(RequestIDMetadataKey).Value(); got != "req-123" {
+		t.Errorf("request-id baggage missing: %q", got)
+	}
+}
 
 func TestAuthReason(t *testing.T) {
 	cases := []struct {

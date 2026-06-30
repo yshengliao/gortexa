@@ -53,10 +53,12 @@ func (t *DBTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.Trac
 	span.End()
 }
 
-// WithServerAddress records the database server address on query spans.
+// WithServerAddress returns a copy of the tracer that records the database server
+// address on query spans. It does not mutate the receiver, so one tracer can be
+// safely specialized per pool (e.g. read vs write) without cross-contamination.
 func (t *DBTracer) WithServerAddress(addr string) *DBTracer {
-	if t != nil {
-		t.serverAddress = addr
+	if t == nil {
+		return nil
 	}
-	return t
+	return &DBTracer{tracer: t.tracer, serverAddress: addr}
 }
