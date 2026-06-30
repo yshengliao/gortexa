@@ -2,6 +2,8 @@ module github.com/yshengliao/gortexa/tools
 
 go 1.26.0
 
+toolchain go1.26.4
+
 tool (
 	github.com/bufbuild/buf/cmd/buf
 	github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway
