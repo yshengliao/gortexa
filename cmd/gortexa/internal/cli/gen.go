@@ -103,10 +103,10 @@ func ensureWritable(path string, force bool) error {
 	info, err := os.Stat(path)
 	if err == nil {
 		if info.IsDir() {
-			return fmt.Errorf("%s is a directory", path)
+			return fmt.Errorf("%q is a directory", path)
 		}
 		if !force {
-			return fmt.Errorf("%s already exists (use --force to overwrite)", path)
+			return fmt.Errorf("%q already exists (use --force to overwrite)", path)
 		}
 		return nil
 	}

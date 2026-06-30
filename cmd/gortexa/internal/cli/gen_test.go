@@ -213,4 +213,15 @@ func TestEnsureWritable(t *testing.T) {
 	if err := ensureWritable(dir, true); err == nil {
 		t.Error("directory target should be rejected even with --force")
 	}
+
+	// A stat error that is not "not found" must surface in preflight rather than
+	// pass through and fail mid-generation. We provoke ENOTDIR (a regular file
+	// used as a parent component) instead of a 0o000-permission dir, because the
+	// suite runs as root, which bypasses permission bits and would make a
+	// permission-denied case flaky.
+	notDir := filepath.Join(root, "afile")
+	writeFixture(t, notDir, "x")
+	if err := ensureWritable(filepath.Join(notDir, "child.proto"), false); err == nil {
+		t.Error("a non-NotExist stat error (ENOTDIR) should be surfaced")
+	}
 }
