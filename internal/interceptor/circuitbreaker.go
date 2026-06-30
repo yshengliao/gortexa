@@ -180,7 +180,9 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 		if !ok {
 			return nil, apperr.New(apperr.CatUnavailable, "circuit open")
 		}
-		c.recordChange(ctx, info.FullMethod, from, to, changed)
+		if changed {
+			c.recordChange(ctx, info.FullMethod, from, to)
+		}
 		// Record the outcome in a defer so a panicking handler still counts. A
 		// panic unwinds past this frame to the outer Recovery interceptor, so a
 		// non-deferred record would be skipped entirely: the breaker would never
@@ -209,7 +211,9 @@ func (c *CircuitBreaker) Stream() grpc.StreamServerInterceptor {
 		if !ok {
 			return apperr.New(apperr.CatUnavailable, "circuit open")
 		}
-		c.recordChange(ss.Context(), info.FullMethod, from, to, changed)
+		if changed {
+			c.recordChange(ss.Context(), info.FullMethod, from, to)
+		}
 		// See Unary: record in a defer so a panicking handler still counts and a
 		// half-open probe slot is always released.
 		success := false
