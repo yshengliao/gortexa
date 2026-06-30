@@ -21,12 +21,19 @@ func MaskSecrets(raw string, maskFields []string) string {
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&v); err != nil {
-		return raw
+		return "[UNPARSEABLE JSON REDACTED]"
 	}
-	mask(v, maskSet(maskFields))
+	// If the root is just a string/number/bool, we don't know if it's a secret,
+	// so we defensively mask it.
+	switch v.(type) {
+	case string, json.Number, bool:
+		v = "[REDACTED]"
+	default:
+		mask(v, maskSet(maskFields))
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
-		return raw
+		return "[UNPARSEABLE JSON REDACTED]"
 	}
 	return string(b)
 }

@@ -6,6 +6,7 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -74,7 +75,11 @@ func (f fanoutHandler) WithGroup(name string) slog.Handler {
 
 // SetupLogs builds the process logger and, when configured, an OTel Logs exporter.
 func SetupLogs(ctx context.Context, logCfg config.LogConfig, obsCfg config.ObservConfig) (*slog.Logger, ShutdownFunc, error) {
-	opts := &slog.HandlerOptions{Level: parseLevel(logCfg.Level)}
+	lvl, err := parseLevel(logCfg.Level)
+	if err != nil {
+		return nil, nil, err
+	}
+	opts := &slog.HandlerOptions{Level: lvl}
 	var stdout slog.Handler = slog.NewJSONHandler(os.Stdout, opts)
 	if logCfg.Format == "text" {
 		stdout = slog.NewTextHandler(os.Stdout, opts)
@@ -100,23 +105,29 @@ func NewLogger(cfg config.LogConfig, logger ...*slog.Logger) *slog.Logger {
 	if len(logger) > 0 && logger[0] != nil {
 		return logger[0]
 	}
-	opts := &slog.HandlerOptions{Level: parseLevel(cfg.Level)}
+	lvl, err := parseLevel(cfg.Level)
+	if err != nil {
+		panic("invalid log level: " + cfg.Level)
+	}
+	opts := &slog.HandlerOptions{Level: lvl}
 	if cfg.Format == "text" {
 		return slog.New(slog.NewTextHandler(os.Stdout, opts))
 	}
 	return slog.New(slog.NewJSONHandler(os.Stdout, opts))
 }
 
-func parseLevel(s string) slog.Level {
+func parseLevel(s string) (slog.Level, error) {
 	switch s {
 	case "debug":
-		return slog.LevelDebug
+		return slog.LevelDebug, nil
+	case "info", "":
+		return slog.LevelInfo, nil
 	case "warn":
-		return slog.LevelWarn
+		return slog.LevelWarn, nil
 	case "error":
-		return slog.LevelError
+		return slog.LevelError, nil
 	default:
-		return slog.LevelInfo
+		return slog.LevelInfo, fmt.Errorf("invalid log level %q", s)
 	}
 }
 

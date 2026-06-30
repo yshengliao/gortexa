@@ -5,15 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/goleak"
-
 	"github.com/yshengliao/gortexa/internal/observability"
+	"github.com/yshengliao/gortexa/testutil"
 )
 
 // TestStartMetricsExportStopsOnContextCancel guards the export goroutine's
 // lifecycle: it must observe ctx.Done and return, leaving no leaked goroutine.
 func TestStartMetricsExportStopsOnContextCancel(t *testing.T) {
-	defer goleak.VerifyNone(t)
+	defer testutil.AssertNoLeak(t)
 
 	gm, err := observability.NewGovernanceMetrics()
 	if err != nil {
