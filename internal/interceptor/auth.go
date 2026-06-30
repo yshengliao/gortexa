@@ -87,7 +87,7 @@ func authReason(err error) string {
 		return "expired"
 	}
 	var e *apperr.Error
-	if errors.As(err, &e) && e.Msg == "missing authorization" {
+	if errors.As(err, &e) && e != nil && e.Msg == "missing authorization" {
 		return "missing"
 	}
 	return "invalid"
