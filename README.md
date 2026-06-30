@@ -103,12 +103,49 @@ curl localhost:8080/v1/resources/x
 
 - Requires Go 1.26 (auto-downloaded via `GOTOOLCHAIN`). `make` exports the
   corrected module proxy env; run `install.sh` once if building outside `make`.
-- Built and measured on **Go 1.26** (Green Tea GC, `errors.AsType`, `b.Loop`
-  benchmarks): adopting `errors.AsType` drops an allocation on the error hot path
-  (3→2 allocs, ~−33% time); the toolchain bump is otherwise allocation-neutral on
-  the framework's measured hot paths.
 - Integration tests needing real PgBouncer/Kafka are behind the `integration`
   build tag (`make test-integration`); the default suite needs no services.
+
+## Performance
+
+Measured on **Go 1.26** with `go test -benchmem -count=8` (summarized with
+`benchstat`) on a shared Intel Xeon @ 2.8 GHz. `allocs/op` and `B/op` are the machine-independent signals;
+`ns/op` is indicative (shared CI CPU). Reproduce with
+`go test -run='^$' -bench=. -benchmem -count=8 ./internal/...`.
+
+**The Go 1.26 win — `errors.AsType` on the error hot path.** The three-transport
+error resolver swapped the reflection-based `errors.As` for the new generic
+`errors.AsType[*Error]`, removing one allocation per resolve. Same-toolchain A/B
+(`go1.26.4`, `BenchmarkErrorResolve`, n=8):
+
+| `resolve` via | ns/op | B/op | allocs/op |
+|---|--:|--:|--:|
+| `errors.As` (before) | 242.3 | 112 | 3 |
+| `errors.AsType` (after) | 144.8 | 104 | **2** |
+| **Δ** | **−40%** | **−7%** | **−33%** (p=0.000) |
+
+The toolchain bump itself (Green Tea GC, size-classed malloc, faster
+`io.ReadAll`) is allocation-neutral on the other hot paths — no regressions, with
+the measurable framework win coming from the `errors.AsType` adoption above.
+
+**Framework hot paths** (`go1.26.4`, `-benchmem -count=8`):
+
+| Hot path | ns/op | B/op | allocs/op |
+|---|--:|--:|--:|
+| Error resolve → gRPC status (3-transport map) | ~145 | 104 | 2 |
+| Rate-limiter `Allow` (sharded, serial) | ~210 | 0 | 0 |
+| Rate-limiter `Allow` (parallel) | ~54 | 0 | 0 |
+| MCP tool downgrade (per tool) | ~19 | 2 | 1 |
+| MCP `tools/list` (memoized) | ~370 | 360 | 3 |
+| Resource clone (proto deep-copy) | ~280 | 176 | 2 |
+| Resource get (in-memory store) | ~300 | 176 | 2 |
+| Full interceptor chain (8 stages, unary) | ~2,900 | 1,288 | 26 |
+
+The paths that must never allocate (rate-limiter `Allow`) hold at **0 allocs/op**.
+`BenchmarkBridgeHandlePost` separately drives a **512 KB** MCP request through the
+full HTTP → JSON-RPC → dispatch path to exercise Go 1.26's faster `io.ReadAll`; at
+that body size the read/parse allocation (~1.6 MB) dominates, so it measures
+end-to-end large-body handling rather than `io.ReadAll` in isolation.
 
 ## Provenance
 
