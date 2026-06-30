@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package [[.Domain]].[[.Version]];
+
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "buf/validate/validate.proto";
+import "ai/v1/annotations.proto";
+
+option go_package = "[[.Module]]/gen/[[.Domain]]/[[.Version]];[[.GoPkg]]";
+
+// [[.Entity]] is the entity managed by [[.Entity]]Service.
+message [[.Entity]] {
+  string id = 1;
+  string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 128}];
+  google.protobuf.Timestamp created_at = 3;
+}
+
+message Create[[.Entity]]Request {
+  [[.Entity]] [[.Snake]] = 1 [(buf.validate.field).required = true];
+}
+
+message Get[[.Entity]]Request {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message List[[.Plural]]Request {
+  int32 page_size = 1 [(buf.validate.field).int32 = {gte: 0, lte: 1000}];
+  string page_token = 2;
+}
+
+message List[[.Plural]]Response {
+  repeated [[.Entity]] [[.PluralSnake]] = 1;
+  string next_page_token = 2;
+}
+
+message Update[[.Entity]]Request {
+  [[.Entity]] [[.Snake]] = 1 [(buf.validate.field).required = true];
+}
+
+message Delete[[.Entity]]Request {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+// [[.Entity]]Service is a CRUD service exposed over gRPC, HTTP/JSON (gateway)
+// and MCP — the AI-tool annotations make each RPC an MCP tool.
+service [[.Entity]]Service {
+  rpc Create[[.Entity]](Create[[.Entity]]Request) returns ([[.Entity]]) {
+    option (google.api.http) = {
+      post: "/[[.Version]]/[[.PluralSnake]]"
+      body: "[[.Snake]]"
+    };
+    option (ai.v1.ai_tool) = {
+      expose: true
+      name: "create_[[.Snake]]"
+      description: "Create a new [[.Snake]]."
+      destructive: true
+    };
+  }
+
+  rpc Get[[.Entity]](Get[[.Entity]]Request) returns ([[.Entity]]) {
+    option (google.api.http) = {get: "/[[.Version]]/[[.PluralSnake]]/{id}"};
+    option (ai.v1.ai_tool) = {
+      expose: true
+      name: "get_[[.Snake]]"
+      description: "Fetch a [[.Snake]] by id."
+      read_only: true
+    };
+  }
+
+  rpc List[[.Plural]](List[[.Plural]]Request) returns (List[[.Plural]]Response) {
+    option (google.api.http) = {get: "/[[.Version]]/[[.PluralSnake]]"};
+    option (ai.v1.ai_tool) = {
+      expose: true
+      name: "list_[[.PluralSnake]]"
+      description: "List [[.PluralSnake]] with paging."
+      read_only: true
+    };
+  }
+
+  rpc Update[[.Entity]](Update[[.Entity]]Request) returns ([[.Entity]]) {
+    option (google.api.http) = {
+      patch: "/[[.Version]]/[[.PluralSnake]]/{[[.Snake]].id}"
+      body: "[[.Snake]]"
+    };
+  }
+
+  rpc Delete[[.Entity]](Delete[[.Entity]]Request) returns (google.protobuf.Empty) {
+    option (google.api.http) = {delete: "/[[.Version]]/[[.PluralSnake]]/{id}"};
+    option (ai.v1.ai_tool) = {
+      expose: true
+      name: "delete_[[.Snake]]"
+      description: "Delete a [[.Snake]] by id."
+      destructive: true
+    };
+  }
+}

@@ -531,7 +531,7 @@ func negotiateResponseType(accept string) (string, bool) {
 
 	jsonAcceptable := false
 	eventStreamAcceptable := false
-	for _, part := range strings.Split(accept, ",") {
+	for part := range strings.SplitSeq(accept, ",") {
 		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
 		if err != nil {
 			continue

@@ -18,8 +18,7 @@ func BenchmarkResourceClone(b *testing.B) {
 		Status: resourcev1.Status_STATUS_ACTIVE, CreatedAt: timestamppb.Now(),
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = proto.Clone(r)
 	}
 }
@@ -35,8 +34,7 @@ func BenchmarkGetResource(b *testing.B) {
 	}
 	req := &resourcev1.GetResourceRequest{Id: created.GetId()}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := svc.GetResource(context.Background(), req); err != nil {
 			b.Fatal(err)
 		}

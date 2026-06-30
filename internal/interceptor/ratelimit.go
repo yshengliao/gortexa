@@ -74,10 +74,7 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 	if maxEntries <= 0 {
 		maxEntries = 100_000
 	}
-	perShard := maxEntries / shardCount
-	if perShard < 1 {
-		perShard = 1
-	}
+	perShard := max(maxEntries/shardCount, 1)
 	l := &RateLimiter{
 		rps:             rate.Limit(cfg.RPS),
 		burst:           burst,

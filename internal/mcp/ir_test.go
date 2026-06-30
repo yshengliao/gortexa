@@ -137,20 +137,20 @@ func depthLimitService(t *testing.T, input string, messages []messageSpec) proto
 		fields := []*descriptorpb.FieldDescriptorProto(nil)
 		if msg.fieldType != "" {
 			fields = []*descriptorpb.FieldDescriptorProto{{
-				Name:     proto.String("child"),
-				JsonName: proto.String("child"),
+				Name:     new("child"),
+				JsonName: new("child"),
 				Number:   proto.Int32(1),
 				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
 				Type:     descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(),
-				TypeName: proto.String(msg.fieldType),
+				TypeName: new(msg.fieldType),
 			}}
 		}
 		msgProtos = append(msgProtos, &descriptorpb.DescriptorProto{
-			Name:  proto.String(msg.name),
+			Name:  new(msg.name),
 			Field: fields,
 		})
 	}
-	msgProtos = append(msgProtos, &descriptorpb.DescriptorProto{Name: proto.String("Empty")})
+	msgProtos = append(msgProtos, &descriptorpb.DescriptorProto{Name: new("Empty")})
 
 	methodOptions := &descriptorpb.MethodOptions{}
 	proto.SetExtension(methodOptions, aiv1.E_AiTool, &aiv1.AIToolOptions{
@@ -159,16 +159,16 @@ func depthLimitService(t *testing.T, input string, messages []messageSpec) proto
 	})
 
 	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
-		Name:        proto.String("mcp/depthtest.proto"),
-		Package:     proto.String("mcp.depthtest"),
-		Syntax:      proto.String("proto3"),
+		Name:        new("mcp/depthtest.proto"),
+		Package:     new("mcp.depthtest"),
+		Syntax:      new("proto3"),
 		MessageType: msgProtos,
 		Service: []*descriptorpb.ServiceDescriptorProto{{
-			Name: proto.String("DepthService"),
+			Name: new("DepthService"),
 			Method: []*descriptorpb.MethodDescriptorProto{{
-				Name:       proto.String("Depth"),
-				InputType:  proto.String(".mcp.depthtest." + input),
-				OutputType: proto.String(".mcp.depthtest.Empty"),
+				Name:       new("Depth"),
+				InputType:  new(".mcp.depthtest." + input),
+				OutputType: new(".mcp.depthtest.Empty"),
 				Options:    methodOptions,
 			}},
 		}},

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
+	// gortexa:import — `gortexa gen` inserts generated-package imports above this line
 	"github.com/yshengliao/gortexa/internal/auth"
 	"github.com/yshengliao/gortexa/internal/config"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
@@ -97,6 +98,7 @@ func run() error {
 
 	// Register the gRPC service and a self health check.
 	resourcev1.RegisterResourceServiceServer(app.GRPCServer(), logic.NewResourceService())
+	// gortexa:register — `gortexa gen` inserts RegisterXxxServiceServer calls above this line
 	app.Health().Register("self", func(context.Context) health.State { return health.Healthy })
 
 	// The gateway and MCP bridge forward through the in-process loopback so they
@@ -110,9 +112,13 @@ func run() error {
 	if err := resourcev1.RegisterResourceServiceHandler(ctx, gateway, conn); err != nil {
 		return fmt.Errorf("register gateway: %w", err)
 	}
+	// gortexa:gateway — `gortexa gen` inserts RegisterXxxServiceHandler blocks above this line
 	app.SetGateway(gateway)
 
-	descs, err := mcp.ServiceDescriptors("resource.v1.ResourceService")
+	descs, err := mcp.ServiceDescriptors(
+		"resource.v1.ResourceService",
+		// gortexa:mcp — `gortexa gen` inserts "domain.v1.XxxService" entries above this line
+	)
 	if err != nil {
 		return fmt.Errorf("mcp descriptors: %w", err)
 	}

@@ -1,0 +1,107 @@
+package logic
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"sync"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	[[.GoPkg]] "[[.Module]]/gen/[[.Domain]]/[[.Version]]"
+	apperr "[[.Module]]/internal/errors"
+)
+
+// [[.Entity]]Service is an in-memory implementation of
+// [[.Domain]].[[.Version]].[[.Entity]]Service. Back it with internal/storage for
+// a real datastore; the in-memory store is enough to exercise gRPC, the gateway
+// and MCP end-to-end.
+type [[.Entity]]Service struct {
+	[[.GoPkg]].Unimplemented[[.Entity]]ServiceServer
+	mu    sync.RWMutex
+	store map[string]*[[.GoPkg]].[[.Entity]]
+}
+
+// New[[.Entity]]Service returns an empty in-memory service.
+func New[[.Entity]]Service() *[[.Entity]]Service {
+	return &[[.Entity]]Service{store: make(map[string]*[[.GoPkg]].[[.Entity]])}
+}
+
+func new[[.Entity]]ID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// clone[[.Entity]] isolates stored state from callers (the mutation boundary).
+func clone[[.Entity]](r *[[.GoPkg]].[[.Entity]]) *[[.GoPkg]].[[.Entity]] {
+	return proto.Clone(r).(*[[.GoPkg]].[[.Entity]])
+}
+
+// Create[[.Entity]] stores a new [[.Snake]], assigning an id and timestamp.
+func (s *[[.Entity]]Service) Create[[.Entity]](_ context.Context, req *[[.GoPkg]].Create[[.Entity]]Request) (*[[.GoPkg]].[[.Entity]], error) {
+	in := req.Get[[.Entity]]()
+	if in == nil {
+		return nil, apperr.New(apperr.CatInvalidArgument, "[[.Snake]] is required")
+	}
+	out := &[[.GoPkg]].[[.Entity]]{
+		Id:        new[[.Entity]]ID(),
+		Name:      in.GetName(),
+		CreatedAt: timestamppb.Now(),
+	}
+	s.mu.Lock()
+	s.store[out.Id] = out
+	s.mu.Unlock()
+	return clone[[.Entity]](out), nil
+}
+
+// Get[[.Entity]] returns a [[.Snake]] by id.
+func (s *[[.Entity]]Service) Get[[.Entity]](_ context.Context, req *[[.GoPkg]].Get[[.Entity]]Request) (*[[.GoPkg]].[[.Entity]], error) {
+	s.mu.RLock()
+	r, ok := s.store[req.GetId()]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, apperr.New(apperr.CatNotFound, "[[.Snake]] not found")
+	}
+	return clone[[.Entity]](r), nil
+}
+
+// List[[.Plural]] returns all stored [[.PluralSnake]].
+func (s *[[.Entity]]Service) List[[.Plural]](_ context.Context, _ *[[.GoPkg]].List[[.Plural]]Request) (*[[.GoPkg]].List[[.Plural]]Response, error) {
+	s.mu.RLock()
+	out := make([]*[[.GoPkg]].[[.Entity]], 0, len(s.store))
+	for _, r := range s.store {
+		out = append(out, clone[[.Entity]](r))
+	}
+	s.mu.RUnlock()
+	return &[[.GoPkg]].List[[.Plural]]Response{[[.Plural]]: out}, nil
+}
+
+// Update[[.Entity]] replaces a [[.Snake]]'s mutable fields.
+func (s *[[.Entity]]Service) Update[[.Entity]](_ context.Context, req *[[.GoPkg]].Update[[.Entity]]Request) (*[[.GoPkg]].[[.Entity]], error) {
+	in := req.Get[[.Entity]]()
+	if in == nil || in.GetId() == "" {
+		return nil, apperr.New(apperr.CatInvalidArgument, "[[.Snake]].id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.store[in.GetId()]
+	if !ok {
+		return nil, apperr.New(apperr.CatNotFound, "[[.Snake]] not found")
+	}
+	existing.Name = in.GetName()
+	return clone[[.Entity]](existing), nil
+}
+
+// Delete[[.Entity]] removes a [[.Snake]] by id.
+func (s *[[.Entity]]Service) Delete[[.Entity]](_ context.Context, req *[[.GoPkg]].Delete[[.Entity]]Request) (*emptypb.Empty, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.store[req.GetId()]; !ok {
+		return nil, apperr.New(apperr.CatNotFound, "[[.Snake]] not found")
+	}
+	delete(s.store, req.GetId())
+	return &emptypb.Empty{}, nil
+}

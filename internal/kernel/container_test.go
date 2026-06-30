@@ -30,7 +30,7 @@ func TestLazySingleton(t *testing.T) {
 		built.Add(1)
 		return "x"
 	})
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		if _, err := kernel.Get[string](c); err != nil {
 			t.Fatal(err)
 		}
@@ -74,14 +74,12 @@ func TestConcurrentResolveBuildsOnce(t *testing.T) {
 		return &n
 	})
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			if _, err := kernel.Get[*int](c); err != nil {
 				t.Error(err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if built.Load() != 1 {

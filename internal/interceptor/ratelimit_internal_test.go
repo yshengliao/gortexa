@@ -69,7 +69,7 @@ func TestRateLimiterForwardedForOnLoopback(t *testing.T) {
 // the cap, so a distributed surge cannot OOM the process.
 func TestRateLimiterBoundedGrowth(t *testing.T) {
 	l := NewRateLimiter(RateLimitConfig{RPS: 1000, Burst: 1000, TTL: time.Hour, MaxEntries: 50})
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: rlFakeAddr(fmt.Sprintf("10.%d.%d.%d:12345", i/65536, (i/256)%256, i%256))})
 		l.allow(ctx)
 	}
