@@ -27,8 +27,7 @@ func BenchmarkRateLimiterAllow(b *testing.B) {
 	l := NewRateLimiter(RateLimitConfig{RPS: 1e9, Burst: 1e9, TTL: time.Hour})
 	ctx := benchPeer("10.0.0.1")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		l.allow(ctx)
 	}
 }
@@ -63,8 +62,7 @@ func BenchmarkChainUnary(b *testing.B) {
 	handler := func(context.Context, any) (any, error) { return "ok", nil }
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = chain(ctx, nil, info, handler)
 	}
 }

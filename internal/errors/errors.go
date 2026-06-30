@@ -167,8 +167,7 @@ func (r *Registry) resolve(err error) (Mapping, string) {
 		m, _ := r.Lookup(CatInternal)
 		return m, ""
 	}
-	var e *Error
-	if stderrors.As(err, &e) {
+	if e, isErr := stderrors.AsType[*Error](err); isErr {
 		m, ok := r.Lookup(e.Category)
 		if !ok || m.Category == CatInternal {
 			in := r.internal()
@@ -248,8 +247,7 @@ func ToMCP(err error) MCPError { return Default.ToMCP(err) }
 
 // Is reports whether err is an *Error with the given category.
 func Is(err error, cat Category) bool {
-	var e *Error
-	if stderrors.As(err, &e) {
+	if e, ok := stderrors.AsType[*Error](err); ok {
 		return e.Category == cat
 	}
 	return false

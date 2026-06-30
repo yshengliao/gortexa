@@ -30,7 +30,7 @@ func NewContainer() *Container {
 
 func typeKey[T any]() reflect.Type {
 	// Works for interface and concrete T alike.
-	return reflect.TypeOf((*T)(nil)).Elem()
+	return reflect.TypeFor[T]()
 }
 
 func (c *Container) set(t reflect.Type, build func() any) {

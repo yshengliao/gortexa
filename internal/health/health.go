@@ -5,6 +5,7 @@ package health
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"sync"
 
@@ -59,9 +60,7 @@ func (r *Registry) Register(name string, c Check) {
 func (r *Registry) Snapshot(ctx context.Context) map[string]State {
 	r.mu.RLock()
 	checks := make(map[string]Check, len(r.checks))
-	for n, c := range r.checks {
-		checks[n] = c
-	}
+	maps.Copy(checks, r.checks)
 	r.mu.RUnlock()
 
 	out := make(map[string]State, len(checks))

@@ -1,6 +1,6 @@
 module github.com/yshengliao/gortexa
 
-go 1.25.0
+go 1.26.0
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260415201107-50325440f8f2.1

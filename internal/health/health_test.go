@@ -65,7 +65,7 @@ func TestConcurrentRegisterSnapshot(t *testing.T) {
 	ctx := context.Background()
 	r := health.NewRegistry()
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		wg.Add(2)
 		go func() { defer wg.Done(); r.Register("x", static(health.Healthy)) }()
 		go func() { defer wg.Done(); _ = r.Overall(ctx) }()

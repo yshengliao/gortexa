@@ -87,22 +87,22 @@ func testFileDescriptor(t *testing.T, path string, deps []string, fields []*desc
 		proto.SetExtension(methodOpts, aiv1.E_AiTool, &aiv1.AIToolOptions{Expose: true, Name: "wkt_tool"})
 	}
 	fd := &descriptorpb.FileDescriptorProto{
-		Syntax:     proto.String("proto3"),
-		Name:       proto.String(path),
-		Package:    proto.String("mcp.wkt.test"),
+		Syntax:     new("proto3"),
+		Name:       new(path),
+		Package:    new("mcp.wkt.test"),
 		Dependency: deps,
 		MessageType: []*descriptorpb.DescriptorProto{
-			{Name: proto.String("Request"), Field: fields},
-			{Name: proto.String("Response")},
+			{Name: new("Request"), Field: fields},
+			{Name: new("Response")},
 		},
 	}
 	if expose {
 		fd.Service = []*descriptorpb.ServiceDescriptorProto{{
-			Name: proto.String("Tools"),
+			Name: new("Tools"),
 			Method: []*descriptorpb.MethodDescriptorProto{{
-				Name:       proto.String("Call"),
-				InputType:  proto.String(".mcp.wkt.test.Request"),
-				OutputType: proto.String(".mcp.wkt.test.Response"),
+				Name:       new("Call"),
+				InputType:  new(".mcp.wkt.test.Request"),
+				OutputType: new(".mcp.wkt.test.Response"),
 				Options:    methodOpts,
 			}},
 		}}
@@ -116,12 +116,12 @@ func testFileDescriptor(t *testing.T, path string, deps []string, fields []*desc
 
 func messageField(name string, number int32, typeName string) *descriptorpb.FieldDescriptorProto {
 	return &descriptorpb.FieldDescriptorProto{
-		Name:     proto.String(name),
-		JsonName: proto.String(camelJSONName(name)),
-		Number:   proto.Int32(number),
+		Name:     new(name),
+		JsonName: new(camelJSONName(name)),
+		Number:   new(number),
 		Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
 		Type:     descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(),
-		TypeName: proto.String(typeName),
+		TypeName: new(typeName),
 	}
 }
 
