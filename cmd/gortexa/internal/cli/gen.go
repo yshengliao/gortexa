@@ -100,8 +100,20 @@ func preflightGenerate(mainPath string, d tmplData, opt genOpts) error {
 }
 
 func ensureWritable(path string, force bool) error {
-	if _, err := os.Stat(path); err == nil && !force {
-		return fmt.Errorf("%s already exists (use --force to overwrite)", path)
+	info, err := os.Stat(path)
+	if err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("%s is a directory", path)
+		}
+		if !force {
+			return fmt.Errorf("%s already exists (use --force to overwrite)", path)
+		}
+		return nil
+	}
+	// A stat error other than "not found" (e.g. a permission error) means we
+	// cannot safely write here; fail in preflight rather than mid-generation.
+	if !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

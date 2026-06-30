@@ -186,3 +186,31 @@ func TestGenerateAPIPreflightsWireMarkersBeforeWriting(t *testing.T) {
 		t.Fatalf("logic was written before wire-marker failure: %v", statErr)
 	}
 }
+
+func TestEnsureWritable(t *testing.T) {
+	root := t.TempDir()
+
+	missing := filepath.Join(root, "new.proto")
+	if err := ensureWritable(missing, false); err != nil {
+		t.Errorf("missing path should be writable: %v", err)
+	}
+
+	existing := filepath.Join(root, "exists.proto")
+	writeFixture(t, existing, "x")
+	if err := ensureWritable(existing, false); err == nil {
+		t.Error("existing file without --force should be rejected")
+	}
+	if err := ensureWritable(existing, true); err != nil {
+		t.Errorf("existing file with --force should be writable: %v", err)
+	}
+
+	// A directory at the target path can never be written as a file — reject it
+	// in preflight even with --force, rather than failing mid-generation.
+	dir := filepath.Join(root, "adir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureWritable(dir, true); err == nil {
+		t.Error("directory target should be rejected even with --force")
+	}
+}
