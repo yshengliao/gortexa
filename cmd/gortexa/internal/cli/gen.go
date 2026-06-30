@@ -48,11 +48,23 @@ func generateAPI(root string, d tmplData, opt genOpts) error {
 	logicPath := filepath.Join(root, "internal", "logic", d.Snake+".go")
 	mainPath := filepath.Join(root, "cmd", "server", "main.go")
 
-	if err := writeRendered(protoPath, "proto.tmpl", d, opt.force); err != nil {
+	// Fail before writing any artifact so a rejected generation does not leave the
+	// project half-created (for example proto written but logic already existed, or
+	// proto/logic written before discovering that cmd/server/main.go is not wireable).
+	if err := preflightGenerate(mainPath, d, opt); err != nil {
+		return err
+	}
+	for _, path := range []string{protoPath, logicPath} {
+		if err := ensureWritable(path, opt.force); err != nil {
+			return err
+		}
+	}
+
+	if err := writeRendered(protoPath, "proto.tmpl", d); err != nil {
 		return err
 	}
 	fmt.Println("  + " + rel(root, protoPath))
-	if err := writeRendered(logicPath, "logic.tmpl", d, opt.force); err != nil {
+	if err := writeRendered(logicPath, "logic.tmpl", d); err != nil {
 		return err
 	}
 	fmt.Println("  + " + rel(root, logicPath))
@@ -77,10 +89,24 @@ func generateAPI(root string, d tmplData, opt genOpts) error {
 	return nil
 }
 
-func writeRendered(path, tmpl string, d tmplData, force bool) error {
+func preflightGenerate(mainPath string, d tmplData, opt genOpts) error {
+	if opt.noWire {
+		return nil
+	}
+	if err := validateWireable(mainPath, d); err != nil {
+		return fmt.Errorf("wire server: %w", err)
+	}
+	return nil
+}
+
+func ensureWritable(path string, force bool) error {
 	if _, err := os.Stat(path); err == nil && !force {
 		return fmt.Errorf("%s already exists (use --force to overwrite)", path)
 	}
+	return nil
+}
+
+func writeRendered(path, tmpl string, d tmplData) error {
 	out, err := renderTemplate(tmpl, d)
 	if err != nil {
 		return err

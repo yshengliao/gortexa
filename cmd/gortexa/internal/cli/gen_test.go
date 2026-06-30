@@ -148,3 +148,41 @@ func TestWireServerMissingMarker(t *testing.T) {
 		t.Error("expected error when markers are absent")
 	}
 }
+
+func TestGenerateAPIPreflightsExistingFilesBeforeWriting(t *testing.T) {
+	root := setupFixtureProject(t)
+	data, _ := parseTarget("billing/v1", "Invoice")
+	data.Module = "example.com/demo"
+	logicPath := filepath.Join(root, "internal", "logic", "invoice.go")
+	writeFixture(t, logicPath, "keep me")
+
+	err := generateAPI(root, data, genOpts{skipGen: true, noWire: true})
+	if err == nil {
+		t.Fatal("expected existing logic file to reject generation")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "proto", "billing", "v1", "invoice.proto")); !os.IsNotExist(statErr) {
+		t.Fatalf("proto was written before existing-file failure: %v", statErr)
+	}
+	if got := readFile(t, logicPath); got != "keep me" {
+		t.Fatalf("logic file changed to %q", got)
+	}
+}
+
+func TestGenerateAPIPreflightsWireMarkersBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "cmd", "server", "main.go"), "package main\nfunc main() {}\n")
+	data, _ := parseTarget("billing/v1", "Invoice")
+	data.Module = "example.com/demo"
+
+	err := generateAPI(root, data, genOpts{skipGen: true})
+	if err == nil {
+		t.Fatal("expected missing markers to reject generation")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "proto", "billing", "v1", "invoice.proto")); !os.IsNotExist(statErr) {
+		t.Fatalf("proto was written before wire-marker failure: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "internal", "logic", "invoice.go")); !os.IsNotExist(statErr) {
+		t.Fatalf("logic was written before wire-marker failure: %v", statErr)
+	}
+}
