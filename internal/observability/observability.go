@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 
@@ -117,7 +118,7 @@ func NewLogger(cfg config.LogConfig, logger ...*slog.Logger) *slog.Logger {
 }
 
 func parseLevel(s string) (slog.Level, error) {
-	switch s {
+	switch strings.ToLower(s) {
 	case "debug":
 		return slog.LevelDebug, nil
 	case "info", "":
