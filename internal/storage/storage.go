@@ -27,6 +27,9 @@ func BuildPoolConfig(cfg config.DBConfig, tracer pgx.QueryTracer) (*pgxpool.Conf
 	if cfg.MaxConns > 0 {
 		pc.MaxConns = cfg.MaxConns
 	}
+	if t, ok := tracer.(*DBTracer); ok {
+		tracer = t.WithServerAddress(pc.ConnConfig.Host)
+	}
 	if tracer != nil {
 		pc.ConnConfig.Tracer = tracer
 	}

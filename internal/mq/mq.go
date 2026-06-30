@@ -3,7 +3,12 @@
 // behind the integration build tag.
 package mq
 
-import "context"
+import (
+	"context"
+
+	"github.com/yshengliao/gortexa/internal/config"
+	apperr "github.com/yshengliao/gortexa/internal/errors"
+)
 
 // Message is a transport-neutral message.
 type Message struct {
@@ -25,4 +30,16 @@ type Publisher interface {
 type Subscriber interface {
 	Subscribe(ctx context.Context, topic string, h Handler) error
 	Close() error
+}
+
+// New selects a message queue backend from config.
+func New(cfg config.MQConfig) (Publisher, Subscriber, error) {
+	switch cfg.Driver {
+	case "nats", "":
+		return NewNATS(cfg)
+	case "kafka":
+		return NewKafka(cfg)
+	default:
+		return nil, nil, apperr.New(apperr.CatInvalidArgument, "mq: unsupported driver: "+cfg.Driver)
+	}
 }

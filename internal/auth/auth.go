@@ -6,6 +6,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,6 +15,12 @@ import (
 
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
+
+// ErrExpiredToken tags an authentication failure caused by an expired token. It
+// is carried as the (never-serialized) cause of the Unauthenticated error so the
+// auth interceptor can attribute the denial reason without changing the generic
+// client-facing message.
+var ErrExpiredToken = errors.New("token expired")
 
 // minSecretBytes is the minimum HS256 secret length. Config validation enforces
 // the same bound at startup; NewVerifier re-checks it so the verifier can never
@@ -96,6 +103,11 @@ func (v *Verifier) Verify(tokenStr string) (*Claims, error) {
 		return v.secret, nil
 	}, opts...)
 	if err != nil || !tok.Valid {
+		// Keep the client message generic, but tag an expired token (as the
+		// non-serialized cause) so the interceptor can report reason="expired".
+		if err != nil && errors.Is(err, jwt.ErrTokenExpired) {
+			return nil, apperr.Wrap(apperr.CatUnauthenticated, "invalid or expired token", ErrExpiredToken)
+		}
 		return nil, apperr.New(apperr.CatUnauthenticated, "invalid or expired token")
 	}
 	return &claims, nil

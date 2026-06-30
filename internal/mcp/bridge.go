@@ -16,6 +16,11 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -24,6 +29,7 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 
 	"github.com/yshengliao/gortexa/internal/auth"
+	"github.com/yshengliao/gortexa/internal/config"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
 
@@ -65,13 +71,17 @@ type Bridge struct {
 	// tool set is fixed for the bridge's lifetime, so tools/list returns this
 	// cached slice instead of re-downgrading every schema per request.
 	mcpTools []MCPTool
+	observ   config.ObservConfig
 }
 
 // NewBridge builds a bridge exposing the ai.v1-annotated methods of the given
 // services. tools/call dispatches over conn (which should be the in-process
 // loopback so the full interceptor chain applies).
-func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor, reg *apperr.Registry) (*Bridge, error) {
+func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor, reg *apperr.Registry, observCfg ...config.ObservConfig) (*Bridge, error) {
 	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}}
+	if len(observCfg) > 0 {
+		b.observ = observCfg[0]
+	}
 	for _, svc := range services {
 		irs, err := BuildIR(svc)
 		if err != nil {
@@ -400,7 +410,7 @@ func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
 	case "tools/list":
 		resp.Result = map[string]any{"tools": b.mcpTools}
 	case "tools/call":
-		result, rerr := b.toolsCall(r, req.Params)
+		result, rerr := b.toolsCall(r, req.ID, req.Params)
 		if rerr != nil {
 			resp.Error = rerr
 		} else {
@@ -412,7 +422,7 @@ func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
 	return resp
 }
 
-func (b *Bridge) toolsCall(r *http.Request, params json.RawMessage) (any, *rpcError) {
+func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawMessage) (any, *rpcError) {
 	var p struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -433,7 +443,16 @@ func (b *Bridge) toolsCall(r *http.Request, params json.RawMessage) (any, *rpcEr
 	}
 	out := dynamicpb.NewMessage(tool.Output)
 
-	ctx := r.Context()
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	attrs := []attribute.KeyValue{attribute.String("gen_ai.tool.name", p.Name), attribute.String("mcp.method.name", "tools/call"), attribute.String("mcp.protocol.version", protocolVersion), attribute.String("jsonrpc.request.id", string(id))}
+	if sid := r.Header.Get("Mcp-Session-Id"); sid != "" {
+		attrs = append(attrs, attribute.String("mcp.session.id", sid))
+	}
+	ctx, span := otel.Tracer("github.com/yshengliao/gortexa/internal/mcp").Start(ctx, "execute_tool "+p.Name, trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attrs...))
+	defer span.End()
+	if b.observ.GenAICaptureContent {
+		span.SetAttributes(attribute.String("gen_ai.tool.call.arguments", MaskSecrets(string(p.Arguments), b.observ.GenAIMaskFields)))
+	}
 	md := metadata.MD{}
 	if authz := r.Header.Get("Authorization"); authz != "" {
 		md.Set(auth.MetadataKey, authz)
@@ -451,11 +470,18 @@ func (b *Bridge) toolsCall(r *http.Request, params json.RawMessage) (any, *rpcEr
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
 	if err := b.conn.Invoke(ctx, tool.FullMethod, in, out); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return b.toolError(err), nil // tool errors are results with isError:true, not RPC errors
 	}
 	js, err := protojson.Marshal(out)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return b.toolError(apperr.New(apperr.CatInternal, "marshal output")), nil
+	}
+	if b.observ.GenAICaptureContent {
+		span.SetAttributes(attribute.String("gen_ai.tool.call.result", MaskSecrets(string(js), b.observ.GenAIMaskFields)))
 	}
 	return map[string]any{
 		"content": []map[string]any{{"type": "text", "text": string(js)}},

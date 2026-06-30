@@ -8,6 +8,7 @@ import (
 	"google.golang.org/grpc"
 
 	authpkg "github.com/yshengliao/gortexa/internal/auth"
+	"github.com/yshengliao/gortexa/internal/observability"
 )
 
 // Config builds a Set.
@@ -18,6 +19,7 @@ type Config struct {
 	RateLimit      RateLimitConfig
 	CircuitBreaker CBConfig
 	LoadShedding   LoadSheddingConfig
+	Metrics        *observability.GovernanceMetrics
 }
 
 // Set holds the interceptors in both unary and stream form. The chain order is
@@ -49,9 +51,9 @@ func NewSet(cfg Config) (Set, error) {
 	if err != nil {
 		return Set{}, fmt.Errorf("interceptor: build validator: %w", err)
 	}
-	limiter := NewRateLimiter(cfg.RateLimit)
-	breaker := NewCircuitBreaker(cfg.CircuitBreaker)
-	shedder := NewLoadShedder(cfg.LoadShedding)
+	limiter := NewRateLimiter(cfg.RateLimit, cfg.Metrics)
+	breaker := NewCircuitBreaker(cfg.CircuitBreaker, cfg.Metrics)
+	shedder := NewLoadShedder(cfg.LoadShedding, cfg.Metrics)
 
 	return Set{
 		Recovery:       Recovery(cfg.Logger),
@@ -60,8 +62,8 @@ func NewSet(cfg Config) (Set, error) {
 		LoadShedding:   shedder.Unary(),
 		RateLimit:      limiter.Unary(),
 		CircuitBreaker: breaker.Unary(),
-		Auth:           Auth(cfg.Verifier, cfg.AuthSkip),
-		Validation:     Validation(validator),
+		Auth:           Auth(cfg.Verifier, cfg.AuthSkip, cfg.Metrics),
+		Validation:     Validation(validator, cfg.Metrics),
 
 		RecoveryStream:       RecoveryStream(cfg.Logger),
 		RequestIDStream:      RequestIDStream(),
@@ -69,8 +71,8 @@ func NewSet(cfg Config) (Set, error) {
 		LoadSheddingStream:   shedder.Stream(),
 		RateLimitStream:      limiter.Stream(),
 		CircuitBreakerStream: breaker.Stream(),
-		AuthStream:           AuthStream(cfg.Verifier, cfg.AuthSkip),
-		ValidationStream:     ValidationStream(validator),
+		AuthStream:           AuthStream(cfg.Verifier, cfg.AuthSkip, cfg.Metrics),
+		ValidationStream:     ValidationStream(validator, cfg.Metrics),
 	}, nil
 }
 

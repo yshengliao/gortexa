@@ -62,3 +62,14 @@ clean:
 
 run:
 	$(GO) run ./cmd/server
+
+.PHONY: dev dev-down
+
+dev:
+	docker compose -f deploy/docker-compose.yaml up -d
+	@echo "Jaeger UI:   http://localhost:16686"
+	@echo "Grafana:     http://localhost:3000"
+	@echo "Prometheus:  http://localhost:9090"
+
+dev-down:
+	docker compose -f deploy/docker-compose.yaml down

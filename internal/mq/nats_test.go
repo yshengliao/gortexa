@@ -1,3 +1,5 @@
+//go:build integration
+
 package mq_test
 
 import (

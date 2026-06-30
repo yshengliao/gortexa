@@ -8,8 +8,13 @@ import (
 	"maps"
 	"sort"
 	"sync"
+	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/grpc/health/grpc_health_v1"
+
+	"github.com/yshengliao/gortexa/internal/observability"
 )
 
 // State is a component's health.
@@ -121,4 +126,34 @@ func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_h
 	}
 	<-stream.Context().Done()
 	return nil
+}
+
+// StartMetricsExport records component health states every interval until ctx is
+// cancelled. The goroutine exits on ctx.Done so it never outlives the server
+// (goleak-safe); pass interval <= 0 for the 15s default.
+func (r *Registry) StartMetricsExport(ctx context.Context, metrics *observability.GovernanceMetrics, interval time.Duration) {
+	if metrics == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Bound each evaluation so a hung check can't stall the exporter.
+				evalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				snapshot := r.Snapshot(evalCtx)
+				cancel()
+				for component, state := range snapshot {
+					metrics.HealthStateGauge.Record(ctx, int64(state), metric.WithAttributes(attribute.String("component", component), attribute.Int("state", int(state))))
+				}
+			}
+		}
+	}()
 }

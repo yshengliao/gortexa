@@ -5,10 +5,14 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 
 	apperr "github.com/yshengliao/gortexa/internal/errors"
+	"github.com/yshengliao/gortexa/internal/observability"
 )
 
 // CBConfig configures the per-method circuit breaker. MaxFailures <= 0 disables it.
@@ -60,9 +64,10 @@ func (b *breaker) allow() bool {
 	}
 }
 
-func (b *breaker) record(success bool) {
+func (b *breaker) record(success bool) (cbState, cbState, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	old := b.state
 	switch b.state {
 	case cbHalfOpen:
 		if b.probes > 0 {
@@ -78,7 +83,7 @@ func (b *breaker) record(success bool) {
 	case cbClosed:
 		if success {
 			b.failures = 0
-			return
+			return old, b.state, old != b.state
 		}
 		b.failures++
 		if b.failures >= b.maxFailures {
@@ -90,6 +95,20 @@ func (b *breaker) record(success bool) {
 		// (another concurrent half-open probe failed first) is intentionally
 		// dropped: the open timer governs the next probe window.
 	}
+	return old, b.state, old != b.state
+}
+
+func (s cbState) String() string {
+	switch s {
+	case cbClosed:
+		return "closed"
+	case cbOpen:
+		return "open"
+	case cbHalfOpen:
+		return "half_open"
+	default:
+		return "unknown"
+	}
 }
 
 // CircuitBreaker trips per method after repeated server-side failures.
@@ -97,17 +116,22 @@ type CircuitBreaker struct {
 	cfg      CBConfig
 	mu       sync.Mutex
 	breakers map[string]*breaker
+	metrics  *observability.GovernanceMetrics
 }
 
 // NewCircuitBreaker builds a CircuitBreaker from config.
-func NewCircuitBreaker(cfg CBConfig) *CircuitBreaker {
+func NewCircuitBreaker(cfg CBConfig, metrics ...*observability.GovernanceMetrics) *CircuitBreaker {
 	if cfg.HalfOpenMax <= 0 {
 		cfg.HalfOpenMax = 1
 	}
 	if cfg.OpenInterval <= 0 {
 		cfg.OpenInterval = 5 * time.Second
 	}
-	return &CircuitBreaker{cfg: cfg, breakers: make(map[string]*breaker)}
+	var gm *observability.GovernanceMetrics
+	if len(metrics) > 0 {
+		gm = metrics[0]
+	}
+	return &CircuitBreaker{cfg: cfg, breakers: make(map[string]*breaker), metrics: gm}
 }
 
 func (c *CircuitBreaker) enabled() bool { return c.cfg.MaxFailures > 0 }
@@ -154,7 +178,10 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 		// the method open. Treat a panic as a failure; the panic keeps propagating
 		// after the defer runs, so Recovery still converts it to an Internal error.
 		success := false
-		defer func() { b.record(success) }()
+		defer func() {
+			from, to, changed := b.record(success)
+			c.recordChange(ctx, info.FullMethod, from, to, changed)
+		}()
 		resp, err := handler(ctx, req)
 		success = !isFailure(err)
 		return resp, err
@@ -174,9 +201,23 @@ func (c *CircuitBreaker) Stream() grpc.StreamServerInterceptor {
 		// See Unary: record in a defer so a panicking handler still counts and a
 		// half-open probe slot is always released.
 		success := false
-		defer func() { b.record(success) }()
+		defer func() {
+			from, to, changed := b.record(success)
+			c.recordChange(ss.Context(), info.FullMethod, from, to, changed)
+		}()
 		err := handler(srv, ss)
 		success = !isFailure(err)
 		return err
 	}
+}
+
+func (c *CircuitBreaker) recordChange(ctx context.Context, method string, from cbState, to cbState, changed bool) {
+	if !changed {
+		return
+	}
+	attrs := []attribute.KeyValue{attribute.String("method", method), attribute.String("from", from.String()), attribute.String("to", to.String())}
+	if c.metrics != nil {
+		c.metrics.CBStateChanges.Add(ctx, 1, metric.WithAttributes(attrs...))
+	}
+	trace.SpanFromContext(ctx).AddEvent("cb.state_change", trace.WithAttributes(attrs...))
 }

@@ -73,10 +73,15 @@ type LogConfig struct {
 }
 
 type ObservConfig struct {
-	ServiceName string  `koanf:"service_name"`
-	TracingOTLP string  `koanf:"tracing_otlp"` // OTLP endpoint; empty disables
-	MetricsOTLP string  `koanf:"metrics_otlp"` // OTLP endpoint; empty disables
-	SampleRatio float64 `koanf:"sample_ratio"`
+	ServiceName         string   `koanf:"service_name"`
+	ServiceVersion      string   `koanf:"service_version"`
+	TracingOTLP         string   `koanf:"tracing_otlp"` // OTLP endpoint; empty disables
+	MetricsOTLP         string   `koanf:"metrics_otlp"` // OTLP endpoint; empty disables
+	LogsOTLP            string   `koanf:"logs_otlp"`
+	SampleRatio         float64  `koanf:"sample_ratio"`
+	GenAICaptureContent bool     `koanf:"genai_capture_content"`
+	GenAIMaskFields     []string `koanf:"genai_mask_fields"`
+	SLOErrorBudget      float64  `koanf:"slo_error_budget"`
 }
 
 func defaults() map[string]any {
@@ -98,7 +103,10 @@ func defaults() map[string]any {
 		"log.level":                  "info",
 		"log.format":                 "json",
 		"observ.service_name":        "gortexa",
+		"observ.service_version":     "dev",
 		"observ.sample_ratio":        1.0,
+		"observ.genai_mask_fields":   []string{"password", "token", "secret", "authorization", "api_key"},
+		"observ.slo_error_budget":    0.001,
 	}
 }
 

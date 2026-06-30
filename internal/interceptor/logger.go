@@ -2,6 +2,7 @@ package interceptor
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -45,7 +46,19 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, err error, dur
 		attrs = append(attrs, "request_id", id)
 	}
 	if err != nil {
-		attrs = append(attrs, "error", err.Error())
+		var e *apperr.Error
+		if errors.As(err, &e) {
+			retryable := false
+			if m, ok := apperr.Default.Lookup(e.Category); ok {
+				retryable = m.Retryable
+			}
+			attrs = append(attrs, "error.category", string(e.Category), "error.retryable", retryable, "error.msg", e.Msg)
+			for k, v := range e.Fields() {
+				attrs = append(attrs, k, v)
+			}
+		} else {
+			attrs = append(attrs, "error", err.Error())
+		}
 		log.ErrorContext(ctx, "rpc", attrs...)
 		return
 	}
