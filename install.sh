@@ -24,7 +24,7 @@ export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
 # --- Preconditions ----------------------------------------------------------
 if ! command -v go >/dev/null 2>&1; then
-  echo "ERROR: Go is not installed. Install Go >= 1.24 from https://go.dev/dl/ then re-run." >&2
+  echo "ERROR: Go is not installed. Install Go >= 1.26 from https://go.dev/dl/ then re-run." >&2
   exit 1
 fi
 go env -w GOPROXY="${GOPROXY}" GOSUMDB="${GOSUMDB}" GOTOOLCHAIN="${GOTOOLCHAIN}" \

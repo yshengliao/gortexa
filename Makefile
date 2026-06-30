@@ -16,8 +16,13 @@ export PATH := $(GOBIN):$(PATH)
 bootstrap:
 	bash install.sh
 
+# gen is the contract-first pipeline: lint -> breaking -> generate. It uses the
+# committed buf.lock (run `buf dep update` manually to bump proto deps); the
+# breaking gate runs against the local default branch when present (skipped in a
+# shallow CI checkout that lacks it).
 gen:
-	buf dep update
+	buf lint
+	@if git rev-parse --verify --quiet main >/dev/null 2>&1; then buf breaking --against '.git#branch=main'; else echo "==> skipping buf breaking (no 'main' ref)"; fi
 	buf generate
 
 sqlc:

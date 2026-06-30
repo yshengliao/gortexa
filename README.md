@@ -35,34 +35,42 @@ analogue of the `gortex` HTTP framework. Protobuf is the single source of truth;
 
 ## Quickstart
 
-Install the dev toolchain with the one-line installer (Homebrew-style — corrects
-the Go env, installs the pinned tools), then scaffold and run with the CLI:
+Install the dev toolchain — a Homebrew-style one-liner that corrects the Go env and installs the pinned tools (buf, protoc plugins, sqlc, …):
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/yshengliao/gortexa/main/install.sh)"
-go install github.com/yshengliao/gortexa/cmd/gortexa@latest    # the gortexa CLI
+```
 
-gortexa create myapp --module github.com/me/myapp   # scaffold a batteries-included project
+Install the CLI:
+
+```bash
+go install github.com/yshengliao/gortexa/cmd/gortexa@latest
+```
+
+Scaffold a project, generate a CRUD API, and run it on one h2c port (`:8080`):
+
+```bash
+gortexa create myapp --module github.com/me/myapp
 cd myapp
-gortexa gen billing/v1 Invoice                      # proto + logic stub + wiring + codegen
-gortexa run                                         # one h2c port on :8080
+gortexa gen billing/v1 Invoice
+gortexa run
 ```
 
-Or work in this repo directly with `make`:
+Or work in this repo directly with `make` (`bootstrap` installs the pinned toolchain; `gen` runs buf lint → breaking → generate; `test` runs race tests with in-process fakes):
 
 ```bash
-make bootstrap   # install the pinned toolchain (tools/go.mod) + fix the Go env
-make gen         # generate gRPC/gateway/OpenAPI from proto (buf lint → breaking → generate)
-make test        # race tests with in-process fakes (bufconn/httptest/miniredis/embedded-nats)
-make run         # start the sample server on :8080
+make bootstrap
+make gen
+make test
+make run
 ```
 
-Then, against the running server:
+Then, against the running server (health is open; `/v1/resources/x` returns 401 — auth is shared with gRPC):
 
 ```bash
-curl localhost:8080/healthz                                   # {"status":"ok"}
+curl localhost:8080/healthz
 curl -XPOST localhost:8080/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-curl localhost:8080/v1/resources/x                            # 401 (auth shared with gRPC)
+curl localhost:8080/v1/resources/x
 ```
 
 ## Developer CLI

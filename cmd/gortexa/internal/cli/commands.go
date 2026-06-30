@@ -41,13 +41,14 @@ func newToolsCmd() *cobra.Command {
 		},
 		&cobra.Command{
 			Use:   "sync [tool@version ...]",
-			Short: "Re-pin or upgrade tool directives (go -C tools get -tool …)",
+			Short: "Re-pin tool directives. With args, pins each tool@version; with no args, upgrades all pinned tools to their latest versions.",
 			RunE: func(_ *cobra.Command, args []string) error {
 				root, _, err := findModuleRoot(mustGetwd())
 				if err != nil {
 					return err
 				}
 				if len(args) == 0 {
+					// No args: upgrade every declared tool to its latest version.
 					return runCmd(root, "go", "-C", "tools", "get", "tool")
 				}
 				for _, a := range args {
@@ -119,7 +120,7 @@ func doctor() error {
 		ok = false
 		fmt.Println("  [MISSING] go (install Go >= 1.26 from https://go.dev/dl/)")
 	}
-	for _, t := range []string{"buf", "protoc-gen-go", "protoc-gen-go-grpc", "protoc-gen-grpc-gateway", "protoc-gen-openapiv2", "sqlc"} {
+	for _, t := range []string{"buf", "protoc-gen-go", "protoc-gen-go-grpc", "protoc-gen-grpc-gateway", "protoc-gen-openapiv2", "sqlc", "govulncheck", "benchstat"} {
 		if _, err := exec.LookPath(t); err == nil {
 			fmt.Printf("  [ok]      %s\n", t)
 		} else {
