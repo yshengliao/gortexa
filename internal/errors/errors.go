@@ -114,7 +114,12 @@ func (e *Error) Unwrap() error { return e.cause }
 
 // GRPCStatus lets *Error satisfy the gRPC status interface so handlers may
 // return it directly. Uses the default registry.
-func (e *Error) GRPCStatus() *status.Status { return Default.ToGRPCStatus(e) }
+func (e *Error) GRPCStatus() *status.Status {
+	if e == nil {
+		return status.New(codes.Internal, Default.internal().SafeMessage)
+	}
+	return Default.ToGRPCStatus(e)
+}
 
 // Registry maps categories to transport codes. Safe for concurrent use.
 type Registry struct {
@@ -167,11 +172,14 @@ func (r *Registry) resolve(err error) (Mapping, string) {
 		m, _ := r.Lookup(CatInternal)
 		return m, ""
 	}
-	if e, isErr := stderrors.AsType[*Error](err); isErr {
+	if e, isErr := stderrors.AsType[*Error](err); isErr && e != nil {
 		m, ok := r.Lookup(e.Category)
 		if !ok || m.Category == CatInternal {
 			in := r.internal()
 			return in, in.SafeMessage
+		}
+		if m.Category != CatInvalidArgument && m.Category != CatUnauthenticated {
+			return m, m.SafeMessage
 		}
 		msg := e.Msg
 		if msg == "" {
@@ -186,7 +194,10 @@ func (r *Registry) resolve(err error) (Mapping, string) {
 		r.mu.RUnlock()
 		if found {
 			if m, ok := r.Lookup(cat); ok && m.Category != CatInternal {
-				return m, s.Message()
+				if m.Category == CatInvalidArgument || m.Category == CatUnauthenticated {
+					return m, s.Message()
+				}
+				return m, m.SafeMessage
 			}
 		}
 	}
@@ -247,7 +258,7 @@ func ToMCP(err error) MCPError { return Default.ToMCP(err) }
 
 // Is reports whether err is an *Error with the given category.
 func Is(err error, cat Category) bool {
-	if e, ok := stderrors.AsType[*Error](err); ok {
+	if e, ok := stderrors.AsType[*Error](err); ok && e != nil {
 		return e.Category == cat
 	}
 	return false

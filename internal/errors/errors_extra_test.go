@@ -57,3 +57,45 @@ func TestToGRPCStatusNilIsOK(t *testing.T) {
 		t.Fatal("nil error must map to OK")
 	}
 }
+
+func TestTypedNilErrorDoesNotPanic(t *testing.T) {
+	var typedNil *apperr.Error
+	var err error = typedNil
+
+	if got := apperr.ToGRPCStatus(err); got.Code() != codes.Internal || got.Message() != "internal error" {
+		t.Fatalf("typed nil status = %v %q, want Internal internal error", got.Code(), got.Message())
+	}
+	if apperr.Is(err, apperr.CatInternal) {
+		t.Fatal("typed nil must not match a category")
+	}
+}
+
+func TestNonClientErrorCategoriesDoNotLeakCustomMessage(t *testing.T) {
+	secret := "acl backend said user=alice password=hunter2"
+	cases := []error{
+		apperr.New(apperr.CatPermissionDenied, secret),
+		status.Error(codes.PermissionDenied, secret),
+	}
+	for _, err := range cases {
+		st := apperr.ToGRPCStatus(err)
+		if st.Code() != codes.PermissionDenied || st.Message() != "permission denied" {
+			t.Fatalf("gRPC = %v %q, want PermissionDenied permission denied", st.Code(), st.Message())
+		}
+		_, body := apperr.ToHTTP(err)
+		if body.Message != "permission denied" {
+			t.Fatalf("HTTP body message = %q, want permission denied", body.Message)
+		}
+		if got := apperr.ToMCP(err).Message; got != "permission denied" {
+			t.Fatalf("MCP message = %q, want permission denied", got)
+		}
+	}
+}
+
+func TestClientErrorCategoriesKeepClientMessage(t *testing.T) {
+	if got := apperr.ToGRPCStatus(apperr.New(apperr.CatInvalidArgument, "name is required")).Message(); got != "name is required" {
+		t.Fatalf("invalid argument message = %q", got)
+	}
+	if got := apperr.ToGRPCStatus(apperr.New(apperr.CatUnauthenticated, "missing authorization")).Message(); got != "missing authorization" {
+		t.Fatalf("unauthenticated message = %q", got)
+	}
+}
