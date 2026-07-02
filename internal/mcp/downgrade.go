@@ -55,17 +55,41 @@ type OpenAISchema struct {
 	AdditionalProperties any `json:"additionalProperties,omitempty"`
 }
 
-// DowngradeOpenAI renders the IR as an OpenAI strict function tool.
+// DowngradeOpenAI renders the IR as an OpenAI function tool. Strict mode requires
+// every property to be required and forbids open objects (additionalProperties
+// other than false). A message containing a proto oneof or a map/Struct field
+// cannot satisfy strict, so such tools are emitted non-strict rather than as a
+// schema the OpenAI API rejects at registration time.
 func DowngradeOpenAI(ir ToolIR) OpenAIFunction {
 	return OpenAIFunction{
 		Type: "function",
 		Function: OpenAIFuncBody{
 			Name:        ir.Name,
 			Description: ir.Description,
-			Strict:      true,
+			Strict:      strictCompatible(ir.InputSchema),
 			Parameters:  toOpenAISchema(ir.InputSchema),
 		},
 	}
+}
+
+// strictCompatible reports whether a schema can be expressed under OpenAI strict
+// mode: no real oneofs and no open objects (map value schema or Struct) anywhere.
+func strictCompatible(s *JSONSchema) bool {
+	if s == nil {
+		return true
+	}
+	if len(s.oneofMembers) > 0 || s.AdditionalProperties != nil {
+		return false
+	}
+	if !strictCompatible(s.Items) {
+		return false
+	}
+	for _, ps := range s.Properties {
+		if !strictCompatible(ps) {
+			return false
+		}
+	}
+	return true
 }
 
 func toOpenAISchema(s *JSONSchema) *OpenAISchema {
@@ -94,7 +118,11 @@ func toOpenAISchema(s *JSONSchema) *OpenAISchema {
 			out.Properties = make(map[string]*OpenAISchema, len(s.Properties))
 			for name, ps := range s.Properties {
 				out.Properties[name] = toOpenAISchema(ps)
-				names = append(names, name)
+				// A oneof member is optional (at most one of the group is set), so
+				// listing it as required would make protojson reject every call.
+				if !s.oneofMembers[name] {
+					names = append(names, name)
+				}
 			}
 			sort.Strings(names)
 		}
