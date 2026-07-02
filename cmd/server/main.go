@@ -99,7 +99,12 @@ func run() error {
 		kernel.WithLogger(log),
 		kernel.WithInterceptors(set),
 		kernel.WithStatsHandler(observability.ServerStatsHandler()),
-		kernel.WithHTTPWrap(func(h http.Handler) http.Handler { return httpcompat.CORS(h, cfg.Server) }),
+		// CORS wraps outermost so /openapi.json (mounted when server.openapi is
+		// enabled) gets CORS headers too.
+		kernel.WithHTTPWrap(func(h http.Handler) http.Handler {
+			h = httpcompat.OpenAPIRoute(h, cfg.Server, "gen/openapiv2/gortexa.swagger.json")
+			return httpcompat.CORS(h, cfg.Server)
+		}),
 		kernel.WithShutdownHook(traceShutdown),
 		kernel.WithShutdownHook(metricShutdown),
 		kernel.WithShutdownHook(logShutdown),

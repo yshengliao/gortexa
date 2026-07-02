@@ -7,7 +7,9 @@ import (
 
 var defaultMaskFields = []string{"password", "token", "secret", "authorization", "api_key"}
 
-// MaskSecrets recursively redacts configured JSON object keys. Invalid JSON is returned unchanged.
+// MaskSecrets recursively redacts configured JSON object keys. Input that is
+// not valid JSON (or a bare string/number/bool root, which could itself be a
+// secret) is replaced wholesale with a redaction placeholder.
 func MaskSecrets(raw string, maskFields []string) string {
 	if raw == "" {
 		return raw

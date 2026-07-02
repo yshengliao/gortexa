@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yshengliao/gortexa/internal/auth"
@@ -23,6 +24,27 @@ func TestIncomingHeaderMatcher(t *testing.T) {
 	// unknown non-permanent header is dropped by the default matcher
 	if _, ok := incomingHeaderMatcher("X-Custom-Thing"); ok {
 		t.Errorf("unknown header should not be forwarded")
+	}
+}
+
+// TestIncomingHeaderMatcherBlocksForwardedFor locks in the rate-limit identity
+// guard: the loopback trusts x-forwarded-for metadata, and the gateway default
+// matcher forwards Grpc-Metadata-* verbatim, so any spelling that would land on
+// that key must be rejected — otherwise an external HTTP client could spoof its
+// rate-limit bucket per request.
+func TestIncomingHeaderMatcherBlocksForwardedFor(t *testing.T) {
+	for _, h := range []string{
+		"X-Forwarded-For",
+		"Grpc-Metadata-X-Forwarded-For",
+		"grpc-metadata-x-forwarded-for",
+	} {
+		if got, ok := incomingHeaderMatcher(h); ok {
+			t.Errorf("header %q must not be forwarded, got key %q", h, got)
+		}
+	}
+	// The Grpc-Metadata-* passthrough still works for non-trusted keys.
+	if got, ok := incomingHeaderMatcher("Grpc-Metadata-X-Tenant"); !ok || !strings.EqualFold(got, "x-tenant") {
+		t.Errorf("Grpc-Metadata-X-Tenant → %q,%v; want x-tenant,true", got, ok)
 	}
 }
 
@@ -96,6 +118,34 @@ func TestOpenAPIHandler(t *testing.T) {
 	OpenAPIHandler(filepath.Join(dir, "missing.json")).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing spec = %d, want 404", rec.Code)
+	}
+}
+
+func TestOpenAPIRoute(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	dir := t.TempDir()
+	spec := filepath.Join(dir, "api.json")
+	_ = os.WriteFile(spec, []byte(`{"openapi":"x"}`), 0o600)
+
+	// disabled → passthrough, /openapi.json reaches next
+	off := OpenAPIRoute(next, config.ServerConfig{OpenAPI: false}, spec)
+	rec := httptest.NewRecorder()
+	off.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("disabled route = %d, want passthrough", rec.Code)
+	}
+
+	// enabled → serves the spec at /openapi.json, passes everything else through
+	on := OpenAPIRoute(next, config.ServerConfig{OpenAPI: true}, spec)
+	rec = httptest.NewRecorder()
+	on.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"openapi":"x"}` {
+		t.Fatalf("enabled route = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	on.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/other", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("other path = %d, want passthrough", rec.Code)
 	}
 }
 

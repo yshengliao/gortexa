@@ -3,7 +3,7 @@
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Status](https://img.shields.io/badge/status-active-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![AI generated](https://img.shields.io/badge/AI%20generated-Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
+[![AI generated](https://img.shields.io/badge/AI%20generated-Fable%205%20%7C%20Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
 
 A contract-first, batteries-included **gRPC framework** for Go 1.26. Protobuf is
 the single source of truth; **one h2c port** multiplexes three protocols:
@@ -22,8 +22,9 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   rate-limit → circuit-breaker → auth → validation), fail-loud if incomplete.
   OTel is a `StatsHandler`, covering unary **and** streaming.
 - **One error model, three transports** — a single mapping table drives gRPC
-  status, HTTP status, and MCP error envelopes. Internal errors never leak their
-  cause.
+  status, HTTP status, and MCP error envelopes. Only invalid-argument and
+  unauthenticated errors forward their message; everything else surfaces a
+  registry-safe message, and internal causes never leak.
 - **AI-skills layer** — `ai/v1` annotations → provider-neutral IR →
   MCP / OpenAI-strict / Gemini tool schemas (golden-locked). The MCP bridge
   dispatches `tools/call` back through the **full interceptor chain** via an
@@ -148,13 +149,14 @@ end-to-end large-body handling rather than `io.ReadAll` in isolation.
 
 ## Provenance
 
-Gortexa was built with AI-assisted development and hardened through **three
+Gortexa was built with AI-assisted development and hardened through **four
 independent model review rounds** — correctness, concurrency, security, and
 protocol conformance — with every actionable finding fixed and verified
 (`make build / vet / test -race / lint`):
 
 | Model | Role |
 |---|---|
+| **Claude Fable 5** | Fourth full-codebase review, hardening fixes, and comprehensive test coverage |
 | **Claude Opus 4.8** | Design, implementation, and consolidation |
 | **Gemini 3.1 Pro** (Jules) | Second independent review |
 | **Codex 5.5** | Third independent review |

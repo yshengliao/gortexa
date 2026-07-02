@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"strings"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc/metadata"
@@ -55,7 +56,12 @@ func jsonMarshaler() *runtime.JSONPb {
 
 // incomingHeaderMatcher forwards Authorization and X-Request-Id into gRPC
 // metadata under the keys the interceptors expect; other headers use the
-// gateway default.
+// gateway default — except anything that would land on the trusted
+// x-forwarded-for metadata key. The rate limiter trusts that key on the
+// loopback (see interceptor.ForwardedForMetaKey), and the gateway default
+// forwards any "Grpc-Metadata-*" header verbatim, so without this guard an
+// external client could spoof its rate-limit identity (and flood the limiter
+// with fabricated peers) via "Grpc-Metadata-X-Forwarded-For".
 func incomingHeaderMatcher(key string) (string, bool) {
 	switch textproto.CanonicalMIMEHeaderKey(key) {
 	case "Authorization":
@@ -63,7 +69,11 @@ func incomingHeaderMatcher(key string) (string, bool) {
 	case "X-Request-Id":
 		return interceptor.RequestIDMetadataKey, true
 	default:
-		return runtime.DefaultHeaderMatcher(key)
+		k, ok := runtime.DefaultHeaderMatcher(key)
+		if ok && strings.EqualFold(k, interceptor.ForwardedForMetaKey) {
+			return "", false
+		}
+		return k, ok
 	}
 }
 

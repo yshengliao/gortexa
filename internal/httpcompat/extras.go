@@ -44,6 +44,23 @@ func CORS(next http.Handler, cfg config.ServerConfig) http.Handler {
 	})
 }
 
+// OpenAPIRoute mounts OpenAPIHandler at /openapi.json in front of next when
+// server.openapi is enabled; otherwise it returns next unchanged. This is the
+// composition-root seam that makes the config option effective.
+func OpenAPIRoute(next http.Handler, cfg config.ServerConfig, specPath string) http.Handler {
+	if !cfg.OpenAPI {
+		return next
+	}
+	spec := OpenAPIHandler(specPath)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/openapi.json" {
+			spec.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // OpenAPIHandler serves a swagger/OpenAPI JSON document from disk if present.
 // The path is typically gen/openapiv2/gortexa.swagger.json (produced by make gen).
 func OpenAPIHandler(path string) http.Handler {
