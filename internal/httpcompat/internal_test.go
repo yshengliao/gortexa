@@ -147,6 +147,19 @@ func TestOpenAPIRoute(t *testing.T) {
 	if rec.Code != http.StatusTeapot {
 		t.Fatalf("other path = %d, want passthrough", rec.Code)
 	}
+
+	// enabled but spec missing → /openapi.json serves 404, other paths still pass
+	missing := OpenAPIRoute(next, config.ServerConfig{OpenAPI: true}, filepath.Join(dir, "nope.json"))
+	rec = httptest.NewRecorder()
+	missing.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing spec = %d, want 404", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	missing.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/other", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("missing-spec other path = %d, want passthrough", rec.Code)
+	}
 }
 
 func contains(s, sub string) bool {

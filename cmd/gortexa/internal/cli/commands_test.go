@@ -23,7 +23,9 @@ func writeScript(t *testing.T, dir, name, body string) {
 }
 
 // captureStdout runs fn with os.Stdout redirected to a pipe and returns what
-// was written. Only fmt.Print* output from this process is captured.
+// was written. Only fmt.Print* output from this process is captured. The pipe
+// is drained in a goroutine so fn can write more than the pipe buffer (~64KB)
+// without deadlocking on a full pipe.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
@@ -33,15 +35,21 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	os.Stdout = w
 	defer func() { os.Stdout = old }()
+
+	outCh := make(chan string, 1)
+	go func() {
+		b, err := io.ReadAll(r)
+		if err != nil {
+			t.Errorf("read captured stdout: %v", err)
+		}
+		outCh <- string(b)
+	}()
+
 	fn()
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	b, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
+	return <-outCh
 }
 
 func TestDoctor(t *testing.T) {
