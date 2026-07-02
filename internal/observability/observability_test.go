@@ -97,9 +97,9 @@ func TestSetupTracingWithEndpoint(t *testing.T) {
 	if shutdown == nil {
 		t.Fatal("nil shutdown")
 	}
-	cctx, cancel := context.WithCancel(ctx)
-	cancel()
-	_ = shutdown(cctx) // exporter is unreachable; tolerate the error
+	sctx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancel()
+	_ = shutdown(sctx) // unreachable exporter; the bounded ctx keeps this quick
 }
 
 func TestSetupMetricsWithEndpoint(t *testing.T) {
@@ -114,9 +114,9 @@ func TestSetupMetricsWithEndpoint(t *testing.T) {
 	if shutdown == nil {
 		t.Fatal("nil shutdown")
 	}
-	cctx, cancel := context.WithCancel(ctx)
-	cancel()
-	_ = shutdown(cctx) // exporter is unreachable; tolerate the error
+	sctx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancel()
+	_ = shutdown(sctx) // unreachable exporter; the bounded ctx keeps this quick
 }
 
 func TestNewGovernanceMetrics(t *testing.T) {

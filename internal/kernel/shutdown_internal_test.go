@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +28,12 @@ func TestShutdownBoundedWithHungConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Gateway handler that never returns until its request context is cancelled.
+	// It closes `entered` first so the test can cancel only once the request is
+	// actually blocking in the handler — no timing sleep (flaky on loaded CI).
+	entered := make(chan struct{})
+	var once sync.Once
 	app.SetGateway(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(entered) })
 		<-r.Context().Done()
 	}))
 
@@ -46,8 +52,12 @@ func TestShutdownBoundedWithHungConnection(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(100 * time.Millisecond) // let the request reach the handler
-	cancel()                           // serve → Shutdown
+	select {
+	case <-entered: // the request is now blocking in the handler
+	case <-time.After(3 * time.Second):
+		t.Fatal("request never reached the blocking handler")
+	}
+	cancel() // serve → Shutdown
 
 	select {
 	case <-served:

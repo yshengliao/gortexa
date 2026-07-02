@@ -8,17 +8,16 @@ import (
 	"github.com/yshengliao/gortexa/internal/mq"
 )
 
+// TestNewDriverErrors covers driver-selection paths that behave identically in
+// both the default and integration builds. The kafka-stub case lives in a
+// //go:build !integration file (mq_stub_test.go) because under -tags integration
+// NewKafka is the real broker client and does not fail on a valid config.
 func TestNewDriverErrors(t *testing.T) {
 	cases := []struct {
 		name    string
 		cfg     config.MQConfig
 		wantCat apperr.Category
 	}{
-		{
-			name:    "kafka without integration build",
-			cfg:     config.MQConfig{Driver: "kafka", URL: "127.0.0.1:9092"},
-			wantCat: apperr.CatInvalidArgument,
-		},
 		{
 			name:    "unsupported driver",
 			cfg:     config.MQConfig{Driver: "carrier-pigeon"},

@@ -37,7 +37,15 @@ func TestNewRedis(t *testing.T) {
 func TestCacheUnavailableErrors(t *testing.T) {
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
-	c := cache.NewRedisFromClient(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	// Disable retries and shorten dial/timeouts so, once the server is killed
+	// below, each op fails fast instead of burning ~5s in go-redis backoff.
+	c := cache.NewRedisFromClient(redis.NewClient(&redis.Options{
+		Addr:         mr.Addr(),
+		MaxRetries:   -1,
+		DialTimeout:  100 * time.Millisecond,
+		ReadTimeout:  100 * time.Millisecond,
+		WriteTimeout: 100 * time.Millisecond,
+	}))
 	t.Cleanup(func() { _ = c.Close() })
 
 	// Kill the server so every operation fails with a transport error.

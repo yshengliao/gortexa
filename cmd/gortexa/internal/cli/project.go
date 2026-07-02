@@ -9,23 +9,40 @@ import (
 	"strings"
 )
 
-// findModuleRoot walks up from dir to the directory whose go.mod declares a
-// top-level module path (the project root), returning the root and module path.
+// findModuleRoot walks up from dir to the gortexa project root, returning it and
+// its module path. It prefers a directory that has both go.mod and buf.gen.yaml
+// (the project root) over a nearer bare go.mod, so running inside the nested
+// tools/ module resolves to the project — not to tools/ itself. If no ancestor
+// has buf.gen.yaml, it falls back to the nearest go.mod.
 func findModuleRoot(dir string) (root, module string, err error) {
 	d, err := filepath.Abs(dir)
 	if err != nil {
 		return "", "", err
 	}
+	var fbRoot, fbMod string
 	for {
 		if mod, ok := readModulePath(filepath.Join(d, "go.mod")); ok {
-			return d, mod, nil
+			if fileExists(filepath.Join(d, "buf.gen.yaml")) {
+				return d, mod, nil
+			}
+			if fbRoot == "" {
+				fbRoot, fbMod = d, mod
+			}
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
+			if fbRoot != "" {
+				return fbRoot, fbMod, nil
+			}
 			return "", "", fmt.Errorf("no go.mod found from %s upward — run inside a gortexa project", dir)
 		}
 		d = parent
 	}
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func readModulePath(gomod string) (string, bool) {
@@ -44,13 +61,25 @@ func readModulePath(gomod string) (string, bool) {
 	return "", false
 }
 
-// runCmd runs name+args in dir, streaming stdio to the parent process.
+// runCmd runs name+args in dir, streaming stdio to the parent process. It
+// exports the corrected Go module env (mirroring the Makefile) so `go`-invoking
+// subcommands like `tools install` don't 403 against the container's broken
+// GOPROXY/GOPRIVATE defaults. Non-Go tools (git, buf) simply ignore these.
 func runCmd(dir, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+	// Later entries win in os/exec, so these override any inherited values.
+	cmd.Env = append(os.Environ(),
+		"GOFLAGS=-mod=mod",
+		"GOPROXY=https://proxy.golang.org,direct",
+		"GOSUMDB=sum.golang.org",
+		"GOTOOLCHAIN=auto",
+		"GOPRIVATE=",
+		"GOINSECURE=",
+	)
 	return cmd.Run()
 }
 
@@ -67,4 +96,22 @@ func gitRefExists(root, ref string) bool {
 	cmd := exec.Command("git", "rev-parse", "--verify", "--quiet", ref)
 	cmd.Dir = root
 	return cmd.Run() == nil
+}
+
+// isGitToplevel reports whether root is itself the top of a git work tree.
+// `buf breaking --against .git#branch=main` reads .git at the project root, so
+// the breaking gate must be skipped (not hard-fail) when root sits inside a
+// larger repo rather than being the repo root.
+func isGitToplevel(root string) bool {
+	cmd := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	top, err := filepath.Abs(strings.TrimSpace(string(out)))
+	if err != nil {
+		return false
+	}
+	abs, err := filepath.Abs(root)
+	return err == nil && top == abs
 }

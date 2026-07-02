@@ -35,7 +35,7 @@ func regen(root string, allowBreaking bool) error {
 	if err := runCmd(root, "buf", "lint"); err != nil {
 		return fmt.Errorf("buf lint: %w", err)
 	}
-	if !allowBreaking && gitRefExists(root, "main") {
+	if !allowBreaking && isGitToplevel(root) && gitRefExists(root, "main") {
 		if err := runCmd(root, "buf", "breaking", "--against", ".git#branch=main"); err != nil {
 			return fmt.Errorf("buf breaking: %w — pass --allow-breaking if the change is intended", err)
 		}
