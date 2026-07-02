@@ -62,6 +62,35 @@ func TestRateLimiterForwardedForOnLoopback(t *testing.T) {
 	}
 }
 
+// On the loopback with no forwarded peer-IP metadata, peerKey falls back to the
+// synthetic bufconn address (peerIP returns "" for both the no-metadata and the
+// metadata-without-the-key cases).
+func TestPeerKeyLoopbackFallbacks(t *testing.T) {
+	// No metadata at all on the loopback → peerIP returns "" → fall back to addr.
+	if k := peerKey(loopbackCtx("")); k != loopbackNetwork {
+		t.Fatalf("loopback without forwarded IP key = %q, want %q", k, loopbackNetwork)
+	}
+	// Metadata present but missing the peer-IP key → still "" → fall back to addr.
+	ctx := metadata.NewIncomingContext(
+		peer.NewContext(context.Background(), &peer.Peer{Addr: rlLoopbackAddr{}}),
+		metadata.Pairs("x-other", "irrelevant"),
+	)
+	if k := peerKey(ctx); k != loopbackNetwork {
+		t.Fatalf("loopback with unrelated metadata key = %q, want %q", k, loopbackNetwork)
+	}
+}
+
+// peerKey degrades gracefully when there is no peer or no address on the context.
+func TestPeerKeyNoPeer(t *testing.T) {
+	if k := peerKey(context.Background()); k != "unknown" {
+		t.Fatalf("no-peer key = %q, want unknown", k)
+	}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{})
+	if k := peerKey(ctx); k != "unknown" {
+		t.Fatalf("nil-addr key = %q, want unknown", k)
+	}
+}
+
 // A flood of distinct client IPs must not grow the (now sharded) entries past
 // the cap, so a distributed surge cannot OOM the process.
 func TestRateLimiterBoundedGrowth(t *testing.T) {

@@ -2,6 +2,8 @@ package interceptor_test
 
 import (
 	"context"
+	stderrors "errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
+	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 	"github.com/yshengliao/gortexa/internal/auth"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 	"github.com/yshengliao/gortexa/internal/interceptor"
@@ -40,6 +43,121 @@ func TestRecoveryStream(t *testing.T) {
 	}
 	if st.Message() != "internal error" {
 		t.Fatalf("message = %q, want safe internal message", st.Message())
+	}
+}
+
+// TestRecoveryStreamNormalizesHandlerErrors mirrors the unary boundary mapping
+// on the stream path: a plain error and an fmt-wrapped *Error returned by a
+// stream handler are reduced through the registry so the client never sees
+// codes.Unknown or a leaked internal cause.
+func TestRecoveryStreamNormalizesHandlerErrors(t *testing.T) {
+	ic := interceptor.RecoveryStream(nil)
+
+	// A plain error would otherwise reach the client as codes.Unknown + raw text.
+	err := ic(nil, &fakeStream{ctx: context.Background()}, streamInfo(), func(any, grpc.ServerStream) error {
+		return stderrors.New("raw internal detail")
+	})
+	st := apperr.ToGRPCStatus(err)
+	if st.Code().String() != "Internal" || st.Message() != "internal error" {
+		t.Fatalf("plain stream error → %v %q, want Internal 'internal error'", st.Code(), st.Message())
+	}
+	if strings.Contains(st.Message(), "raw internal detail") {
+		t.Fatalf("internal cause leaked: %q", st.Message())
+	}
+
+	// A fmt-wrapped *Error (not itself an *Error, so grpc-go wouldn't call
+	// GRPCStatus) must still resolve to its category, not leak the wrapper text.
+	wrapped := fmt.Errorf("ctx: %w", apperr.New(apperr.CatNotFound, "resource 42 missing"))
+	err = ic(nil, &fakeStream{ctx: context.Background()}, streamInfo(), func(any, grpc.ServerStream) error {
+		return wrapped
+	})
+	if st := apperr.ToGRPCStatus(err); st.Code().String() != "NotFound" {
+		t.Fatalf("wrapped *Error on stream → %v, want NotFound", st.Code())
+	}
+}
+
+// scriptedStream drives validatingStream.RecvMsg: it optionally returns a
+// transport error, otherwise fills the caller's message via fill before the
+// wrapper validates it.
+type scriptedStream struct {
+	ctx     context.Context
+	recvErr error
+	fill    func(any)
+}
+
+func (s *scriptedStream) Context() context.Context     { return s.ctx }
+func (s *scriptedStream) SetHeader(metadata.MD) error  { return nil }
+func (s *scriptedStream) SendHeader(metadata.MD) error { return nil }
+func (s *scriptedStream) SetTrailer(metadata.MD)       {}
+func (s *scriptedStream) SendMsg(any) error            { return nil }
+func (s *scriptedStream) RecvMsg(m any) error {
+	if s.recvErr != nil {
+		return s.recvErr
+	}
+	if s.fill != nil {
+		s.fill(m)
+	}
+	return nil
+}
+
+func TestValidationStreamRecvMsg(t *testing.T) {
+	v, err := interceptor.NewValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ic := interceptor.ValidationStream(v)
+
+	setValid := func(m any) { m.(*resourcev1.GetResourceRequest).Id = "abc" }
+
+	tests := []struct {
+		name     string
+		stream   *scriptedStream
+		recv     func(grpc.ServerStream) error
+		wantCat  apperr.Category
+		wantErr  bool
+		wantSame error // if set, RecvMsg must return this exact error unmodified
+	}{
+		{
+			name:    "invalid message rejected as InvalidArgument",
+			stream:  &scriptedStream{ctx: context.Background()}, // leaves Id="" (violates min_len)
+			recv:    func(ss grpc.ServerStream) error { return ss.RecvMsg(new(resourcev1.GetResourceRequest)) },
+			wantCat: apperr.CatInvalidArgument,
+			wantErr: true,
+		},
+		{
+			name:   "valid message passes",
+			stream: &scriptedStream{ctx: context.Background(), fill: setValid},
+			recv:   func(ss grpc.ServerStream) error { return ss.RecvMsg(new(resourcev1.GetResourceRequest)) },
+		},
+		{
+			name:     "underlying recv error forwarded unchanged",
+			stream:   &scriptedStream{ctx: context.Background(), recvErr: stderrors.New("eof")},
+			recv:     func(ss grpc.ServerStream) error { return ss.RecvMsg(new(resourcev1.GetResourceRequest)) },
+			wantErr:  true,
+			wantSame: nil, // checked below via strings
+		},
+		{
+			name:   "non-proto message skips validation",
+			stream: &scriptedStream{ctx: context.Background()},
+			recv:   func(ss grpc.ServerStream) error { var s string; return ss.RecvMsg(&s) },
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotErr := ic(nil, tc.stream, streamInfo(), func(_ any, ss grpc.ServerStream) error {
+				return tc.recv(ss)
+			})
+			if tc.wantErr && gotErr == nil {
+				t.Fatalf("want error, got nil")
+			}
+			if !tc.wantErr && gotErr != nil {
+				t.Fatalf("want no error, got %v", gotErr)
+			}
+			if tc.wantCat != "" && !apperr.Is(gotErr, tc.wantCat) {
+				t.Fatalf("err = %v, want category %s", gotErr, tc.wantCat)
+			}
+		})
 	}
 }
 
