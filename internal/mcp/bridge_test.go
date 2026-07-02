@@ -167,4 +167,74 @@ func TestBridgeUnknownMethod(t *testing.T) {
 	}
 }
 
+// newBridgeServerWithOrigins builds a bridge whose DNS-rebinding allowlist is set.
+func newBridgeServerWithOrigins(t *testing.T, origins []string) *httptest.Server {
+	t.Helper()
+	conn := testutil.NewTestServer(t, func(s *grpc.Server) {
+		resourcev1.RegisterResourceServiceServer(s, logic.NewResourceService())
+	})
+	svcs, err := mcp.ServiceDescriptors("resource.v1.ResourceService")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge, err := mcp.NewBridge(conn, svcs, apperr.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge.SetAllowedOrigins(origins)
+	ts := httptest.NewServer(bridge.Handler())
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+func postWithOrigin(t *testing.T, url, origin string) int {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode
+}
+
+// TestBridgeOriginValidation covers the MCP Streamable-HTTP DNS-rebinding guard.
+func TestBridgeOriginValidation(t *testing.T) {
+	allow := newBridgeServerWithOrigins(t, []string{"https://good.example"})
+	if code := postWithOrigin(t, allow.URL, "https://evil.example"); code != http.StatusForbidden {
+		t.Fatalf("disallowed origin = %d, want 403", code)
+	}
+	if code := postWithOrigin(t, allow.URL, "https://good.example"); code != http.StatusOK {
+		t.Fatalf("allowlisted origin = %d, want 200", code)
+	}
+	// No Origin header (non-browser client) is always allowed.
+	if code := postWithOrigin(t, allow.URL, ""); code != http.StatusOK {
+		t.Fatalf("no-origin request = %d, want 200", code)
+	}
+	// "*" allows any origin.
+	star := newBridgeServerWithOrigins(t, []string{"*"})
+	if code := postWithOrigin(t, star.URL, "https://anything.example"); code != http.StatusOK {
+		t.Fatalf("wildcard origin = %d, want 200", code)
+	}
+}
+
+// TestBridgeRejectsAmplificationID guards the id-validation DoS fix: an id with a
+// huge decimal exponent must be rejected cheaply (no big.Rat expansion), not
+// echoed or processed.
+func TestBridgeRejectsAmplificationID(t *testing.T) {
+	ts := newBridgeServer(t)
+	resp, raw := postRaw(t, ts.URL, "application/json", "",
+		`{"jsonrpc":"2.0","method":"ping","id":1e1000000}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with JSON-RPC error", resp.StatusCode)
+	}
+	if code := rpcErrorCode(t, raw); code != -32600 {
+		t.Fatalf("amplification id → %s, want -32600 invalid request", raw)
+	}
+}
+
 func TestMain(m *testing.M) { testutil.VerifyTestMain(m) }

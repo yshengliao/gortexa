@@ -145,6 +145,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("build mcp bridge: %w", err)
 	}
+	// DNS-rebinding protection for the MCP endpoint: browsers may only reach it
+	// from an allowlisted origin (the same list CORS uses); non-browser clients
+	// (no Origin header) are unaffected.
+	bridge.SetAllowedOrigins(cfg.Server.CORSOrigins)
 	app.SetMCPHandler(bridge.Handler())
 
 	log.Info("gortexa starting", "addr", cfg.Server.Addr)

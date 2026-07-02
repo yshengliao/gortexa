@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"mime"
 	"net"
 	"net/http"
@@ -73,6 +72,11 @@ type Bridge struct {
 	// cached slice instead of re-downgrading every schema per request.
 	mcpTools []MCPTool
 	observ   config.ObservConfig
+
+	// allowedOrigins gates browser access for DNS-rebinding protection (MCP
+	// Streamable HTTP). allowAllOrigins short-circuits when "*" is configured.
+	allowedOrigins  map[string]struct{}
+	allowAllOrigins bool
 }
 
 // NewBridge builds a bridge exposing the ai.v1-annotated methods of the given
@@ -89,6 +93,9 @@ func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor,
 			return nil, err
 		}
 		for _, ir := range irs {
+			if _, dup := b.tools[ir.Name]; dup {
+				return nil, fmt.Errorf("mcp: duplicate tool name %q across services", ir.Name)
+			}
 			b.tools[ir.Name] = ir
 			b.order = append(b.order, ir.Name)
 		}
@@ -139,15 +146,51 @@ type rpcError struct {
 	Data    any    `json:"data,omitempty"`
 }
 
+// SetAllowedOrigins configures the browser-origin allowlist used for the MCP
+// Streamable-HTTP DNS-rebinding protection. Pass the server's CORS origins; "*"
+// allows any origin. A request carrying an Origin not on the list is rejected
+// with 403; requests without an Origin header (non-browser clients like the MCP
+// SDK or curl) are always allowed.
+func (b *Bridge) SetAllowedOrigins(origins []string) {
+	b.allowedOrigins = make(map[string]struct{}, len(origins))
+	b.allowAllOrigins = false
+	for _, o := range origins {
+		if o == "*" {
+			b.allowAllOrigins = true
+			continue
+		}
+		b.allowedOrigins[o] = struct{}{}
+	}
+}
+
+// originAllowed implements the DNS-rebinding guard: absent Origin (non-browser)
+// is allowed; otherwise the origin must be explicitly allowlisted (or "*").
+func (b *Bridge) originAllowed(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	if b.allowAllOrigins {
+		return true
+	}
+	_, ok := b.allowedOrigins[origin]
+	return ok
+}
+
 // Handler returns the Streamable-HTTP MCP handler (mounted at /mcp).
 func (b *Bridge) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// DNS-rebinding protection: validate Origin before touching the body.
+		if !b.originAllowed(r.Header.Get("Origin")) {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return
+		}
 		switch r.Method {
 		case http.MethodPost:
 			b.servePost(w, r)
 		case http.MethodGet:
 			b.handleGet(w, r)
 		default:
+			w.Header().Set("Allow", "GET, POST")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
@@ -180,17 +223,17 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 	// than being silently truncated into a parse error.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
 	if err != nil {
-		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
 	if len(body) > maxRequestBytes {
 		writeRPCStatus(w, r, http.StatusRequestEntityTooLarge,
-			rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32000, Message: "request entity too large"}})
+			rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32000, Message: "request entity too large"}})
 		return
 	}
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
-		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
 
@@ -207,7 +250,7 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 func (b *Bridge) handleSinglePost(w http.ResponseWriter, r *http.Request, body []byte) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
-		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
 	req, id, rerr := validateRPCRequest(fields)
@@ -235,7 +278,7 @@ func (b *Bridge) handleSinglePost(w http.ResponseWriter, r *http.Request, body [
 func (b *Bridge) handleBatchPost(w http.ResponseWriter, r *http.Request, body []byte) {
 	var raws []json.RawMessage
 	if err := json.Unmarshal(body, &raws); err != nil {
-		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}})
+		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
 	if len(raws) == 0 {
@@ -326,6 +369,11 @@ func idOrNull(id json.RawMessage) json.RawMessage {
 	return id
 }
 
+// maxRPCIDNumberLen bounds a numeric JSON-RPC id's text length. Real ids are
+// small; the cap (with the fraction/exponent rejection below) keeps id
+// validation from doing unbounded work on attacker input.
+const maxRPCIDNumberLen = 32
+
 // validRPCID accepts null, a string, or an integer-valued JSON number (JSON-RPC
 // 2.0 disallows fractional ids).
 func validRPCID(raw json.RawMessage) bool {
@@ -341,6 +389,12 @@ func validRPCID(raw json.RawMessage) bool {
 		var s string
 		return json.Unmarshal(trimmed, &s) == nil
 	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		// Validate syntactically. Never expand the number via big.Rat.SetString:
+		// a decimal-exponent literal like "1e999999999" would balloon into a
+		// giant integer, an unauthenticated CPU/memory amplification DoS.
+		if len(trimmed) > maxRPCIDNumberLen {
+			return false
+		}
 		var n json.Number
 		dec := json.NewDecoder(bytes.NewReader(trimmed))
 		dec.UseNumber()
@@ -350,24 +404,24 @@ func validRPCID(raw json.RawMessage) bool {
 		if err := dec.Decode(&struct{}{}); err != io.EOF {
 			return false
 		}
-		rat, ok := new(big.Rat).SetString(n.String())
-		return ok && rat.IsInt()
+		// json.Number preserves the source text; an integer id has no fraction or
+		// exponent. This rejects "1.5" and "1e3" without any arithmetic.
+		return !strings.ContainsAny(n.String(), ".eE")
 	default:
 		return false
 	}
 }
 
-func validRPCParams(method string, raw json.RawMessage) bool {
+func validRPCParams(_ string, raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 {
 		return false
 	}
-	switch method {
-	case "tools/call":
-		return trimmed[0] == '{' && json.Valid(trimmed)
-	default:
-		return (trimmed[0] == '{' || trimmed[0] == '[') && json.Valid(trimmed)
-	}
+	// JSON-RPC 2.0: params, if present, MUST be a structured value (object or
+	// array). Whether a specific method needs an object (e.g. tools/call) is a
+	// params-level concern resolved at dispatch as -32602 — not a request-shape
+	// (-32600) error, and never an error reply to a notification.
+	return (trimmed[0] == '{' || trimmed[0] == '[') && json.Valid(trimmed)
 }
 
 // ssePingInterval bounds how long an idle SSE stream sits silent; a periodic
@@ -377,6 +431,9 @@ const ssePingInterval = 25 * time.Second
 func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
 	// A bare GET opens an SSE stream for server→client messages. Gortexa emits
 	// none today, so it stays open (with keep-alives) until the client leaves.
+	// Clear any per-stream write deadline so a configured http.Server WriteTimeout
+	// can't kill this long-lived stream before the first keep-alive ping fires.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -524,7 +581,9 @@ func writeRPCValue(w http.ResponseWriter, r *http.Request, status int, value any
 	}
 	if responseType == "text/event-stream" {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.WriteHeader(http.StatusOK)
+		// Honor the caller-supplied status (e.g. 413 for an oversized body) rather
+		// than downgrading every SSE response to 200.
+		w.WriteHeader(status)
 		_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", buf)
 		flush(w)
 		return
@@ -570,7 +629,7 @@ func negotiateResponseType(accept string) (string, bool) {
 			}
 		}
 		switch strings.ToLower(mediaType) {
-		case "text/event-stream":
+		case "text/event-stream", "text/*":
 			eventStreamAcceptable = true
 		case "application/json", "application/*", "*/*":
 			jsonAcceptable = true
