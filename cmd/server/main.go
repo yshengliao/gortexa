@@ -64,6 +64,22 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("setup metrics: %w", err)
 	}
+	// If run() returns before app.Run takes over lifecycle, flush the telemetry
+	// providers here so a startup failure after observability setup still exports
+	// buffered spans/metrics/logs. Once the app starts, its shutdown hooks own
+	// this, so the guard below skips the double-flush.
+	appStarted := false
+	defer func() {
+		if appStarted {
+			return
+		}
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = traceShutdown(flushCtx)
+		_ = metricShutdown(flushCtx)
+		_ = logShutdown(flushCtx)
+	}()
+
 	// Governance metrics use the global meter provider installed by SetupMetrics
 	// (a no-op provider when no OTLP endpoint is configured, so this is safe).
 	govMetrics, err := observability.NewGovernanceMetrics()
@@ -152,5 +168,6 @@ func run() error {
 	app.SetMCPHandler(bridge.Handler())
 
 	log.Info("gortexa starting", "addr", cfg.Server.Addr)
+	appStarted = true // app.Run owns telemetry shutdown from here (kernel hooks)
 	return app.Run(ctx)
 }
