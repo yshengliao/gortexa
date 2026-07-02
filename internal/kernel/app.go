@@ -89,10 +89,13 @@ func New(opts ...Option) (*App, error) {
 	}
 	if ac.cfg == nil {
 		ac.cfg = &config.Config{Server: config.ServerConfig{
-			Addr:              ":8080",
-			ShutdownTimeout:   20 * time.Second,
-			ReadTimeout:       15 * time.Second,
-			WriteTimeout:      15 * time.Second,
+			Addr:            ":8080",
+			ShutdownTimeout: 20 * time.Second,
+			ReadTimeout:     15 * time.Second,
+			// WriteTimeout is 0 (disabled): this one server multiplexes long-lived
+			// gRPC server-streams (e.g. Health.Watch) and MCP SSE, and a non-zero
+			// WriteTimeout is applied per HTTP/2 stream, killing them mid-flight.
+			WriteTimeout:      0,
 			IdleTimeout:       60 * time.Second,
 			ReadHeaderTimeout: 5 * time.Second,
 		}}
@@ -122,6 +125,18 @@ func New(opts ...Option) (*App, error) {
 		httpWrap:    ac.httpWrap,
 		shutdownFns: ac.shutdownFns,
 		loopbackLis: bufconn.Listen(loopbackBufSize),
+	}
+	// Construct httpSrv here (its config is already known) so the field is
+	// written once, before any goroutine. serve() only fills in the Handler.
+	// This closes the data race with a concurrent, exported Shutdown and means a
+	// Shutdown that wins the race still stops the server: http.Server.Shutdown
+	// makes a later Serve return ErrServerClosed instead of serving forever.
+	a.httpSrv = &http.Server{
+		Protocols:         h2cProtocols(),
+		ReadTimeout:       ac.cfg.Server.ReadTimeout,
+		WriteTimeout:      ac.cfg.Server.WriteTimeout,
+		IdleTimeout:       ac.cfg.Server.IdleTimeout,
+		ReadHeaderTimeout: ac.cfg.Server.ReadHeaderTimeout,
 	}
 	a.grpcSrv = grpc.NewServer(serverOpts...)
 	grpc_health_v1.RegisterHealthServer(a.grpcSrv, a.health.GRPCHealthServer())
@@ -198,15 +213,20 @@ func (a *App) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	overall := a.health.Overall(r.Context())
+	// Evaluate the checks once: a second pass (Overall + Snapshot) could observe
+	// a different state and report a 'status' that contradicts 'checks'.
+	snap := a.health.Snapshot(r.Context())
+	overall := health.Healthy
+	checks := make(map[string]string, len(snap))
+	for name, st := range snap {
+		if st > overall {
+			overall = st
+		}
+		checks[name] = st.String()
+	}
 	code := http.StatusOK
 	if !overall.Serving() {
 		code = http.StatusServiceUnavailable
-	}
-	snap := a.health.Snapshot(r.Context())
-	checks := make(map[string]string, len(snap))
-	for name, st := range snap {
-		checks[name] = st.String()
 	}
 	writeJSON(w, code, map[string]any{"status": overall.String(), "checks": checks})
 }
@@ -230,14 +250,10 @@ func (a *App) Run(ctx context.Context) error {
 // serve runs against a provided listener (used by Run and by tests).
 func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	a.started.Store(true)
-	a.httpSrv = &http.Server{
-		Handler:           a.handler(),
-		Protocols:         h2cProtocols(),
-		ReadTimeout:       a.cfg.Server.ReadTimeout,
-		WriteTimeout:      a.cfg.Server.WriteTimeout,
-		IdleTimeout:       a.cfg.Server.IdleTimeout,
-		ReadHeaderTimeout: a.cfg.Server.ReadHeaderTimeout,
-	}
+	// httpSrv was allocated in New(); only its Handler depends on gateway/mcp
+	// (installed after New via SetGateway/SetMCPHandler), so set it here. Shutdown
+	// never reads Handler, so this is race-free with a concurrent Shutdown.
+	a.httpSrv.Handler = a.handler()
 	a.log.Info("gortexa serving", "addr", ln.Addr().String())
 
 	// Serve the in-process loopback so gateway/MCP forwarding flows through the
@@ -254,6 +270,10 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 		if err == http.ErrServerClosed {
 			return nil
 		}
+		// Serve failed (e.g. a late listener error). Tear down the loopback gRPC
+		// server/conn and run the shutdown hooks before returning, so this exit
+		// path doesn't leak the loopback goroutine or skip telemetry flush.
+		_ = a.Shutdown(context.Background())
 		return err
 	}
 }
@@ -304,8 +324,17 @@ func (a *App) Shutdown(ctx context.Context) error {
 		if a.loopbackLis != nil {
 			_ = a.loopbackLis.Close()
 		}
+		// Run shutdown hooks (OTel trace/metric/log flush) with their own bounded
+		// budget derived from the caller's ctx, not tctx — which the HTTP/gRPC
+		// drain above may have already exhausted, leaving the flush no time.
+		hookCtx := ctx
+		if a.cfg.Server.ShutdownTimeout > 0 {
+			var hookCancel context.CancelFunc
+			hookCtx, hookCancel = context.WithTimeout(ctx, a.cfg.Server.ShutdownTimeout)
+			defer hookCancel()
+		}
 		for _, fn := range a.shutdownFns {
-			if err := fn(tctx); err != nil && retErr == nil {
+			if err := fn(hookCtx); err != nil && retErr == nil {
 				retErr = err
 			}
 		}

@@ -21,6 +21,7 @@ type entry struct {
 	once  sync.Once
 	build func() any
 	val   any
+	err   error
 }
 
 // NewContainer returns an empty container.
@@ -48,7 +49,20 @@ func (c *Container) resolve(t reflect.Type) (any, error) {
 	}
 	// once.Do permits a builder to resolve *other* types (different once);
 	// only a same-type cycle would deadlock, which is a real programming error.
-	e.once.Do(func() { e.val = e.build() })
+	// Recover a panicking builder and store it as the entry's error so every
+	// later resolve surfaces the real failure instead of a misleading nil-value
+	// type mismatch (sync.Once marks the entry done even when build panics).
+	e.once.Do(func() {
+		defer func() {
+			if r := recover(); r != nil {
+				e.err = fmt.Errorf("kernel: provider for %s panicked: %v", t, r)
+			}
+		}()
+		e.val = e.build()
+	})
+	if e.err != nil {
+		return nil, e.err
+	}
 	return e.val, nil
 }
 

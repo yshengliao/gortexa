@@ -1,9 +1,11 @@
 package logic
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"slices"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -13,6 +15,9 @@ import (
 	[[.GoPkg]] "[[.Module]]/gen/[[.Domain]]/[[.Version]]"
 	apperr "[[.Module]]/internal/errors"
 )
+
+// defaultPageSize bounds a List page when the caller does not set one.
+const defaultPageSize = 50
 
 // [[.Entity]]Service is an in-memory implementation of
 // [[.Domain]].[[.Version]].[[.Entity]]Service. Back it with internal/storage for
@@ -52,34 +57,62 @@ func (s *[[.Entity]]Service) Create[[.Entity]](_ context.Context, req *[[.GoPkg]
 		CreatedAt: timestamppb.Now(),
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.store[out.Id] = out
-	s.mu.Unlock()
+	// Clone under the lock: a concurrent Update mutates the stored message in
+	// place, so cloning after releasing the lock would be a data race.
 	return clone[[.Entity]](out), nil
 }
 
 // Get[[.Entity]] returns a [[.Snake]] by id.
 func (s *[[.Entity]]Service) Get[[.Entity]](_ context.Context, req *[[.GoPkg]].Get[[.Entity]]Request) (*[[.GoPkg]].[[.Entity]], error) {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
 	r, ok := s.store[req.GetId()]
-	s.mu.RUnlock()
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "[[.Snake]] not found")
 	}
+	// Clone under the read lock; Update mutates the stored message in place.
 	return clone[[.Entity]](r), nil
 }
 
-// List[[.Plural]] returns all stored [[.PluralSnake]].
-func (s *[[.Entity]]Service) List[[.Plural]](_ context.Context, _ *[[.GoPkg]].List[[.Plural]]Request) (*[[.GoPkg]].List[[.Plural]]Response, error) {
+// List[[.Plural]] returns stored [[.PluralSnake]] ordered by id, with paging.
+// page_token is the id of the last item on the previous page.
+func (s *[[.Entity]]Service) List[[.Plural]](_ context.Context, req *[[.GoPkg]].List[[.Plural]]Request) (*[[.GoPkg]].List[[.Plural]]Response, error) {
 	s.mu.RLock()
-	out := make([]*[[.GoPkg]].[[.Entity]], 0, len(s.store))
+	all := make([]*[[.GoPkg]].[[.Entity]], 0, len(s.store))
 	for _, r := range s.store {
-		out = append(out, clone[[.Entity]](r))
+		all = append(all, clone[[.Entity]](r))
 	}
 	s.mu.RUnlock()
-	return &[[.GoPkg]].List[[.Plural]]Response{[[.Plural]]: out}, nil
+	slices.SortFunc(all, func(a, b *[[.GoPkg]].[[.Entity]]) int { return cmp.Compare(a.GetId(), b.GetId()) })
+
+	start := 0
+	if tok := req.GetPageToken(); tok != "" {
+		start = len(all)
+		for i, r := range all {
+			if r.GetId() > tok {
+				start = i
+				break
+			}
+		}
+	}
+	size := int(req.GetPageSize())
+	if size <= 0 {
+		size = defaultPageSize
+	}
+	end := min(start+size, len(all))
+	page := all[start:end]
+
+	resp := &[[.GoPkg]].List[[.Plural]]Response{[[.Plural]]: page}
+	if end < len(all) && len(page) > 0 {
+		resp.NextPageToken = page[len(page)-1].GetId()
+	}
+	return resp, nil
 }
 
-// Update[[.Entity]] replaces a [[.Snake]]'s mutable fields.
+// Update[[.Entity]] applies a partial update (PATCH): only fields set in the
+// request replace the stored values.
 func (s *[[.Entity]]Service) Update[[.Entity]](_ context.Context, req *[[.GoPkg]].Update[[.Entity]]Request) (*[[.GoPkg]].[[.Entity]], error) {
 	in := req.Get[[.Entity]]()
 	if in == nil || in.GetId() == "" {
@@ -91,7 +124,9 @@ func (s *[[.Entity]]Service) Update[[.Entity]](_ context.Context, req *[[.GoPkg]
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "[[.Snake]] not found")
 	}
-	existing.Name = in.GetName()
+	if in.GetName() != "" {
+		existing.Name = in.GetName()
+	}
 	return clone[[.Entity]](existing), nil
 }
 
