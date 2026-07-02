@@ -40,11 +40,26 @@ type breaker struct {
 	failures int
 	openedAt time.Time
 	probes   int
+	// gen identifies the current state episode; it is bumped on every transition
+	// so a probe's outcome only resolves the half-open episode it was actually
+	// admitted into (see record).
+	gen uint64
 }
 
-// allow returns whether the request may proceed, plus state-change details for
-// the Open→HalfOpen probe transition so the caller can record the metric/span.
-func (b *breaker) allow() (ok bool, from, to cbState, changed bool) {
+// admission carries whether a call may proceed and, when it was admitted as a
+// half-open probe, the episode (gen) it belongs to — plus state-change details
+// for the Open→HalfOpen transition so the caller can record the metric/span.
+type admission struct {
+	ok      bool
+	probe   bool
+	gen     uint64
+	from    cbState
+	to      cbState
+	changed bool
+}
+
+// allow reports whether the request may proceed.
+func (b *breaker) allow() admission {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	prev := b.state
@@ -52,26 +67,35 @@ func (b *breaker) allow() (ok bool, from, to cbState, changed bool) {
 	case cbOpen:
 		if time.Since(b.openedAt) >= b.openFor {
 			b.state = cbHalfOpen
+			b.gen++
 			b.probes = 1
-			return true, prev, b.state, true
+			return admission{ok: true, probe: true, gen: b.gen, from: prev, to: b.state, changed: true}
 		}
-		return false, prev, b.state, false
+		return admission{ok: false, from: prev, to: b.state}
 	case cbHalfOpen:
 		if b.probes < b.halfOpenMax {
 			b.probes++
-			return true, prev, b.state, false
+			return admission{ok: true, probe: true, gen: b.gen, from: prev, to: b.state}
 		}
-		return false, prev, b.state, false
+		return admission{ok: false, from: prev, to: b.state}
 	default: // cbClosed
-		return true, prev, b.state, false
+		return admission{ok: true, from: prev, to: b.state}
 	}
 }
 
-func (b *breaker) record(ctx context.Context, method string, success bool, c *CircuitBreaker) {
+// record folds a completed call's outcome back into the breaker. adm is the
+// admission allow returned for this same call, so a stale request admitted in an
+// earlier episode can't steal a probe slot or flip state on the genuine probe's
+// behalf when it completes during a later half-open episode.
+func (b *breaker) record(ctx context.Context, method string, success bool, adm admission, c *CircuitBreaker) {
 	b.mu.Lock()
 	old := b.state
 	switch b.state {
 	case cbHalfOpen:
+		// Only a probe admitted into the current half-open episode may resolve it.
+		if !adm.probe || adm.gen != b.gen {
+			break
+		}
 		if b.probes > 0 {
 			b.probes--
 		}
@@ -82,7 +106,13 @@ func (b *breaker) record(ctx context.Context, method string, success bool, c *Ci
 			b.state = cbOpen
 			b.openedAt = time.Now()
 		}
+		b.gen++
 	case cbClosed:
+		// A half-open probe that lands after the breaker already closed must not
+		// be counted as a normal closed-state failure.
+		if adm.probe {
+			break
+		}
 		if success {
 			b.failures = 0
 			break
@@ -91,6 +121,7 @@ func (b *breaker) record(ctx context.Context, method string, success bool, c *Ci
 		if b.failures >= b.maxFailures {
 			b.state = cbOpen
 			b.openedAt = time.Now()
+			b.gen++
 		}
 	case cbOpen:
 		// A probe result that arrives after the breaker has already re-opened
@@ -176,12 +207,12 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 			return handler(ctx, req)
 		}
 		b := c.get(info.FullMethod)
-		ok, from, to, changed := b.allow()
-		if !ok {
+		adm := b.allow()
+		if !adm.ok {
 			return nil, apperr.New(apperr.CatUnavailable, "circuit open")
 		}
-		if changed {
-			c.recordChange(ctx, info.FullMethod, from, to)
+		if adm.changed {
+			c.recordChange(ctx, info.FullMethod, adm.from, adm.to)
 		}
 		// Record the outcome in a defer so a panicking handler still counts. A
 		// panic unwinds past this frame to the outer Recovery interceptor, so a
@@ -192,7 +223,7 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 		// after the defer runs, so Recovery still converts it to an Internal error.
 		success := false
 		defer func() {
-			b.record(ctx, info.FullMethod, success, c)
+			b.record(ctx, info.FullMethod, success, adm, c)
 		}()
 		resp, err := handler(ctx, req)
 		success = !isFailure(err)
@@ -207,18 +238,18 @@ func (c *CircuitBreaker) Stream() grpc.StreamServerInterceptor {
 			return handler(srv, ss)
 		}
 		b := c.get(info.FullMethod)
-		ok, from, to, changed := b.allow()
-		if !ok {
+		adm := b.allow()
+		if !adm.ok {
 			return apperr.New(apperr.CatUnavailable, "circuit open")
 		}
-		if changed {
-			c.recordChange(ss.Context(), info.FullMethod, from, to)
+		if adm.changed {
+			c.recordChange(ss.Context(), info.FullMethod, adm.from, adm.to)
 		}
 		// See Unary: record in a defer so a panicking handler still counts and a
 		// half-open probe slot is always released.
 		success := false
 		defer func() {
-			b.record(ss.Context(), info.FullMethod, success, c)
+			b.record(ss.Context(), info.FullMethod, success, adm, c)
 		}()
 		err := handler(srv, ss)
 		success = !isFailure(err)

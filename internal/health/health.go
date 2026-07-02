@@ -12,7 +12,9 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	"github.com/yshengliao/gortexa/internal/observability"
 )
@@ -86,6 +88,18 @@ func (r *Registry) Overall(ctx context.Context) State {
 	return worst
 }
 
+// State evaluates a single named check. ok is false when no such check is
+// registered (used to answer the gRPC health protocol's per-service queries).
+func (r *Registry) State(ctx context.Context, name string) (state State, ok bool) {
+	r.mu.RLock()
+	c, ok := r.checks[name]
+	r.mu.RUnlock()
+	if !ok {
+		return Healthy, false
+	}
+	return c(ctx), true
+}
+
 // Names returns the registered check names, sorted.
 func (r *Registry) Names() []string {
 	r.mu.RLock()
@@ -108,24 +122,65 @@ type grpcHealth struct {
 	reg *Registry
 }
 
-func (g *grpcHealth) status(ctx context.Context) grpc_health_v1.HealthCheckResponse_ServingStatus {
-	if g.reg.Overall(ctx).Serving() {
+func serving(s State) grpc_health_v1.HealthCheckResponse_ServingStatus {
+	if s.Serving() {
 		return grpc_health_v1.HealthCheckResponse_SERVING
 	}
 	return grpc_health_v1.HealthCheckResponse_NOT_SERVING
 }
 
-func (g *grpcHealth) Check(ctx context.Context, _ *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
-	return &grpc_health_v1.HealthCheckResponse{Status: g.status(ctx)}, nil
+// statusFor resolves the serving status for a health request's service field: an
+// empty service is the overall server health; a non-empty service names a
+// registered check. found is false for an unknown non-empty service.
+func (g *grpcHealth) statusFor(ctx context.Context, service string) (status grpc_health_v1.HealthCheckResponse_ServingStatus, found bool) {
+	if service == "" {
+		return serving(g.reg.Overall(ctx)), true
+	}
+	st, ok := g.reg.State(ctx, service)
+	if !ok {
+		return grpc_health_v1.HealthCheckResponse_SERVICE_UNKNOWN, false
+	}
+	return serving(st), true
 }
 
+func (g *grpcHealth) Check(ctx context.Context, req *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+	st, found := g.statusFor(ctx, req.GetService())
+	if !found {
+		return nil, status.Error(codes.NotFound, "unknown health service")
+	}
+	return &grpc_health_v1.HealthCheckResponse{Status: st}, nil
+}
+
+// watchInterval is how often Watch re-evaluates health to detect a change.
+const watchInterval = time.Second
+
 func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {
-	// Minimal watch: emit the current status, then hold until the client leaves.
-	if err := stream.Send(&grpc_health_v1.HealthCheckResponse{Status: g.status(stream.Context())}); err != nil {
+	service := req.GetService()
+	// -1 is an impossible ServingStatus, so the first evaluation always sends.
+	last := grpc_health_v1.HealthCheckResponse_ServingStatus(-1)
+	send := func() error {
+		st, _ := g.statusFor(stream.Context(), service) // SERVICE_UNKNOWN when absent
+		if st == last {
+			return nil
+		}
+		last = st
+		return stream.Send(&grpc_health_v1.HealthCheckResponse{Status: st})
+	}
+	if err := send(); err != nil {
 		return err
 	}
-	<-stream.Context().Done()
-	return nil
+	ticker := time.NewTicker(watchInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil
+		case <-ticker.C:
+			if err := send(); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // StartMetricsExport records component health states every interval until ctx is

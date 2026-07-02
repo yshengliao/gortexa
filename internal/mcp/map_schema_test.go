@@ -55,7 +55,13 @@ func TestDowngradeOpenAIPreservesMapAdditionalProperties(t *testing.T) {
 		t.Fatal(err)
 	}
 	ir := ToolIR{Name: "map_tool", InputSchema: sch}
-	params := DowngradeOpenAI(ir).Function.Parameters
+	fn := DowngradeOpenAI(ir).Function
+	// A map field is an open object, which OpenAI strict mode forbids; the tool
+	// must be emitted non-strict rather than as a schema the API rejects.
+	if fn.Strict {
+		t.Error("map-bearing tool should be non-strict")
+	}
+	params := fn.Parameters
 	if params == nil {
 		t.Fatal("parameters nil")
 	}

@@ -3,7 +3,7 @@
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Status](https://img.shields.io/badge/status-active-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![AI generated](https://img.shields.io/badge/AI%20generated-Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
+[![AI generated](https://img.shields.io/badge/AI%20generated-Fable%205%20%7C%20Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
 
 A contract-first, batteries-included **gRPC framework** for Go 1.26. Protobuf is
 the single source of truth; **one h2c port** multiplexes three protocols:
@@ -22,8 +22,9 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   rate-limit → circuit-breaker → auth → validation), fail-loud if incomplete.
   OTel is a `StatsHandler`, covering unary **and** streaming.
 - **One error model, three transports** — a single mapping table drives gRPC
-  status, HTTP status, and MCP error envelopes. Internal errors never leak their
-  cause.
+  status, HTTP status, and MCP error envelopes. Only invalid-argument and
+  unauthenticated errors forward their message; everything else surfaces a
+  registry-safe message, and internal causes never leak.
 - **AI-skills layer** — `ai/v1` annotations → provider-neutral IR →
   MCP / OpenAI-strict / Gemini tool schemas (golden-locked). The MCP bridge
   dispatches `tools/call` back through the **full interceptor chain** via an
@@ -108,14 +109,16 @@ curl localhost:8080/v1/resources/x
 ## Performance
 
 Measured on **Go 1.26** with `go test -benchmem -count=8` (summarized with
-`benchstat`) on a shared Intel Xeon @ 2.8 GHz. `allocs/op` and `B/op` are the machine-independent signals;
+`benchstat`) on a shared Intel Xeon @ 2.1 GHz. `allocs/op` and `B/op` are the machine-independent signals;
 `ns/op` is indicative (shared CI CPU). Reproduce with
 `go test -run='^$' -bench=. -benchmem -count=8 ./internal/...`.
 
 **The Go 1.26 win — `errors.AsType` on the error hot path.** The three-transport
 error resolver swapped the reflection-based `errors.As` for the new generic
 `errors.AsType[*Error]`, removing one allocation per resolve. Same-toolchain A/B
-(`go1.26.4`, `BenchmarkErrorResolve`, n=8):
+(`go1.26.4`, `BenchmarkErrorResolve`, n=8, on the earlier 2.8 GHz host — the
+durable result is the **allocation** reduction, which the current run above still
+confirms at 104 B / 2 allocs):
 
 | `resolve` via | ns/op | B/op | allocs/op |
 |---|--:|--:|--:|
@@ -131,16 +134,20 @@ the measurable framework win coming from the `errors.AsType` adoption above.
 
 | Hot path | ns/op | B/op | allocs/op |
 |---|--:|--:|--:|
-| Error resolve → gRPC status (3-transport map) | ~145 | 104 | 2 |
-| Rate-limiter `Allow` (sharded, serial) | ~210 | 0 | 0 |
-| Rate-limiter `Allow` (parallel) | ~54 | 0 | 0 |
-| MCP tool downgrade (per tool) | ~19 | 2 | 1 |
-| MCP `tools/list` (memoized) | ~370 | 360 | 3 |
-| Resource clone (proto deep-copy) | ~280 | 176 | 2 |
-| Resource get (in-memory store) | ~300 | 176 | 2 |
-| Full interceptor chain (8 stages, unary) | ~2,900 | 1,288 | 26 |
+| Error resolve → gRPC status (3-transport map) | ~105 | 104 | 2 |
+| Rate-limiter `Allow` (sharded, serial) | ~197 | 0 | 0 |
+| Rate-limiter `Allow` (parallel) | ~50 | 0 | 0 |
+| MCP tool downgrade (per tool) | ~14 | 2 | 1 |
+| MCP `tools/list` (memoized) | ~285 | 360 | 3 |
+| Resource clone (proto deep-copy) | ~195 | 176 | 2 |
+| Resource get (in-memory store) | ~214 | 176 | 2 |
+| Full interceptor chain (8 stages, unary) | ~2,383 | 1,968 | 27 |
 
 The paths that must never allocate (rate-limiter `Allow`) hold at **0 allocs/op**.
+The fourth-round hardening is allocation-neutral on these paths (benchstat
+before/after: rate-limiter `Allow` stays 0 allocs/op, the full interceptor chain
+holds at 27 allocs/op — the added transport-boundary error normalization only
+runs on the error path, so the success path is unchanged).
 `BenchmarkBridgeHandlePost` separately drives a **512 KB** MCP request through the
 full HTTP → JSON-RPC → dispatch path to exercise Go 1.26's faster `io.ReadAll`; at
 that body size the read/parse allocation (~1.6 MB) dominates, so it measures
@@ -148,13 +155,14 @@ end-to-end large-body handling rather than `io.ReadAll` in isolation.
 
 ## Provenance
 
-Gortexa was built with AI-assisted development and hardened through **three
+Gortexa was built with AI-assisted development and hardened through **four
 independent model review rounds** — correctness, concurrency, security, and
 protocol conformance — with every actionable finding fixed and verified
 (`make build / vet / test -race / lint`):
 
 | Model | Role |
 |---|---|
+| **Claude Fable 5** | Fourth full-codebase review, hardening fixes, and comprehensive test coverage |
 | **Claude Opus 4.8** | Design, implementation, and consolidation |
 | **Gemini 3.1 Pro** (Jules) | Second independent review |
 | **Codex 5.5** | Third independent review |

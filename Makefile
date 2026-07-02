@@ -61,7 +61,10 @@ clean:
 	rm -rf gen bin coverage*.out
 
 run:
-	$(GO) run ./cmd/server
+	@# The committed etc/config.yaml jwt_secret is a placeholder the server now
+	@# refuses to boot with; inject a local-only dev secret so `make run` works.
+	@# NEVER use this value in a deployment — set GORTEXA_AUTH__JWT_SECRET there.
+	GORTEXA_AUTH__JWT_SECRET="local-dev-only-secret-not-for-production-0123456789" $(GO) run ./cmd/server
 
 .PHONY: dev dev-down
 

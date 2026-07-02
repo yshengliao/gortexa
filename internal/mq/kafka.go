@@ -19,6 +19,7 @@ type kafkaClient struct {
 	writer  *kafka.Writer
 	mu      sync.Mutex
 	readers []*kafka.Reader
+	closed  bool
 }
 
 // NewKafka builds a Kafka publisher/subscriber.
@@ -49,9 +50,17 @@ func (c *kafkaClient) Publish(ctx context.Context, topic string, m Message) erro
 func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) error {
 	r := kafka.NewReader(kafka.ReaderConfig{Brokers: c.brokers, Topic: topic, GroupID: "gortexa"})
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		_ = r.Close()
+		return apperr.New(apperr.CatUnavailable, "mq: subscriber closed")
+	}
 	c.readers = append(c.readers, r)
 	c.mu.Unlock()
 	go func() {
+		// Close the reader on ctx cancellation or a terminal read error so
+		// consumer-group membership and reader goroutines are released promptly.
+		defer func() { _ = r.Close() }()
 		for {
 			km, err := r.ReadMessage(ctx)
 			if err != nil {
@@ -69,9 +78,11 @@ func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) er
 
 func (c *kafkaClient) Close() error {
 	c.mu.Lock()
+	c.closed = true
 	for _, r := range c.readers {
 		_ = r.Close()
 	}
+	c.readers = nil
 	c.mu.Unlock()
 	return c.writer.Close()
 }

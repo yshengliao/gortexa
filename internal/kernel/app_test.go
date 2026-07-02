@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yshengliao/gortexa/internal/auth"
 	"github.com/yshengliao/gortexa/internal/config"
+	"github.com/yshengliao/gortexa/internal/interceptor"
 	"github.com/yshengliao/gortexa/internal/kernel"
+	"github.com/yshengliao/gortexa/internal/observability"
 	"github.com/yshengliao/gortexa/testutil"
 )
 
@@ -64,6 +67,54 @@ func TestRunGracefulShutdown(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after context cancel")
 	}
+}
+
+// New must accept and wire the full option surface: a stats handler and a
+// complete interceptor Set (both consumed as gRPC server options), the gateway,
+// MCP and HTTP-wrap handlers, a config, a logger, and a shutdown hook. The hook
+// runs on Shutdown; the logger is returned by Logger().
+func TestNewWithAllOptions(t *testing.T) {
+	set, err := interceptor.NewSet(interceptor.Config{
+		Verifier: auth.MustNewVerifier(testutil.DefaultSecret, "gortexa"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := quietLogger()
+	var hookRan bool
+	cfg := &config.Config{Server: config.ServerConfig{
+		Addr:            "127.0.0.1:0",
+		ShutdownTimeout: 2 * time.Second,
+	}}
+
+	app, err := kernel.New(
+		kernel.WithConfig(cfg),
+		kernel.WithLogger(log),
+		kernel.WithStatsHandler(observability.ServerStatsHandler()),
+		kernel.WithInterceptors(set),
+		kernel.WithGateway(stubHandler("gw")),
+		kernel.WithMCPHandler(stubHandler("mcp")),
+		kernel.WithHTTPWrap(func(h http.Handler) http.Handler { return h }),
+		kernel.WithShutdownHook(func(context.Context) error { hookRan = true; return nil }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Logger() != log {
+		t.Fatal("Logger() must return the WithLogger logger")
+	}
+	if err := app.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if !hookRan {
+		t.Fatal("WithShutdownHook fn must run on Shutdown")
+	}
+}
+
+func stubHandler(name string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Stub", name)
+	})
 }
 
 func TestHealthEndpoints(t *testing.T) {

@@ -9,7 +9,7 @@ import (
 )
 
 func newGenCmd() *cobra.Command {
-	var noWire, skipGen, force bool
+	var noWire, skipGen, force, allowBreaking bool
 	cmd := &cobra.Command{
 		Use:   "gen <domain>/<version> [Entity]",
 		Short: "Generate a new CRUD API end-to-end: proto + logic stub + server wiring, then regenerate",
@@ -32,16 +32,17 @@ func newGenCmd() *cobra.Command {
 				return err
 			}
 			data.Module = module
-			return generateAPI(root, data, genOpts{noWire: noWire, skipGen: skipGen, force: force})
+			return generateAPI(root, data, genOpts{noWire: noWire, skipGen: skipGen, force: force, allowBreaking: allowBreaking})
 		},
 	}
 	cmd.Flags().BoolVar(&noWire, "no-wire", false, "do not wire the service into cmd/server/main.go")
 	cmd.Flags().BoolVar(&skipGen, "skip-gen", false, "do not run code generation (buf) afterwards")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing proto/logic files")
+	cmd.Flags().BoolVar(&allowBreaking, "allow-breaking", false, "skip the buf breaking-change gate during regeneration (implied by --force)")
 	return cmd
 }
 
-type genOpts struct{ noWire, skipGen, force bool }
+type genOpts struct{ noWire, skipGen, force, allowBreaking bool }
 
 func generateAPI(root string, d tmplData, opt genOpts) error {
 	protoPath := filepath.Join(root, "proto", d.Domain, d.Version, d.Snake+".proto")
@@ -78,7 +79,9 @@ func generateAPI(root string, d tmplData, opt genOpts) error {
 
 	if !opt.skipGen {
 		fmt.Println("==> regenerating (buf lint → breaking → generate)…")
-		if err := regen(root, false); err != nil {
+		// --force overwrites a committed API, which would otherwise trip the
+		// breaking gate on its own new files; imply --allow-breaking there.
+		if err := regen(root, opt.allowBreaking || opt.force); err != nil {
 			return fmt.Errorf("regen: %w", err)
 		}
 		// gofmt the new logic file and the rewired main.go now that the generated

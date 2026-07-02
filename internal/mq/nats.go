@@ -13,9 +13,10 @@ import (
 const natsKeyHeader = "gortexa-key"
 
 type natsClient struct {
-	conn *nats.Conn
-	mu   sync.Mutex
-	subs []*nats.Subscription
+	conn   *nats.Conn
+	mu     sync.Mutex
+	subs   []*nats.Subscription
+	closed bool
 }
 
 // NewNATS connects to NATS and returns a publisher and subscriber sharing one
@@ -69,19 +70,36 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 		return apperr.Wrap(apperr.CatUnavailable, "nats subscribe", err)
 	}
 	if err := c.conn.Flush(); err != nil {
+		_ = sub.Unsubscribe()
 		return apperr.Wrap(apperr.CatUnavailable, "nats flush", err)
 	}
 	c.mu.Lock()
+	if c.closed {
+		// Lost the race with Close: unsubscribe the reader we just created rather
+		// than leaking it (Close already swept the slice).
+		c.mu.Unlock()
+		_ = sub.Unsubscribe()
+		return apperr.New(apperr.CatUnavailable, "mq: subscriber closed")
+	}
 	c.subs = append(c.subs, sub)
 	c.mu.Unlock()
+
+	// Stop delivery when the caller's context is cancelled, matching the Kafka
+	// backend (which stops its read loop on ctx.Done).
+	go func() {
+		<-ctx.Done()
+		_ = sub.Unsubscribe()
+	}()
 	return nil
 }
 
 func (c *natsClient) Close() error {
 	c.mu.Lock()
+	c.closed = true
 	for _, s := range c.subs {
 		_ = s.Unsubscribe()
 	}
+	c.subs = nil
 	c.mu.Unlock()
 	c.conn.Close()
 	return nil

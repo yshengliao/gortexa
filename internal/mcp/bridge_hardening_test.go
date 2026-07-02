@@ -50,30 +50,49 @@ func TestBridgeRejectsOversizedBody(t *testing.T) {
 
 func TestBridgeRejectsInvalidRequests(t *testing.T) {
 	ts := newBridgeServer(t)
+	// Malformed request structure → -32600 (Invalid Request).
 	for _, body := range []string{
 		`{}`,
 		`{"jsonrpc":"1.0","method":"ping","id":1}`,
-		`{"jsonrpc":"2.0","id":1}`,                                   // missing method
-		`{"jsonrpc":"2.0","method":"ping","id":1.5}`,                 // fractional id
-		`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":[]}`, // tools/call params must be object
+		`{"jsonrpc":"2.0","id":1}`,                   // missing method
+		`{"jsonrpc":"2.0","method":"ping","id":1.5}`, // fractional id
 		`42`,
 	} {
 		resp, raw := postRaw(t, ts.URL, "application/json", "", body)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("body %q status = %d, want 200 with JSON-RPC error", body, resp.StatusCode)
 		}
-		var out struct {
-			Error *struct {
-				Code int `json:"code"`
-			} `json:"error"`
-		}
-		if err := json.Unmarshal(raw, &out); err != nil {
-			t.Fatalf("decode %s: %v", raw, err)
-		}
-		if out.Error == nil || out.Error.Code != -32600 {
+		if code := rpcErrorCode(t, raw); code != -32600 {
 			t.Fatalf("body %q → %s, want -32600 invalid request", body, raw)
 		}
 	}
+
+	// Structurally valid request whose params are wrong for the method →
+	// -32602 (Invalid params), resolved at dispatch, not a request-shape error.
+	resp, raw := postRaw(t, ts.URL, "application/json", "",
+		`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":[]}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tools/call array params status = %d, want 200", resp.StatusCode)
+	}
+	if code := rpcErrorCode(t, raw); code != -32602 {
+		t.Fatalf("tools/call array params → %s, want -32602 invalid params", raw)
+	}
+}
+
+func rpcErrorCode(t *testing.T, raw []byte) int {
+	t.Helper()
+	var out struct {
+		Error *struct {
+			Code int `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	if out.Error == nil {
+		t.Fatalf("no JSON-RPC error in %s", raw)
+	}
+	return out.Error.Code
 }
 
 func TestBridgeBatchRequests(t *testing.T) {

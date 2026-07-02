@@ -7,7 +7,9 @@ server:
   openapi: true
 
 auth:
-  # Dev-only secret (>= 32 bytes). REPLACE in any real deployment.
+  # Placeholder only. The server REFUSES to start with this exact value, so set a
+  # real secret via GORTEXA_AUTH__JWT_SECRET (>= 32 bytes). `gortexa create`
+  # replaces it with a fresh random secret; `make run` injects a local dev one.
   jwt_secret: "dev-only-insecure-secret-change-me-please"
   issuer: "gortexa"
   ttl: 1h

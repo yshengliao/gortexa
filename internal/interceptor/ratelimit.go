@@ -101,13 +101,19 @@ func (l *RateLimiter) shardFor(key string) *rlShard {
 
 func (l *RateLimiter) enabled() bool { return l.rps > 0 }
 
-// ForwardedForMetaKey carries the real client IP across the in-process loopback.
-// The HTTP gateway and MCP bridge forward every request through one bufconn
+// PeerIPMetaKey carries the real client IP across the in-process loopback. The
+// HTTP gateway and MCP bridge forward every request through one bufconn
 // connection, so their gRPC peer is always the synthetic address "bufconn";
 // without this, all gateway+MCP traffic would collapse into a single shared
 // rate-limit bucket. The gateway/MCP set it from their own observed client
-// address, never from an untrusted inbound header.
-const ForwardedForMetaKey = "x-forwarded-for"
+// address (r.RemoteAddr), never from an untrusted inbound header.
+//
+// It is deliberately NOT "x-forwarded-for": grpc-gateway natively annotates the
+// outgoing context with an x-forwarded-for entry derived from any inbound
+// X-Forwarded-For header, so trusting that key would let an HTTP client spoof
+// its rate-limit identity. This dedicated key is only ever set by our own
+// trusted metadata hooks and is blocked from inbound header forwarding.
+const PeerIPMetaKey = "x-gortexa-peer-ip"
 
 // loopbackNetwork is the net.Addr network reported by grpc's bufconn listener.
 const loopbackNetwork = "bufconn"
@@ -125,7 +131,7 @@ func peerKey(ctx context.Context) string {
 	// forwarded client IP ONLY on that loopback — an external gRPC client has a
 	// real network peer, so it can neither reach this branch nor spoof the key.
 	if p.Addr.Network() == loopbackNetwork {
-		if ip := forwardedIP(ctx); ip != "" {
+		if ip := peerIP(ctx); ip != "" {
 			return ip
 		}
 	}
@@ -136,21 +142,19 @@ func peerKey(ctx context.Context) string {
 	return addr
 }
 
-// forwardedIP returns the first entry of the x-forwarded-for metadata, if any.
-func forwardedIP(ctx context.Context) string {
+// peerIP returns the trusted peer IP carried on PeerIPMetaKey, if any. The value
+// is set by our own gateway/MCP metadata hooks from r.RemoteAddr (a single IP),
+// so no list parsing is needed.
+func peerIP(ctx context.Context) string {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return ""
 	}
-	vals := md.Get(ForwardedForMetaKey)
-	if len(vals) == 0 || vals[0] == "" {
+	vals := md.Get(PeerIPMetaKey)
+	if len(vals) == 0 {
 		return ""
 	}
-	first := vals[0]
-	if i := strings.IndexByte(first, ','); i >= 0 {
-		first = first[:i] // X-Forwarded-For may be a list; the first is the origin.
-	}
-	return strings.TrimSpace(first)
+	return strings.TrimSpace(vals[0])
 }
 
 func (l *RateLimiter) allow(ctx context.Context) bool {

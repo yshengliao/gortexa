@@ -8,6 +8,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -19,6 +20,11 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 )
+
+// devPlaceholderSecret is the sample JWT secret shipped in etc/config.yaml and
+// cloned into every `gortexa create` project. Validate rejects it so a real
+// deployment can never accidentally run on the publicly-known key.
+const devPlaceholderSecret = "dev-only-insecure-secret-change-me-please"
 
 // Config is the root configuration.
 type Config struct {
@@ -86,10 +92,13 @@ type ObservConfig struct {
 
 func defaults() map[string]any {
 	return map[string]any{
-		"server.addr":                ":8080",
-		"server.shutdown_timeout":    "20s",
-		"server.read_timeout":        "15s",
-		"server.write_timeout":       "15s",
+		"server.addr":             ":8080",
+		"server.shutdown_timeout": "20s",
+		"server.read_timeout":     "15s",
+		// 0 = disabled: the single h2c server multiplexes long-lived gRPC
+		// server-streams (Health.Watch) and MCP SSE, which a per-stream
+		// WriteTimeout would kill mid-flight.
+		"server.write_timeout":       "0",
 		"server.idle_timeout":        "60s",
 		"server.read_header_timeout": "5s",
 		"server.enable_cors":         false,
@@ -177,12 +186,42 @@ func Build(opts ...Option) (*Config, error) {
 			Result:           &c,
 			TagName:          "koanf",
 			WeaklyTypedInput: true,
-			DecodeHook:       mapstructure.StringToTimeDurationHookFunc(),
+			DecodeHook: mapstructure.ComposeDecodeHookFunc(
+				mapstructure.StringToTimeDurationHookFunc(),
+				// Env/dotenv values arrive as strings; split comma lists into slices
+				// so a list-valued key (cors_origins, mq.topics) can be set from the
+				// environment instead of collapsing to a single-element slice.
+				mapstructure.StringToSliceHookFunc(","),
+				rejectBareNumericDuration(),
+			),
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 	return &c, nil
+}
+
+// rejectBareNumericDuration fails a config load when a time.Duration field is
+// given a bare number (e.g. `shutdown_timeout: 30`), which mapstructure's weak
+// typing would otherwise silently read as 30 nanoseconds. Durations must be
+// strings like "30s".
+func rejectBareNumericDuration() mapstructure.DecodeHookFuncType {
+	durationType := reflect.TypeOf(time.Duration(0))
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		// Skip when the target isn't a Duration, or when the value is already a
+		// Duration (e.g. the prior string→Duration hook already converted "30s";
+		// time.Duration's own kind is Int64, which we must not reject).
+		if to != durationType || from == durationType {
+			return data, nil
+		}
+		switch from.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			return nil, fmt.Errorf("duration must be a string like \"30s\", not the bare number %v (a bare number would be read as nanoseconds)", data)
+		}
+		return data, nil
+	}
 }
 
 // Validate enforces required fields and invariants.
@@ -194,6 +233,8 @@ func (c *Config) Validate() error {
 	switch {
 	case c.Auth.JWTSecret == "":
 		errs = append(errs, "auth.jwt_secret is required")
+	case c.Auth.JWTSecret.Reveal() == devPlaceholderSecret:
+		errs = append(errs, "auth.jwt_secret is the built-in dev placeholder; set a real secret via GORTEXA_AUTH__JWT_SECRET")
 	case len(c.Auth.JWTSecret) < 32:
 		errs = append(errs, "auth.jwt_secret must be at least 32 bytes")
 	}

@@ -1,6 +1,7 @@
 package kernel_test
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -63,6 +64,60 @@ func TestMissingProvider(t *testing.T) {
 		}
 	}()
 	kernel.MustGet[float64](c)
+}
+
+// A provider that panics must be recovered and surfaced as an error. Because
+// sync.Once marks the entry done even when build panics, a naive implementation
+// would leave the value nil and a *second* Get would report a misleading
+// "produced <nil>" type mismatch. Both resolves must return the same
+// panic-derived error instead.
+func TestGetPanickingProviderReturnsError(t *testing.T) {
+	c := kernel.NewContainer()
+	kernel.Register(c, func() string {
+		panic("boom")
+	})
+
+	_, err1 := kernel.Get[string](c)
+	if err1 == nil {
+		t.Fatal("first Get on a panicking provider: want error, got nil")
+	}
+	if !strings.Contains(err1.Error(), "panicked") {
+		t.Fatalf("first Get error = %q, want it to mention \"panicked\"", err1)
+	}
+
+	// The entry is already done; the second resolve must surface the stored
+	// panic error, not a nil-value type mismatch ("produced <nil>").
+	_, err2 := kernel.Get[string](c)
+	if err2 == nil {
+		t.Fatal("second Get on a panicking provider: want error, got nil")
+	}
+	if err1.Error() != err2.Error() {
+		t.Fatalf("second Get error = %q, want same as first %q", err2, err1)
+	}
+	if strings.Contains(err2.Error(), "produced") {
+		t.Fatalf("second Get leaked a type-mismatch error: %q", err2)
+	}
+}
+
+// MustGet returns the resolved value on the happy path (fail-loud only on error).
+func TestMustGetSuccess(t *testing.T) {
+	c := kernel.NewContainer()
+	kernel.RegisterValue(c, "ok")
+	if got := kernel.MustGet[string](c); got != "ok" {
+		t.Fatalf("MustGet = %q, want %q", got, "ok")
+	}
+}
+
+// MustGet must panic when its provider panicked (the recovered error propagates).
+func TestMustGetPanickingProviderPanics(t *testing.T) {
+	c := kernel.NewContainer()
+	kernel.Register(c, func() int { panic("nope") })
+	defer func() {
+		if recover() == nil {
+			t.Fatal("MustGet should panic when the provider panicked")
+		}
+	}()
+	kernel.MustGet[int](c)
 }
 
 func TestConcurrentResolveBuildsOnce(t *testing.T) {

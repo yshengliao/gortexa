@@ -22,24 +22,31 @@ func NewValidator() (protovalidate.Validator, error) { return protovalidate.New(
 // from a protovalidate error. Violations describe the caller's own request (field
 // names + rule messages), so they are safe to surface — they are not server
 // internals.
-func validationDetails(err error) (field, message string) {
-	field, message = "unknown", "validation failed"
-	if verr, ok := errors.AsType[*protovalidate.ValidationError](err); ok && verr != nil {
-		message = strings.Join(strings.Fields(verr.Error()), " ")
-		for _, v := range verr.Violations {
-			if v.FieldDescriptor != nil {
-				field = string(v.FieldDescriptor.Name())
-				break
-			}
+func validationDetails(err error) (field, message string, ok bool) {
+	verr, isVErr := errors.AsType[*protovalidate.ValidationError](err)
+	if !isVErr || verr == nil {
+		return "unknown", "validation failed", false
+	}
+	field, message = "unknown", strings.Join(strings.Fields(verr.Error()), " ")
+	for _, v := range verr.Violations {
+		if v.FieldDescriptor != nil {
+			field = string(v.FieldDescriptor.Name())
+			break
 		}
 	}
-	return field, message
+	return field, message, true
 }
 
-// failValidation records the validation-failure metric (with the offending field)
-// and returns an InvalidArgument error carrying the field-aware client message.
+// failValidation maps a protovalidate error to the right category: a
+// *ValidationError describes the caller's own request (safe to surface as
+// InvalidArgument with the field-aware message and metric), while a
+// CompilationError / RuntimeError is a server-side rule fault that maps to
+// Internal with the cause unserialized — not blamed on the client.
 func failValidation(ctx context.Context, gm *observability.GovernanceMetrics, method string, err error) error {
-	field, message := validationDetails(err)
+	field, message, ok := validationDetails(err)
+	if !ok {
+		return apperr.Wrap(apperr.CatInternal, "validation rule error", err)
+	}
 	if gm != nil {
 		gm.ValidationFails.Add(ctx, 1, metric.WithAttributes(attribute.String("method", method), attribute.String("field", field)))
 	}

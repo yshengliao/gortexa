@@ -5,7 +5,9 @@ import (
 	"sync"
 	"testing"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
 
 	"github.com/yshengliao/gortexa/internal/health"
 )
@@ -58,6 +60,28 @@ func TestGRPCHealthBridge(t *testing.T) {
 	resp, _ = srv.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
 	if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_NOT_SERVING {
 		t.Fatalf("status = %v, want NOT_SERVING", resp.GetStatus())
+	}
+}
+
+// TestGRPCHealthPerService covers the health protocol's service field: a
+// registered name reports that component's status, an unknown name is NotFound.
+func TestGRPCHealthPerService(t *testing.T) {
+	ctx := context.Background()
+	r := health.NewRegistry()
+	r.Register("db", static(health.Healthy))
+	r.Register("cache", static(health.Unhealthy))
+	srv := r.GRPCHealthServer()
+
+	resp, err := srv.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: "db"})
+	if err != nil || resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		t.Fatalf("db check = %v %v, want SERVING nil", resp.GetStatus(), err)
+	}
+	resp, err = srv.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: "cache"})
+	if err != nil || resp.GetStatus() != grpc_health_v1.HealthCheckResponse_NOT_SERVING {
+		t.Fatalf("cache check = %v %v, want NOT_SERVING nil", resp.GetStatus(), err)
+	}
+	if _, err := srv.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: "nope"}); status.Code(err) != codes.NotFound {
+		t.Fatalf("unknown service err = %v, want NotFound", err)
 	}
 }
 

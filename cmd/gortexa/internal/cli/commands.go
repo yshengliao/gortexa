@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -19,6 +21,11 @@ func newRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Ignore SIGINT/SIGTERM in the CLI while the server child runs. Ctrl-C
+			// still reaches the child (same process group), which shuts down
+			// gracefully; the CLI then waits for it and propagates its exit status,
+			// instead of dying first and orphaning the server mid-shutdown.
+			signal.Ignore(os.Interrupt, syscall.SIGTERM)
 			return runCmd(root, "go", append([]string{"run", "./cmd/server"}, args...)...)
 		},
 	}

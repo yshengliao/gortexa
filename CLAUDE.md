@@ -18,8 +18,10 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
   first. Never `go get`/clone the upstream `gortex` repo — it is out of scope and
   unreachable; the cross-cutting modules here are clean-room implementations.
 - **Errors never leak internals.** Return `*errors.Error` with a `Category`;
-  the three transports map it via `internal/errors`. Internal errors expose only
-  a SafeMessage.
+  the three transports map it via `internal/errors`. Only `InvalidArgument` and
+  `Unauthenticated` forward the caller-provided message; every other category
+  (including Internal) exposes only its registry SafeMessage, and a wrapped
+  cause is never serialized.
 - **OTel is a StatsHandler, not an interceptor.** Do not add the deprecated
   otelgrpc interceptors.
 - **Tests:** TDD where practical. Use `synctest.Test` (not `synctest.Run`) for

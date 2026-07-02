@@ -2,6 +2,8 @@ package interceptor_test
 
 import (
 	"context"
+	stderrors "errors"
+	"fmt"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -68,8 +70,40 @@ func TestRecoveryConvertsPanic(t *testing.T) {
 	_, err := ic(context.Background(), nil, unaryInfo("/svc/M"), func(context.Context, any) (any, error) {
 		panic("boom")
 	})
-	if !apperr.Is(err, apperr.CatInternal) {
-		t.Fatalf("err = %v, want Internal", err)
+	// Recovery normalizes to a transport status; a panic must map to Internal
+	// and must not leak the panic value ("boom").
+	st := apperr.ToGRPCStatus(err)
+	if st.Code().String() != "Internal" {
+		t.Fatalf("code = %v, want Internal", st.Code())
+	}
+	if st.Message() != "internal error" {
+		t.Fatalf("message = %q, want safe internal message", st.Message())
+	}
+}
+
+// TestRecoveryNormalizesHandlerErrors verifies the transport-boundary mapping:
+// a plain error and an fmt-wrapped *Error returned by a handler are reduced
+// through the registry so the client never sees codes.Unknown or a leaked cause.
+func TestRecoveryNormalizesHandlerErrors(t *testing.T) {
+	ic := interceptor.Recovery(nil)
+
+	// A plain error would otherwise reach the client as codes.Unknown + raw text.
+	_, err := ic(context.Background(), nil, unaryInfo("/svc/M"), func(context.Context, any) (any, error) {
+		return nil, stderrors.New("raw internal detail")
+	})
+	st := apperr.ToGRPCStatus(err)
+	if st.Code().String() != "Internal" || st.Message() != "internal error" {
+		t.Fatalf("plain error → %v %q, want Internal 'internal error'", st.Code(), st.Message())
+	}
+
+	// A fmt-wrapped *Error (not itself an *Error, so grpc-go wouldn't call
+	// GRPCStatus) must still resolve to its category, not leak the wrapper text.
+	wrapped := fmt.Errorf("context: %w", apperr.New(apperr.CatNotFound, "resource 42 missing"))
+	_, err = ic(context.Background(), nil, unaryInfo("/svc/M"), func(context.Context, any) (any, error) {
+		return nil, wrapped
+	})
+	if st := apperr.ToGRPCStatus(err); st.Code().String() != "NotFound" {
+		t.Fatalf("wrapped *Error → %v, want NotFound", st.Code())
 	}
 }
 
@@ -263,8 +297,8 @@ func TestValidationInterceptor(t *testing.T) {
 	info := unaryInfo("/resource.v1.ResourceService/GetResource")
 
 	// empty id violates string.min_len = 1
-	if _, err := ic(context.Background(), &resourcev1.GetResourceRequest{Id: ""}, info, okHandler); !apperr.Is(err, apperr.CatInvalidArgument) && err == nil {
-		t.Fatalf("invalid request should be rejected, got %v", err)
+	if _, err := ic(context.Background(), &resourcev1.GetResourceRequest{Id: ""}, info, okHandler); !apperr.Is(err, apperr.CatInvalidArgument) {
+		t.Fatalf("invalid request should be rejected as InvalidArgument, got %v", err)
 	}
 	if _, err := ic(context.Background(), &resourcev1.GetResourceRequest{Id: "abc"}, info, okHandler); err != nil {
 		t.Fatalf("valid request rejected: %v", err)

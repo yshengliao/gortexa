@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,6 +39,9 @@ func newCreateCmd() *cobra.Command {
 }
 
 func createProject(dest, module, repo, ref string) error {
+	if !validModulePath(module) {
+		return fmt.Errorf("invalid --module %q: expected a Go module path like github.com/me/app", module)
+	}
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("destination %q already exists", dest)
 	}
@@ -44,12 +49,23 @@ func createProject(dest, module, repo, ref string) error {
 	if err := runCmd(".", "git", "clone", "--depth", "1", "--branch", ref, repo, dest); err != nil {
 		return fmt.Errorf("clone layout: %w", err)
 	}
+	// From here the directory exists and is ours; remove it on any failure so a
+	// half-created project doesn't block a retry (the dest-exists guard above).
+	cleanup := func(err error) error {
+		_ = os.RemoveAll(dest)
+		return err
+	}
 	if err := os.RemoveAll(filepath.Join(dest, ".git")); err != nil {
-		return fmt.Errorf("remove cloned .git: %w", err)
+		return cleanup(fmt.Errorf("remove cloned .git: %w", err))
 	}
 	fmt.Printf("==> rewriting module path %s → %s\n", layoutModule, module)
 	if err := rewriteModulePath(dest, layoutModule, module); err != nil {
-		return fmt.Errorf("rewrite module path: %w", err)
+		return cleanup(fmt.Errorf("rewrite module path: %w", err))
+	}
+	// Replace the placeholder JWT secret so the scaffolded project boots and is
+	// not born using the publicly-known dev key.
+	if err := freshenJWTSecret(filepath.Join(dest, "etc", "config.yaml")); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not set a fresh jwt secret:", err)
 	}
 	if err := runCmd(dest, "git", "init", "-q"); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: git init failed:", err)
@@ -89,14 +105,83 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 		}
 		s := string(b)
 		// Avoid blindly rewriting HTTPS URLs (like the github repo in README.md)
-		// by temporarily masking them.
-		const httpsMask = "HTTPS_GORTEXA_REPO_MASK_RESERVED"
-		s = strings.ReplaceAll(s, "https://"+oldMod, httpsMask)
+		// by temporarily masking them. The mask token must be absent from the file
+		// — a fixed literal would itself be rewritten in any file that contains it
+		// (e.g. this very source), so derive a unique one per file.
+		mask := uniqueMask(s)
+		s = strings.ReplaceAll(s, "https://"+oldMod, mask)
 		s = strings.ReplaceAll(s, oldMod, newMod)
-		s = strings.ReplaceAll(s, httpsMask, "https://"+oldMod)
+		s = strings.ReplaceAll(s, mask, "https://"+oldMod)
 
 		return os.WriteFile(path, []byte(s), info.Mode().Perm())
 	})
+}
+
+// devPlaceholderSecret mirrors internal/config: the value the server refuses to
+// boot with. `create` swaps it for a fresh random secret in the new project.
+const devPlaceholderSecret = "dev-only-insecure-secret-change-me-please"
+
+// freshenJWTSecret replaces the committed placeholder secret in a scaffolded
+// project's config with a fresh random 48-byte hex value. A missing config file
+// or an absent placeholder is not an error (nothing to do).
+func freshenJWTSecret(configPath string) error {
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !strings.Contains(string(b), devPlaceholderSecret) {
+		return nil
+	}
+	var raw [24]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return err
+	}
+	secret := hex.EncodeToString(raw[:]) // 48 hex chars, well over the 32-byte floor
+	out := strings.ReplaceAll(string(b), devPlaceholderSecret, secret)
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, []byte(out), info.Mode().Perm())
+}
+
+// validModulePath does a lightweight check that module looks like a Go module
+// path (a slash-separated set of non-empty segments of safe characters, no
+// spaces or scheme). It intentionally rejects obviously bad input before that
+// value is rewritten across every file in the project.
+func validModulePath(module string) bool {
+	if module == "" || strings.ContainsAny(module, " \t\n:@") {
+		return false
+	}
+	for seg := range strings.SplitSeq(module, "/") {
+		if seg == "" {
+			return false
+		}
+		for _, r := range seg {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			case r == '.' || r == '-' || r == '_' || r == '~':
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// uniqueMask returns a placeholder token guaranteed not to appear in s.
+func uniqueMask(s string) string {
+	for {
+		var raw [12]byte
+		_, _ = rand.Read(raw[:])
+		mask := "GORTEXA_MASK_" + hex.EncodeToString(raw[:])
+		if !strings.Contains(s, mask) {
+			return mask
+		}
+	}
 }
 
 // isBinary reports whether b looks binary (contains a NUL in its first 512 bytes).

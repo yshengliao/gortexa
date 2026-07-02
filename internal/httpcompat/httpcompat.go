@@ -10,9 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/textproto"
+	"strings"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/yshengliao/gortexa/internal/auth"
@@ -24,8 +26,15 @@ import (
 func NewServeMux(reg *apperr.Registry) *runtime.ServeMux {
 	return runtime.NewServeMux(
 		runtime.WithErrorHandler(errorHandler(reg)),
+		// Mid-stream errors go through the same registry as unary errors, so a
+		// server-streaming handler can't serialize raw err.Error() text.
+		runtime.WithStreamErrorHandler(func(_ context.Context, err error) *status.Status {
+			return reg.ToGRPCStatus(err)
+		}),
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, jsonMarshaler()),
 		runtime.WithIncomingHeaderMatcher(incomingHeaderMatcher),
+		runtime.WithOutgoingHeaderMatcher(outgoingHeaderMatcher),
+		runtime.WithRoutingErrorHandler(routingErrorHandler(reg)),
 		runtime.WithMetadata(clientIPMetadata),
 	)
 }
@@ -34,7 +43,8 @@ func NewServeMux(reg *apperr.Registry) *runtime.ServeMux {
 // loopback so the rate limiter (and audit logging) can key on the real peer
 // instead of the synthetic "bufconn" address shared by all gateway traffic. It
 // uses the gateway's own r.RemoteAddr — never an inbound X-Forwarded-For header,
-// which an untrusted client could spoof (the header matcher also drops it).
+// which an untrusted client could spoof (the header matcher also drops the
+// dedicated key).
 func clientIPMetadata(_ context.Context, r *http.Request) metadata.MD {
 	host := r.RemoteAddr
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -43,7 +53,7 @@ func clientIPMetadata(_ context.Context, r *http.Request) metadata.MD {
 	if host == "" {
 		return nil
 	}
-	return metadata.Pairs(interceptor.ForwardedForMetaKey, host)
+	return metadata.Pairs(interceptor.PeerIPMetaKey, host)
 }
 
 func jsonMarshaler() *runtime.JSONPb {
@@ -55,7 +65,11 @@ func jsonMarshaler() *runtime.JSONPb {
 
 // incomingHeaderMatcher forwards Authorization and X-Request-Id into gRPC
 // metadata under the keys the interceptors expect; other headers use the
-// gateway default.
+// gateway default — except anything that would land on the trusted peer-IP
+// metadata key. The rate limiter trusts that key on the loopback (see
+// interceptor.PeerIPMetaKey), and the gateway default forwards any
+// "Grpc-Metadata-*" header verbatim, so without this guard an external client
+// could spoof its rate-limit identity via "Grpc-Metadata-X-Gortexa-Peer-Ip".
 func incomingHeaderMatcher(key string) (string, bool) {
 	switch textproto.CanonicalMIMEHeaderKey(key) {
 	case "Authorization":
@@ -63,7 +77,36 @@ func incomingHeaderMatcher(key string) (string, bool) {
 	case "X-Request-Id":
 		return interceptor.RequestIDMetadataKey, true
 	default:
-		return runtime.DefaultHeaderMatcher(key)
+		k, ok := runtime.DefaultHeaderMatcher(key)
+		if ok && strings.EqualFold(k, interceptor.PeerIPMetaKey) {
+			return "", false
+		}
+		return k, ok
+	}
+}
+
+// outgoingHeaderMatcher renders the request id the RequestID interceptor sets in
+// gRPC metadata as a clean "X-Request-Id" response header instead of the gateway
+// default "Grpc-Metadata-X-Request-Id"; other keys keep the default prefix.
+func outgoingHeaderMatcher(key string) (string, bool) {
+	if strings.EqualFold(key, interceptor.RequestIDMetadataKey) {
+		return "X-Request-Id", true
+	}
+	return runtime.MetadataHeaderPrefix + key, true
+}
+
+// routingErrorHandler preserves a 405 for a known path hit with the wrong method
+// instead of the gateway default, which reports method-not-allowed as
+// Unimplemented (HTTP 501).
+func routingErrorHandler(reg *apperr.Registry) runtime.RoutingErrorHandlerFunc {
+	return func(ctx context.Context, mux *runtime.ServeMux, m runtime.Marshaler, w http.ResponseWriter, r *http.Request, httpStatus int) {
+		if httpStatus == http.StatusMethodNotAllowed {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = w.Write([]byte(`{"code":"method_not_allowed","message":"method not allowed"}`))
+			return
+		}
+		runtime.DefaultRoutingErrorHandler(ctx, mux, m, w, r, httpStatus)
 	}
 }
 

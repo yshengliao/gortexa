@@ -36,6 +36,11 @@ type JSONSchema struct {
 	// (a google.protobuf.Struct, i.e. a free-form object). It is nil for closed
 	// messages; the OpenAI strict downgrade renders that nil as `false`.
 	AdditionalProperties any `json:"additionalProperties,omitempty"`
+	// oneofMembers is the set of property JSONNames that belong to a real proto
+	// oneof (only one may be set at a time). The OpenAI-strict downgrade excludes
+	// them from `required` so it never emits a schema protojson always rejects.
+	// Not serialized.
+	oneofMembers map[string]bool
 }
 
 // ToolIR is the provider-neutral description of one exposed RPC.
@@ -139,6 +144,22 @@ func schemaForMessage(md protoreflect.MessageDescriptor, depth int) (*JSONSchema
 			}
 		}
 		s.Properties[f.JSONName()] = fs
+	}
+	// Record members of real (non-synthetic) oneofs. proto3 `optional` fields
+	// each get a synthetic single-field oneof, which we ignore.
+	oneofs := md.Oneofs()
+	for i := 0; i < oneofs.Len(); i++ {
+		o := oneofs.Get(i)
+		if o.IsSynthetic() {
+			continue
+		}
+		of := o.Fields()
+		for j := 0; j < of.Len(); j++ {
+			if s.oneofMembers == nil {
+				s.oneofMembers = map[string]bool{}
+			}
+			s.oneofMembers[string(of.Get(j).JSONName())] = true
+		}
 	}
 	return s, nil
 }

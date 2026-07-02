@@ -137,17 +137,22 @@ func NewRegistry(seed ...Mapping) *Registry {
 	return r
 }
 
-// Register adds a mapping, panicking on a duplicate category (fail-loud at startup).
+// Register adds a mapping, panicking (fail-loud at startup) on a duplicate
+// category or a duplicate gRPC code. Code uniqueness matters because a pre-built
+// gRPC status arriving over the loopback is resolved back to a category by its
+// code (resolve's byCode passthrough); two categories sharing a code would make
+// that reverse mapping ambiguous, so it is rejected at registration.
 func (r *Registry) Register(m Mapping) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.byCat[m.Category]; dup {
 		panic("errors: duplicate mapping for category " + string(m.Category))
 	}
-	r.byCat[m.Category] = m
-	if _, ok := r.byCode[m.GRPCCode]; !ok {
-		r.byCode[m.GRPCCode] = m.Category
+	if existing, dup := r.byCode[m.GRPCCode]; dup {
+		panic(fmt.Sprintf("errors: gRPC code %v is already mapped to category %q; cannot also map %q (each code needs a unique category for the loopback passthrough)", m.GRPCCode, existing, m.Category))
 	}
+	r.byCat[m.Category] = m
+	r.byCode[m.GRPCCode] = m.Category
 }
 
 // Lookup returns the mapping for a category.

@@ -15,6 +15,14 @@ if [ ! -d ".skills" ]; then
   exit 1
 fi
 
+# In symlink mode the relative path is computed with python3. Check for it up
+# front, before the per-skill loop's `rm -rf` deletes any already-wired skill —
+# otherwise a missing python3 would destroy skills mid-run and then fail.
+if [ "${MODE}" = "symlink" ] && ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 is required for symlink mode; re-run with --copy." >&2
+  exit 1
+fi
+
 # Four tool skill roots. Codex and Antigravity also scan .agents/skills, but each
 # gets its documented primary path for clarity.
 TOOL_DIRS=(

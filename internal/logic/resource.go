@@ -49,6 +49,9 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// defaultPageSize bounds a ListResources page when the caller does not set one.
+const defaultPageSize = 50
+
 // CreateResource stores a new resource, assigning an id and timestamp.
 func (s *ResourceService) CreateResource(_ context.Context, req *resourcev1.CreateResourceRequest) (*resourcev1.Resource, error) {
 	if req.GetResource() == nil {
@@ -66,37 +69,67 @@ func (s *ResourceService) CreateResource(_ context.Context, req *resourcev1.Crea
 		out.Status = resourcev1.Status_STATUS_ACTIVE
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.store[out.Id] = out
-	s.mu.Unlock()
+	// Clone under the lock: a concurrent UpdateResource mutates the stored
+	// message in place, so cloning after releasing the lock would race.
 	return clone(out), nil
 }
 
 // GetResource returns a resource by id.
 func (s *ResourceService) GetResource(_ context.Context, req *resourcev1.GetResourceRequest) (*resourcev1.Resource, error) {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
 	r, ok := s.store[req.GetId()]
-	s.mu.RUnlock()
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "resource not found")
 	}
+	// Clone under the read lock; UpdateResource mutates the stored message in
+	// place under the write lock, so an unlocked clone would be a data race.
 	return clone(r), nil
 }
 
-// ListResources returns resources, optionally filtered by owner.
+// ListResources returns resources, optionally filtered by owner, with paging.
+// Results are ordered by id; page_token is the id of the last item on the
+// previous page (results resume strictly after it).
 func (s *ResourceService) ListResources(_ context.Context, req *resourcev1.ListResourcesRequest) (*resourcev1.ListResourcesResponse, error) {
 	s.mu.RLock()
-	out := make([]*resourcev1.Resource, 0, len(s.store))
+	all := make([]*resourcev1.Resource, 0, len(s.store))
 	for _, r := range s.store {
 		if req.GetOwner() == "" || r.GetOwner() == req.GetOwner() {
-			out = append(out, clone(r))
+			all = append(all, clone(r))
 		}
 	}
 	s.mu.RUnlock()
-	slices.SortFunc(out, func(a, b *resourcev1.Resource) int { return cmp.Compare(a.GetId(), b.GetId()) })
-	return &resourcev1.ListResourcesResponse{Resources: out}, nil
+	slices.SortFunc(all, func(a, b *resourcev1.Resource) int { return cmp.Compare(a.GetId(), b.GetId()) })
+
+	// Seek past the page token (the last id returned on the previous page).
+	start := 0
+	if tok := req.GetPageToken(); tok != "" {
+		start = len(all)
+		for i, r := range all {
+			if r.GetId() > tok {
+				start = i
+				break
+			}
+		}
+	}
+	size := int(req.GetPageSize())
+	if size <= 0 {
+		size = defaultPageSize
+	}
+	end := min(start+size, len(all))
+	page := all[start:end]
+
+	resp := &resourcev1.ListResourcesResponse{Resources: page}
+	if end < len(all) && len(page) > 0 {
+		resp.NextPageToken = page[len(page)-1].GetId()
+	}
+	return resp, nil
 }
 
-// UpdateResource replaces a resource's mutable fields.
+// UpdateResource applies a partial update (PATCH): only fields set in the
+// request replace the stored values, so omitting a field leaves it untouched.
 func (s *ResourceService) UpdateResource(_ context.Context, req *resourcev1.UpdateResourceRequest) (*resourcev1.Resource, error) {
 	r := req.GetResource()
 	if r == nil || r.GetId() == "" {
@@ -108,8 +141,12 @@ func (s *ResourceService) UpdateResource(_ context.Context, req *resourcev1.Upda
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "resource not found")
 	}
-	existing.Name = r.GetName()
-	existing.Owner = r.GetOwner()
+	if r.GetName() != "" {
+		existing.Name = r.GetName()
+	}
+	if r.GetOwner() != "" {
+		existing.Owner = r.GetOwner()
+	}
 	if r.GetStatus() != resourcev1.Status_STATUS_UNSPECIFIED {
 		existing.Status = r.GetStatus()
 	}

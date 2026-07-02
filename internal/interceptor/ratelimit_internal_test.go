@@ -22,26 +22,23 @@ type rlLoopbackAddr struct{}
 func (rlLoopbackAddr) Network() string { return loopbackNetwork }
 func (rlLoopbackAddr) String() string  { return loopbackNetwork }
 
-func loopbackCtx(forwardedFor string) context.Context {
+func loopbackCtx(peerIP string) context.Context {
 	ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: rlLoopbackAddr{}})
-	if forwardedFor != "" {
-		ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(ForwardedForMetaKey, forwardedFor))
+	if peerIP != "" {
+		ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(PeerIPMetaKey, peerIP))
 	}
 	return ctx
 }
 
 // Over the loopback, distinct forwarded client IPs must get distinct buckets
 // (otherwise all gateway+MCP traffic collapses into the single "bufconn" key),
-// while a forwarded header on a real network peer must be ignored (anti-spoof).
+// while the trusted peer-IP key on a real network peer must be ignored
+// (anti-spoof: only the loopback may carry it).
 func TestRateLimiterForwardedForOnLoopback(t *testing.T) {
 	l := NewRateLimiter(RateLimitConfig{RPS: 1, Burst: 1, TTL: time.Minute})
 
 	if k := peerKey(loopbackCtx("203.0.113.7")); k != "203.0.113.7" {
-		t.Fatalf("loopback forwarded key = %q, want 203.0.113.7", k)
-	}
-	// A comma list keeps the origin client (first entry).
-	if k := peerKey(loopbackCtx("203.0.113.9, 10.0.0.1")); k != "203.0.113.9" {
-		t.Fatalf("loopback forwarded list key = %q, want 203.0.113.9", k)
+		t.Fatalf("loopback peer key = %q, want 203.0.113.7", k)
 	}
 	// Two distinct forwarded IPs over the loopback do not share a bucket.
 	if !l.allow(loopbackCtx("198.51.100.1")) {
@@ -54,14 +51,43 @@ func TestRateLimiterForwardedForOnLoopback(t *testing.T) {
 		t.Fatal("a different forwarded IP must get its own bucket")
 	}
 
-	// On a real (non-loopback) peer, a forwarded header is NOT trusted: the key
+	// On a real (non-loopback) peer, the peer-IP metadata is NOT trusted: the key
 	// falls back to the real peer IP so a client can't spoof another's bucket.
 	spoof := metadata.NewIncomingContext(
 		peer.NewContext(context.Background(), &peer.Peer{Addr: rlFakeAddr("192.0.2.50:5555")}),
-		metadata.Pairs(ForwardedForMetaKey, "203.0.113.7"),
+		metadata.Pairs(PeerIPMetaKey, "203.0.113.7"),
 	)
 	if k := peerKey(spoof); k != "192.0.2.50" {
-		t.Fatalf("non-loopback key = %q, want real peer 192.0.2.50 (forwarded header ignored)", k)
+		t.Fatalf("non-loopback key = %q, want real peer 192.0.2.50 (forwarded metadata ignored)", k)
+	}
+}
+
+// On the loopback with no forwarded peer-IP metadata, peerKey falls back to the
+// synthetic bufconn address (peerIP returns "" for both the no-metadata and the
+// metadata-without-the-key cases).
+func TestPeerKeyLoopbackFallbacks(t *testing.T) {
+	// No metadata at all on the loopback → peerIP returns "" → fall back to addr.
+	if k := peerKey(loopbackCtx("")); k != loopbackNetwork {
+		t.Fatalf("loopback without forwarded IP key = %q, want %q", k, loopbackNetwork)
+	}
+	// Metadata present but missing the peer-IP key → still "" → fall back to addr.
+	ctx := metadata.NewIncomingContext(
+		peer.NewContext(context.Background(), &peer.Peer{Addr: rlLoopbackAddr{}}),
+		metadata.Pairs("x-other", "irrelevant"),
+	)
+	if k := peerKey(ctx); k != loopbackNetwork {
+		t.Fatalf("loopback with unrelated metadata key = %q, want %q", k, loopbackNetwork)
+	}
+}
+
+// peerKey degrades gracefully when there is no peer or no address on the context.
+func TestPeerKeyNoPeer(t *testing.T) {
+	if k := peerKey(context.Background()); k != "unknown" {
+		t.Fatalf("no-peer key = %q, want unknown", k)
+	}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{})
+	if k := peerKey(ctx); k != "unknown" {
+		t.Fatalf("nil-addr key = %q, want unknown", k)
 	}
 }
 
