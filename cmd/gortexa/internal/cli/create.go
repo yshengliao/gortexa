@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,6 +53,11 @@ func createProject(dest, module, repo, ref string) error {
 	if err := rewriteModulePath(dest, layoutModule, module); err != nil {
 		return fmt.Errorf("rewrite module path: %w", err)
 	}
+	// Replace the placeholder JWT secret so the scaffolded project boots and is
+	// not born using the publicly-known dev key.
+	if err := freshenJWTSecret(filepath.Join(dest, "etc", "config.yaml")); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not set a fresh jwt secret:", err)
+	}
 	if err := runCmd(dest, "git", "init", "-q"); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: git init failed:", err)
 	}
@@ -97,6 +104,37 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 
 		return os.WriteFile(path, []byte(s), info.Mode().Perm())
 	})
+}
+
+// devPlaceholderSecret mirrors internal/config: the value the server refuses to
+// boot with. `create` swaps it for a fresh random secret in the new project.
+const devPlaceholderSecret = "dev-only-insecure-secret-change-me-please"
+
+// freshenJWTSecret replaces the committed placeholder secret in a scaffolded
+// project's config with a fresh random 48-byte hex value. A missing config file
+// or an absent placeholder is not an error (nothing to do).
+func freshenJWTSecret(configPath string) error {
+	b, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !strings.Contains(string(b), devPlaceholderSecret) {
+		return nil
+	}
+	var raw [24]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return err
+	}
+	secret := hex.EncodeToString(raw[:]) // 48 hex chars, well over the 32-byte floor
+	out := strings.ReplaceAll(string(b), devPlaceholderSecret, secret)
+	info, err := os.Stat(configPath)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, []byte(out), info.Mode().Perm())
 }
 
 // isBinary reports whether b looks binary (contains a NUL in its first 512 bytes).
