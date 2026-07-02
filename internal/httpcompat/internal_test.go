@@ -27,16 +27,16 @@ func TestIncomingHeaderMatcher(t *testing.T) {
 	}
 }
 
-// TestIncomingHeaderMatcherBlocksForwardedFor locks in the rate-limit identity
-// guard: the loopback trusts x-forwarded-for metadata, and the gateway default
+// TestIncomingHeaderMatcherBlocksPeerIP locks in the rate-limit identity guard:
+// the loopback trusts the dedicated peer-IP metadata key, and the gateway default
 // matcher forwards Grpc-Metadata-* verbatim, so any spelling that would land on
 // that key must be rejected — otherwise an external HTTP client could spoof its
 // rate-limit bucket per request.
-func TestIncomingHeaderMatcherBlocksForwardedFor(t *testing.T) {
+func TestIncomingHeaderMatcherBlocksPeerIP(t *testing.T) {
 	for _, h := range []string{
-		"X-Forwarded-For",
-		"Grpc-Metadata-X-Forwarded-For",
-		"grpc-metadata-x-forwarded-for",
+		"X-Gortexa-Peer-Ip",
+		"Grpc-Metadata-X-Gortexa-Peer-Ip",
+		"grpc-metadata-x-gortexa-peer-ip",
 	} {
 		if got, ok := incomingHeaderMatcher(h); ok {
 			t.Errorf("header %q must not be forwarded, got key %q", h, got)

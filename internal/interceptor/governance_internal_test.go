@@ -62,7 +62,10 @@ func TestValidationDetailsExtractsFieldAndMessage(t *testing.T) {
 	if verr == nil {
 		t.Fatal("expected a validation error for empty Id")
 	}
-	field, message := validationDetails(verr)
+	field, message, ok := validationDetails(verr)
+	if !ok {
+		t.Fatal("a *protovalidate.ValidationError must be recognized as a client fault")
+	}
 	if field == "unknown" {
 		t.Errorf("field not extracted from violation (still %q)", field)
 	}

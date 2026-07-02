@@ -10,14 +10,22 @@ import (
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
 
-// Recovery turns a panicking handler into an Internal error, logging the stack.
-// It is the outermost interceptor so it covers every inner interceptor too.
+// Recovery turns a panicking handler into an Internal error, logging the stack,
+// and normalizes every returned error through the app registry at the transport
+// boundary. It is the outermost interceptor so it covers every inner interceptor
+// and handler: a *Error already maps to a safe status via GRPCStatus, but a
+// fmt-wrapped Error or a plain error would otherwise reach the client as raw
+// codes.Unknown text, leaking internals. Normalizing here reduces every error
+// shape through Registry.resolve before grpc-go serializes it.
 func Recovery(log *slog.Logger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp any, err error) {
 		defer func() {
 			if r := recover(); r != nil {
 				logPanic(ctx, log, info.FullMethod, r)
 				err = apperr.New(apperr.CatInternal, "internal error")
+			}
+			if err != nil {
+				err = apperr.ToGRPCStatus(err).Err()
 			}
 		}()
 		return handler(ctx, req)
@@ -31,6 +39,9 @@ func RecoveryStream(log *slog.Logger) grpc.StreamServerInterceptor {
 			if r := recover(); r != nil {
 				logPanic(ss.Context(), log, info.FullMethod, r)
 				err = apperr.New(apperr.CatInternal, "internal error")
+			}
+			if err != nil {
+				err = apperr.ToGRPCStatus(err).Err()
 			}
 		}()
 		return handler(srv, ss)

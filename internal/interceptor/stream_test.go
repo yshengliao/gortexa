@@ -34,8 +34,12 @@ func TestRecoveryStream(t *testing.T) {
 	err := ic(nil, &fakeStream{ctx: context.Background()}, streamInfo(), func(any, grpc.ServerStream) error {
 		panic("stream boom")
 	})
-	if !apperr.Is(err, apperr.CatInternal) {
-		t.Fatalf("err = %v, want Internal", err)
+	st := apperr.ToGRPCStatus(err)
+	if st.Code().String() != "Internal" {
+		t.Fatalf("code = %v, want Internal", st.Code())
+	}
+	if st.Message() != "internal error" {
+		t.Fatalf("message = %q, want safe internal message", st.Message())
 	}
 }
 

@@ -31,6 +31,7 @@ import (
 	"github.com/yshengliao/gortexa/internal/auth"
 	"github.com/yshengliao/gortexa/internal/config"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
+	"github.com/yshengliao/gortexa/internal/interceptor"
 )
 
 const (
@@ -462,9 +463,9 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 	}
 	// Carry the real client IP across the loopback so the rate limiter keys on
 	// the caller, not the shared "bufconn" peer. Derived from our own RemoteAddr,
-	// never a client-supplied header. Matches interceptor.ForwardedForMetaKey.
+	// never a client-supplied header. Matches interceptor.PeerIPMetaKey.
 	if ip := clientIP(r); ip != "" {
-		md.Set("x-forwarded-for", ip)
+		md.Set(interceptor.PeerIPMetaKey, ip)
 	}
 	if len(md) > 0 {
 		ctx = metadata.NewOutgoingContext(ctx, md)
