@@ -11,7 +11,7 @@ import (
 // environment as a comma-separated string (previously it collapsed into a
 // single-element slice).
 func TestEnvSliceDecoding(t *testing.T) {
-	c, err := config.Build(config.WithEnviron(func() []string {
+	c, err := config.BuildUnvalidated(config.WithEnviron(func() []string {
 		return []string{
 			"GORTEXA_AUTH__JWT_SECRET=" + validSecret,
 			"GORTEXA_SERVER__CORS_ORIGINS=https://a.example,https://b.example,https://c.example",
@@ -36,7 +36,7 @@ func TestEnvSliceDecoding(t *testing.T) {
 // rejected instead of being silently read as nanoseconds.
 func TestBareNumericDurationRejected(t *testing.T) {
 	yaml := writeFile(t, "config.yaml", "server:\n  shutdown_timeout: 30\n")
-	_, err := config.Build(
+	_, err := config.BuildUnvalidated(
 		config.WithConfigFile(yaml),
 		config.WithEnviron(func() []string { return []string{"GORTEXA_AUTH__JWT_SECRET=" + validSecret} }),
 	)
@@ -51,7 +51,7 @@ func TestBareNumericDurationRejected(t *testing.T) {
 // TestDevPlaceholderSecretRejected verifies the server refuses the committed dev
 // JWT secret (auth-bypass guard).
 func TestDevPlaceholderSecretRejected(t *testing.T) {
-	c, err := config.Build(config.WithEnviron(func() []string {
+	c, err := config.BuildUnvalidated(config.WithEnviron(func() []string {
 		return []string{"GORTEXA_AUTH__JWT_SECRET=dev-only-insecure-secret-change-me-please"}
 	}))
 	if err != nil {
@@ -67,7 +67,7 @@ func TestDevPlaceholderSecretRejected(t *testing.T) {
 // TestEmptyIssuerRejected pins that blanking the issuer fails validation, so the
 // jwt.WithIssuer check can never be silently disabled by GORTEXA_AUTH__ISSUER=.
 func TestEmptyIssuerRejected(t *testing.T) {
-	c, err := config.Build(config.WithEnviron(func() []string {
+	c, err := config.BuildUnvalidated(config.WithEnviron(func() []string {
 		return []string{
 			"GORTEXA_AUTH__JWT_SECRET=" + validSecret,
 			"GORTEXA_AUTH__ISSUER=",
@@ -86,7 +86,7 @@ func TestEmptyIssuerRejected(t *testing.T) {
 // TestOTLPSecureByDefault pins that OTLP export uses TLS unless cleartext is
 // explicitly opted in, so telemetry is never sent in cleartext by accident.
 func TestOTLPSecureByDefault(t *testing.T) {
-	c, err := config.Build(config.WithEnviron(func() []string {
+	c, err := config.BuildUnvalidated(config.WithEnviron(func() []string {
 		return []string{"GORTEXA_AUTH__JWT_SECRET=" + validSecret}
 	}))
 	if err != nil {

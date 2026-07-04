@@ -29,7 +29,7 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   MCP / OpenAI-strict / Gemini tool schemas (golden-locked). The MCP bridge
   dispatches `tools/call` back through the **full interceptor chain** via an
   in-process loopback, so AI calls inherit auth/validation.
-- **Batteries** — config (layered, fail-loud, masked secrets), generic DI,
+- **Batteries** — config (layered, fail-loud, masked secrets),
   3-state health → gRPC Health, slog + OTLP, a PgBouncer-safe pgx pool + sqlc,
   and pluggable cache (Redis) / MQ (NATS, Kafka) abstractions.
 
@@ -83,6 +83,7 @@ curl localhost:8080/v1/resources/x
 | `gortexa gen <domain>/<v> [Entity]` | Generate a CRUD API end-to-end: proto + logic stub + server wiring, then regenerate. |
 | `gortexa regen` | Regenerate from proto (buf lint → breaking → generate). |
 | `gortexa run` | Build and run the dev server. |
+| `gortexa export --format=mcp\|openai\|gemini` | Export the project's `ai/v1` tool schemas as provider-ready JSON. |
 | `gortexa tools install` / `sync` | Install / re-pin the dev toolchain (`tools/go.mod` directives). |
 | `gortexa skills install` / `list` | Wire the AI-assist skills into Claude/Codex/Copilot/Antigravity. |
 | `gortexa doctor` | Check the Go toolchain and proto tools. |

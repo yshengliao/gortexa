@@ -20,6 +20,7 @@ func newRootCmd() *cobra.Command {
 		newGenCmd(),
 		newRegenCmd(),
 		newRunCmd(),
+		newExportCmd(),
 		newToolsCmd(),
 		newSkillsCmd(),
 		newDoctorCmd(),

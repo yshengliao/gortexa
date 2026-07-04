@@ -1,0 +1,124 @@
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "create_resource",
+        "description": "Create a new resource. Use when a resource does not yet exist.",
+        "strict": true,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "resource": {
+              "type": "object",
+              "properties": {
+                "createdAt": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "owner": {
+                  "type": "string",
+                  "description": "Owning user id."
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "STATUS_UNSPECIFIED",
+                    "STATUS_ACTIVE",
+                    "STATUS_ARCHIVED"
+                  ]
+                }
+              },
+              "required": [
+                "createdAt",
+                "id",
+                "name",
+                "owner",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "resource"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "delete_resource",
+        "description": "Permanently delete a resource by id.",
+        "strict": true,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "get_resource",
+        "description": "Fetch a single resource by id and return its current state.",
+        "strict": true,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Resource id (uuid)."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "list_resources",
+        "description": "List resources, optionally filtered by owner, with paging.",
+        "strict": true,
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "owner": {
+              "type": "string"
+            },
+            "pageSize": {
+              "type": "integer"
+            },
+            "pageToken": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "owner",
+            "pageSize",
+            "pageToken"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}

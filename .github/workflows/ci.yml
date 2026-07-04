@@ -15,6 +15,22 @@ env:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      # KRaft single-node broker for `make test-integration`, matching
+      # deploy/docker-compose.yaml. apache/kafka's default config advertises
+      # PLAINTEXT://localhost:9092, which the runner reaches through the port
+      # mapping — no env needed (setting any KAFKA_* env would replace the
+      # image's entire default config).
+      kafka:
+        image: apache/kafka:latest
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 12
+          --health-start-period 30s
     steps:
       - uses: actions/checkout@v4
 
@@ -43,6 +59,11 @@ jobs:
 
       - name: Test (race)
         run: make test
+
+      - name: Test (integration)
+        run: make test-integration
+        env:
+          KAFKA_BROKER: 127.0.0.1:9092
 
       - name: Lint
         run: make lint

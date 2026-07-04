@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 	// gortexa:import — `gortexa gen` inserts generated-package imports above this line
@@ -27,10 +30,58 @@ import (
 )
 
 func main() {
+	exportFormat := flag.String("export-ai-schemas", "", "print the ai.v1 tool schemas (mcp|openai|gemini) to stdout and exit")
+	flag.Parse()
+	if *exportFormat != "" {
+		if err := exportSchemas(*exportFormat); err != nil {
+			fmt.Fprintln(os.Stderr, "fatal:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
 		os.Exit(1)
 	}
+}
+
+// authSkip exempts health checks from authentication (probes carry no tokens)
+// and, only when reflection is enabled, the reflection service itself — the
+// flag exists for schema-discovery tooling like `buf curl --reflect`, whose
+// reflection stream carries no token. The trailing dots keep the prefixes from
+// matching any user service (e.g. a "grpc.healthx" package).
+func authSkip(reflection bool) func(method string) bool {
+	return func(method string) bool {
+		if strings.HasPrefix(method, "/grpc.health.") {
+			return true
+		}
+		return reflection && strings.HasPrefix(method, "/grpc.reflection.")
+	}
+}
+
+// mcpServices lists every service exposed over the MCP bridge and the ai.v1
+// schema export.
+func mcpServices() []protoreflect.FullName {
+	return []protoreflect.FullName{
+		"resource.v1.ResourceService",
+		// gortexa:mcp — `gortexa gen` inserts "domain.v1.XxxService" entries above this line
+	}
+}
+
+// exportSchemas renders the project's ai.v1 tool schemas without starting the
+// server: the contract is compiled into this binary, so no config, storage or
+// listener is needed.
+func exportSchemas(format string) error {
+	descs, err := mcp.ServiceDescriptors(mcpServices()...)
+	if err != nil {
+		return fmt.Errorf("mcp descriptors: %w", err)
+	}
+	out, err := mcp.ExportSchemas(format, descs)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(out)
+	return err
 }
 
 func configOptions() []config.Option {
@@ -92,11 +143,10 @@ func run() error {
 		return fmt.Errorf("build auth verifier: %w", err)
 	}
 	set, err := interceptor.NewSet(interceptor.Config{
-		Logger:   log,
-		Verifier: verifier,
-		Metrics:  govMetrics,
-		// Health checks are unauthenticated.
-		AuthSkip:       func(method string) bool { return strings.HasPrefix(method, "/grpc.health.") },
+		Logger:         log,
+		Verifier:       verifier,
+		Metrics:        govMetrics,
+		AuthSkip:       authSkip(cfg.Server.Reflection),
 		RateLimit:      interceptor.RateLimitConfig{RPS: 200, Burst: 100, TTL: 10 * time.Minute},
 		CircuitBreaker: interceptor.CBConfig{MaxFailures: 5, OpenInterval: 10 * time.Second, HalfOpenMax: 2},
 		// Exempt control-plane health checks from the inflight budget so a flood of
@@ -150,10 +200,7 @@ func run() error {
 	// gortexa:gateway — `gortexa gen` inserts RegisterXxxServiceHandler blocks above this line
 	app.SetGateway(gateway)
 
-	descs, err := mcp.ServiceDescriptors(
-		"resource.v1.ResourceService",
-		// gortexa:mcp — `gortexa gen` inserts "domain.v1.XxxService" entries above this line
-	)
+	descs, err := mcp.ServiceDescriptors(mcpServices()...)
 	if err != nil {
 		return fmt.Errorf("mcp descriptors: %w", err)
 	}

@@ -30,7 +30,7 @@ func TestThreeLayerPrecedence(t *testing.T) {
 			"GORTEXA_AUTH__JWT_SECRET=" + validSecret,
 		}
 	}
-	c, err := config.Build(config.WithConfigFile(yamlFile), config.WithEnviron(environ))
+	c, err := config.BuildUnvalidated(config.WithConfigFile(yamlFile), config.WithEnviron(environ))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +45,9 @@ func TestThreeLayerPrecedence(t *testing.T) {
 	}
 	if c.Server.OpenAPI != true { // untouched default
 		t.Errorf("openapi default not applied")
+	}
+	if c.Server.Reflection != false { // untouched default
+		t.Errorf("reflection default not applied")
 	}
 	if c.Auth.JWTSecret.Reveal() != validSecret {
 		t.Errorf("jwt secret not loaded from env")

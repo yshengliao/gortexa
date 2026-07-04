@@ -25,7 +25,7 @@ func TestBuildErrorPaths(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := config.Build(tc.opts...); err == nil {
+			if _, err := config.BuildUnvalidated(tc.opts...); err == nil {
 				t.Fatal("expected Build error")
 			}
 		})

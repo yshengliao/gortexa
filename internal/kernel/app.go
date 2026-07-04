@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -27,12 +28,11 @@ const loopbackBufSize = 1024 * 1024
 
 // App is Gortexa's composition root and lifecycle owner. It holds the gRPC
 // server (built with the interceptor chain + StatsHandler), the optional HTTP
-// gateway and MCP handlers, a DI container and a health registry, and serves
-// them all on one h2c listener.
+// gateway and MCP handlers, and a health registry, and serves them all on one
+// h2c listener.
 type App struct {
 	cfg          *config.Config
 	log          *slog.Logger
-	di           *Container
 	health       *health.Registry
 	grpcSrv      *grpc.Server
 	gateway      http.Handler
@@ -118,7 +118,6 @@ func New(opts ...Option) (*App, error) {
 	a := &App{
 		cfg:         ac.cfg,
 		log:         ac.log,
-		di:          NewContainer(),
 		health:      health.NewRegistry(),
 		gateway:     ac.gateway,
 		mcp:         ac.mcp,
@@ -140,6 +139,12 @@ func New(opts ...Option) (*App, error) {
 	}
 	a.grpcSrv = grpc.NewServer(serverOpts...)
 	grpc_health_v1.RegisterHealthServer(a.grpcSrv, a.health.GRPCHealthServer())
+	if ac.cfg.Server.Reflection {
+		// Reflection v1 serves live server state, so registering before domain
+		// services are added still reflects them. Gated off by default because it
+		// exposes the full schema on the shared gRPC/HTTP/MCP port.
+		reflection.Register(a.grpcSrv)
+	}
 	return a, nil
 }
 
@@ -174,9 +179,6 @@ func (a *App) Loopback() (*grpc.ClientConn, error) {
 	}
 	return a.loopbackConn, a.loopbackErr
 }
-
-// Container returns the DI container.
-func (a *App) Container() *Container { return a.di }
 
 // GRPCServer returns the gRPC server for service registration.
 func (a *App) GRPCServer() *grpc.Server { return a.grpcSrv }

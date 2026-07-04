@@ -125,10 +125,10 @@ func TestOutgoingHeaderMatcher(t *testing.T) {
 			wantOK:  true,
 		},
 		{
-			name:    "other keys keep the gateway prefix",
+			name:    "unknown key is dropped by default",
 			key:     "x-tenant",
-			wantKey: "Grpc-Metadata-x-tenant",
-			wantOK:  true,
+			wantKey: "",
+			wantOK:  false,
 		},
 	}
 	for _, tt := range tests {
