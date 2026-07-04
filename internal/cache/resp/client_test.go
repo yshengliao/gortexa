@@ -138,3 +138,19 @@ func TestClientUnreachable(t *testing.T) {
 		t.Fatal("want dial error against a dead address")
 	}
 }
+
+// TestClientNegativeDialTimeoutDials pins that DialTimeout: -1 means "disabled"
+// (per the Options doc), not an already-expired dial deadline. Before the fix,
+// net.Dialer{Timeout: -1} failed every dial with an immediate i/o timeout.
+func TestClientNegativeDialTimeoutDials(t *testing.T) {
+	mr := miniredis.RunT(t)
+	c := resp.NewClient(resp.Options{Addr: mr.Addr(), DialTimeout: -1})
+	t.Cleanup(func() { _ = c.Close() })
+
+	if err := c.Set(context.Background(), "k", "v", 0); err != nil {
+		t.Fatalf("dial with disabled DialTimeout: %v", err)
+	}
+	if got, err := c.Get(context.Background(), "k"); err != nil || got != "v" {
+		t.Fatalf("get after disabled-timeout dial: got %q, %v", got, err)
+	}
+}
