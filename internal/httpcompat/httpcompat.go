@@ -55,6 +55,10 @@ func MaxBodyBytes(h http.Handler) http.Handler {
 		rc := http.NewResponseController(w)
 		_ = rc.SetReadDeadline(time.Now().Add(bodyReadTimeout)) // best-effort; unsupported writers just skip it
 		buf, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxRequestBytes))
+		// Clear on every path — before the error response and before the handler
+		// may stream — so a stale read deadline can't bleed onto a reused
+		// keep-alive connection.
+		_ = rc.SetReadDeadline(time.Time{})
 		if err != nil {
 			var tooLarge *http.MaxBytesError
 			if errors.As(err, &tooLarge) {
@@ -66,7 +70,6 @@ func MaxBodyBytes(h http.Handler) http.Handler {
 			writeStatusJSON(w, http.StatusRequestTimeout, "deadline_exceeded", "request body read timed out")
 			return
 		}
-		_ = rc.SetReadDeadline(time.Time{}) // clear before the handler may stream a response
 		r.Body = io.NopCloser(bytes.NewReader(buf))
 		r.ContentLength = int64(len(buf))
 		h.ServeHTTP(w, r)

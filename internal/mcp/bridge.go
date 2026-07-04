@@ -231,11 +231,13 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 	// Read one byte past the cap so an oversized body is reported as 413 rather
 	// than being silently truncated into a parse error.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
+	// Clear on every path — before the error response and before an SSE stream —
+	// so a stale read deadline can't bleed onto a reused keep-alive connection.
+	_ = rc.SetReadDeadline(time.Time{})
 	if err != nil {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
-	_ = rc.SetReadDeadline(time.Time{})
 	if len(body) > maxRequestBytes {
 		writeRPCStatus(w, r, http.StatusRequestEntityTooLarge,
 			rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32000, Message: "request entity too large"}})
