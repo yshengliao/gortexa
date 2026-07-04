@@ -40,6 +40,12 @@ func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	url := cfg.URL
 	if url == "" {
 		url = nats.DefaultURL
+	} else if _, err := splitBrokers(url); err != nil {
+		// nats.Connect would silently drop a blank list entry; validate with the
+		// same fail-loud rule as the Kafka backend — a blank entry is a config
+		// typo, not a smaller cluster. The original string is still passed
+		// through, since nats.Connect parses its own server list.
+		return nil, nil, err
 	}
 	conn, err := nats.Connect(url)
 	if err != nil {
