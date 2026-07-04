@@ -17,10 +17,17 @@ type redisCache struct {
 
 // NewRedis builds a Redis-backed cache from config.
 func NewRedis(cfg config.CacheConfig) (Cache, error) {
+	// A zero timeout/pool value is passed through as-is: go-redis reads zero as
+	// "use my default", so unset config preserves the previous behaviour while a
+	// set value tunes fail-fast/pool sizing.
 	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.Addr,
-		Password: cfg.Password.Reveal(),
-		DB:       cfg.DB,
+		Addr:         cfg.Addr,
+		Password:     cfg.Password.Reveal(),
+		DB:           cfg.DB,
+		DialTimeout:  cfg.DialTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		PoolSize:     cfg.PoolSize,
 	})
 	return &redisCache{client: client}, nil
 }

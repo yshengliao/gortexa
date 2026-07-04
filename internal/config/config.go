@@ -66,6 +66,14 @@ type CacheConfig struct {
 	Password Secret        `koanf:"password"`
 	DB       int           `koanf:"db"`
 	TTL      time.Duration `koanf:"ttl"`
+	// Client tunables. Each zero value keeps go-redis's built-in default (5s
+	// dial, 3s read/write, 10×GOMAXPROCS pool), so operators can shorten
+	// timeouts to fail fast behind a load balancer or size the pool for a busy
+	// service without the framework hard-coding either.
+	DialTimeout  time.Duration `koanf:"dial_timeout"`
+	ReadTimeout  time.Duration `koanf:"read_timeout"`
+	WriteTimeout time.Duration `koanf:"write_timeout"`
+	PoolSize     int           `koanf:"pool_size"`
 }
 
 type MQConfig struct {
