@@ -17,7 +17,11 @@ the single source of truth; **one h2c port** multiplexes three protocols:
 ## Highlights
 
 - **Single-port multiplexing** — Content-Type / path dispatch on native h2c
-  (`http.Server.Protocols`, no deprecated `x/net/h2c`).
+  (`http.Server.Protocols`, no deprecated `x/net/h2c`). External gRPC rides
+  grpc-go's `ServeHTTP` handler mode (Go's HTTP/2 stack), which upstream marks
+  Experimental — a few transport-level features differ from a dedicated gRPC
+  port. Split gRPC onto its own listener (e.g. cmux) if you need grpc-go's full
+  transport semantics on the external surface.
 - **Fixed-order interceptor chain** (recover → request-id → logger → load-shed →
   rate-limit → circuit-breaker → auth → validation), fail-loud if incomplete.
   OTel is a `StatsHandler`, covering unary **and** streaming.
