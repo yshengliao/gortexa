@@ -4,6 +4,7 @@ package mq_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -45,6 +46,101 @@ func TestNATSPubSub(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for message")
+	}
+}
+
+// TestNATSFanOut pins the cross-backend default (GroupID empty): every
+// subscription receives every message.
+func TestNATSFanOut(t *testing.T) {
+	srv := natsserver.RunRandClientPortServer()
+	defer srv.Shutdown()
+
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pub.Close() })
+
+	ctx := context.Background()
+	got1 := make(chan mq.Message, 1)
+	got2 := make(chan mq.Message, 1)
+	for _, ch := range []chan mq.Message{got1, got2} {
+		ch := ch
+		if err := sub.Subscribe(ctx, "events", func(_ context.Context, m mq.Message) error {
+			ch <- m
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := pub.Publish(ctx, "events", mq.Message{Value: []byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+
+	for i, ch := range []chan mq.Message{got1, got2} {
+		select {
+		case m := <-ch:
+			if string(m.Value) != "hello" {
+				t.Fatalf("subscriber %d received %+v", i+1, m)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("subscriber %d never received the fan-out message", i+1)
+		}
+	}
+}
+
+// TestNATSQueueGroupLoadBalance pins the non-empty GroupID semantics: the two
+// subscriptions share a queue group, so each message is delivered to exactly
+// one of them — no loss, no duplication.
+func TestNATSQueueGroupLoadBalance(t *testing.T) {
+	srv := natsserver.RunRandClientPortServer()
+	defer srv.Shutdown()
+
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL(), GroupID: "workers"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pub.Close() })
+
+	ctx := context.Background()
+	const n = 8
+	got := make(chan string, 2*n)
+	for i := 0; i < 2; i++ {
+		if err := sub.Subscribe(ctx, "jobs", func(_ context.Context, m mq.Message) error {
+			got <- string(m.Value)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i := 0; i < n; i++ {
+		if err := pub.Publish(ctx, "jobs", mq.Message{Value: []byte(fmt.Sprintf("job-%d", i))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seen := map[string]int{}
+	for len(seen) < n {
+		select {
+		case v := <-got:
+			seen[v]++
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out: received %d/%d distinct messages", len(seen), n)
+		}
+	}
+	// A duplicate would mean both queue-group members got the same message —
+	// exactly the load-balance guarantee this test pins down.
+	select {
+	case v := <-got:
+		t.Fatalf("message %q delivered more than once within the queue group", v)
+	case <-time.After(500 * time.Millisecond):
+	}
+	for v, count := range seen {
+		if count != 1 {
+			t.Fatalf("message %q delivered %d times", v, count)
+		}
 	}
 }
 

@@ -69,9 +69,14 @@ type CacheConfig struct {
 }
 
 type MQConfig struct {
-	Driver string   `koanf:"driver"` // "nats" | "kafka"
-	URL    string   `koanf:"url"`
-	Topics []string `koanf:"topics"`
+	Driver string `koanf:"driver"` // "nats" | "kafka"
+	URL    string `koanf:"url"`
+	// GroupID selects delivery semantics, identically on both backends: empty
+	// (default) fans out — every subscription receives every message published
+	// after it subscribed; non-empty load-balances — subscriptions sharing the
+	// group split the stream (NATS queue group / Kafka consumer group).
+	GroupID string   `koanf:"group_id"`
+	Topics  []string `koanf:"topics"`
 }
 
 type LogConfig struct {

@@ -1,6 +1,12 @@
 // Package mq is a pluggable publish/subscribe abstraction with a NATS
 // implementation (tested against an embedded server) and a Kafka implementation
 // behind the integration build tag.
+//
+// Delivery semantics are uniform across backends, selected by
+// config.MQConfig.GroupID: empty (the default) fans out — every subscription
+// receives every message published after it subscribed; non-empty
+// load-balances — subscriptions sharing the group split the stream (a NATS
+// queue group or Kafka consumer group).
 package mq
 
 import (

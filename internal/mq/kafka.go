@@ -4,6 +4,8 @@ package mq
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 
 	"github.com/segmentio/kafka-go"
@@ -16,6 +18,7 @@ import (
 // tag, since they require a live broker.
 type kafkaClient struct {
 	brokers []string
+	groupID string
 	writer  *kafka.Writer
 	mu      sync.Mutex
 	readers []*kafka.Reader
@@ -33,9 +36,21 @@ func NewKafka(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	brokers := []string{cfg.URL}
 	c := &kafkaClient{
 		brokers: brokers,
+		groupID: cfg.GroupID,
 		writer:  &kafka.Writer{Addr: kafka.TCP(brokers...), Balancer: &kafka.LeastBytes{}},
 	}
 	return c, c, nil
+}
+
+// randomGroupID names the throwaway consumer group backing one fan-out
+// subscription. Random rather than sequential so independent processes never
+// collide into an accidental shared group.
+func randomGroupID() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "gortexa-" + hex.EncodeToString(b[:]), nil
 }
 
 func (c *kafkaClient) Publish(ctx context.Context, topic string, m Message) error {
@@ -51,7 +66,23 @@ func (c *kafkaClient) Publish(ctx context.Context, topic string, m Message) erro
 }
 
 func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) error {
-	r := kafka.NewReader(kafka.ReaderConfig{Brokers: c.brokers, Topic: topic, GroupID: "gortexa"})
+	rc := kafka.ReaderConfig{Brokers: c.brokers, Topic: topic, GroupID: c.groupID}
+	if c.groupID == "" {
+		// Fan-out (the cross-backend default): a fresh group per subscription so
+		// every subscriber sees every message, and LastOffset so it sees only
+		// messages published after it subscribed — matching NATS core semantics.
+		// The throwaway groups' broker-side metadata expires via the broker's
+		// offsets.retention window. A non-empty GroupID keeps kafka-go's default
+		// FirstOffset/committed-offset behaviour: the group splits the stream and
+		// resumes where it left off.
+		gid, err := randomGroupID()
+		if err != nil {
+			return apperr.Wrap(apperr.CatInternal, "mq: generate group id", err)
+		}
+		rc.GroupID = gid
+		rc.StartOffset = kafka.LastOffset
+	}
+	r := kafka.NewReader(rc)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
