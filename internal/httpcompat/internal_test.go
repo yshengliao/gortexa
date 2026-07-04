@@ -55,12 +55,15 @@ func TestMaxBodyBytes(t *testing.T) {
 		}
 	})
 
-	t.Run("chunked oversize body capped inside the reader", func(t *testing.T) {
+	t.Run("chunked oversize body rejected with 413", func(t *testing.T) {
 		served = false
 		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, MaxRequestBytes+1)))
 		req.ContentLength = -1 // unknown length: Content-Length guard can't catch it
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413 (body read and size-checked in the middleware)", rec.Code)
+		}
 		if served {
 			t.Fatal("handler completed on an oversize chunked body")
 		}

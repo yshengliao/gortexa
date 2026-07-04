@@ -6,11 +6,15 @@
 package httpcompat
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/textproto"
 	"strings"
+	"time"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc/metadata"
@@ -26,23 +30,53 @@ import (
 // bridge's own limit so the two HTTP surfaces cap request size consistently.
 const MaxRequestBytes = 1 << 20
 
-// MaxBodyBytes caps the request body of the wrapped gateway handler. grpc-gateway
-// decodes straight from r.Body with an unbounded json.Decoder, so without this a
-// client could stream an arbitrarily large JSON body into memory (the MCP bridge
-// already guards its own path with an io.LimitReader). An over-declared
-// Content-Length is rejected up front with 413; a chunked or under-declared body
-// is capped by http.MaxBytesReader, which trips inside the decoder.
+// bodyReadTimeout bounds how long reading a (size-capped) gateway body may take.
+// The shared h2c server runs with ReadTimeout disabled so it can't cut off
+// long-lived gRPC/SSE streams, which leaves the short-bodied gateway path
+// without a body-read deadline — a slow-drip client could otherwise hold a
+// connection open indefinitely. This is applied only around the body read and
+// then cleared, so a long server-streaming gateway *response* is unaffected.
+const bodyReadTimeout = 30 * time.Second
+
+// MaxBodyBytes reads and caps the request body of the wrapped gateway handler.
+// grpc-gateway decodes straight from r.Body with an unbounded json.Decoder, so
+// without this a client could stream an arbitrarily large JSON body into memory
+// (the MCP bridge already guards its own path). The body is read here — under a
+// size cap and a read deadline — then replaced with an in-memory reader, so the
+// deadline bounds only the read and never the handler's (possibly streaming)
+// response. An over-declared Content-Length is rejected up front; an oversized
+// body (declared or chunked) yields 413; a too-slow body yields 408.
 func MaxBodyBytes(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxRequestBytes {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusRequestEntityTooLarge)
-			_, _ = w.Write([]byte(`{"code":"invalid_argument","message":"request body too large"}`))
+			writeStatusJSON(w, http.StatusRequestEntityTooLarge, "invalid_argument", "request body too large")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBytes)
+		rc := http.NewResponseController(w)
+		_ = rc.SetReadDeadline(time.Now().Add(bodyReadTimeout)) // best-effort; unsupported writers just skip it
+		buf, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxRequestBytes))
+		if err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				writeStatusJSON(w, http.StatusRequestEntityTooLarge, "invalid_argument", "request body too large")
+				return
+			}
+			// A read-deadline expiry (or client disconnect) mid-body: report a
+			// timeout rather than letting it surface as a decode error.
+			writeStatusJSON(w, http.StatusRequestTimeout, "deadline_exceeded", "request body read timed out")
+			return
+		}
+		_ = rc.SetReadDeadline(time.Time{}) // clear before the handler may stream a response
+		r.Body = io.NopCloser(bytes.NewReader(buf))
+		r.ContentLength = int64(len(buf))
 		h.ServeHTTP(w, r)
 	})
+}
+
+func writeStatusJSON(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(`{"code":"` + code + `","message":"` + message + `"}`))
 }
 
 // NewServeMux builds the gateway mux wired to the error registry.

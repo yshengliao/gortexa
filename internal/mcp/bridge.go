@@ -36,6 +36,10 @@ import (
 const (
 	protocolVersion = "2025-03-26"
 	maxRequestBytes = 1 << 20
+	// bodyReadTimeout bounds a POST body read, restoring a slow-drip guard the
+	// shared server's disabled ReadTimeout no longer provides; cleared before an
+	// SSE response streams.
+	bodyReadTimeout = 30 * time.Second
 )
 
 // supportedProtocolVersions are the MCP revisions Gortexa can speak. On
@@ -218,6 +222,12 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
 		return
 	}
+	// Bound the body read: the shared server runs with ReadTimeout disabled (so
+	// it can't cut off SSE streams), so a slow-drip POST would otherwise hold the
+	// connection open indefinitely. The deadline is cleared before any streaming
+	// response begins.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Now().Add(bodyReadTimeout))
 	// Read one byte past the cap so an oversized body is reported as 413 rather
 	// than being silently truncated into a parse error.
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBytes+1))
@@ -225,6 +235,7 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32700, Message: "parse error"}})
 		return
 	}
+	_ = rc.SetReadDeadline(time.Time{})
 	if len(body) > maxRequestBytes {
 		writeRPCStatus(w, r, http.StatusRequestEntityTooLarge,
 			rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32000, Message: "request entity too large"}})
