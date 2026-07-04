@@ -2,6 +2,8 @@ package kernel
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -91,9 +93,14 @@ func listServices(t *testing.T, app *App) (*grpc_reflection_v1.ListServiceRespon
 	if err != nil {
 		return nil, err
 	}
+	// Per the gRPC streaming convention, Send returns io.EOF when the server
+	// has already closed the stream — e.g. rejecting an unimplemented method
+	// (reflection off) fast enough to race the client's Send. The real status
+	// (Unimplemented) is then surfaced by Recv, so don't short-circuit on the
+	// Send error, or the test would observe Unknown (status.Code(io.EOF)).
 	if err := stream.Send(&grpc_reflection_v1.ServerReflectionRequest{
 		MessageRequest: &grpc_reflection_v1.ServerReflectionRequest_ListServices{ListServices: "*"},
-	}); err != nil {
+	}); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
 	resp, err := stream.Recv()
