@@ -49,7 +49,7 @@ func TestMemoryCacheTTL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close() // stop the janitor before the bubble ends
+		defer func() { _ = c.Close() }() // stop the janitor before the bubble ends
 
 		if err := c.Set(ctx, "k", []byte("v"), time.Minute); err != nil {
 			t.Fatal(err)
@@ -67,7 +67,7 @@ func TestMemoryCacheZeroTTLNeverExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		c, _ := cache.NewInMemory(config.CacheConfig{})
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 
 		_ = c.Set(ctx, "k", []byte("v"), 0)
 		time.Sleep(time.Hour)
