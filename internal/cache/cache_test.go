@@ -7,15 +7,18 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/yshengliao/gortexa/internal/cache"
+	"github.com/yshengliao/gortexa/internal/config"
 )
 
 func newCache(t *testing.T) (cache.Cache, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	c := cache.NewRedisFromClient(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	c, err := cache.NewRedis(config.CacheConfig{Addr: mr.Addr()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = c.Close() })
 	return c, mr
 }

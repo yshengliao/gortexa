@@ -8,9 +8,8 @@ import (
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
 
-// TestNewRedisRejectsNegativePoolSize pins the guard: go-redis panics on a
-// negative pool size instead of defaulting it, so NewRedis must reject it as a
-// config error rather than crash.
+// TestNewRedisRejectsNegativePoolSize pins the guard against a negative pool
+// size, which is a config error rather than something to default silently.
 func TestNewRedisRejectsNegativePoolSize(t *testing.T) {
 	_, err := NewRedis(config.CacheConfig{Addr: "127.0.0.1:6379", PoolSize: -1})
 	if err == nil || !apperr.Is(err, apperr.CatInvalidArgument) {
@@ -19,8 +18,8 @@ func TestNewRedisRejectsNegativePoolSize(t *testing.T) {
 }
 
 // TestNewRedisAppliesTunables pins that the client tunables flow from config
-// into the go-redis client, so an operator can actually shorten timeouts or
-// size the pool. A zero value is deliberately left for go-redis to default.
+// into the RESP client, so an operator can actually shorten timeouts or size
+// the pool. A zero value is deliberately left for the client to default.
 func TestNewRedisAppliesTunables(t *testing.T) {
 	c, err := NewRedis(config.CacheConfig{
 		Addr:         "127.0.0.1:6379",
