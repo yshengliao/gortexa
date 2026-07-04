@@ -12,13 +12,11 @@ import (
 	"strconv"
 )
 
-// Guards against a malicious or corrupt length header triggering a huge
-// allocation. maxBulkLen is Redis's proto-max-bulk-len default (512 MiB).
+// maxBulkLen guards against a malicious or corrupt length header triggering a
+// huge allocation; it is Redis's proto-max-bulk-len default (512 MiB).
 const (
-	maxBulkLen   = 512 << 20
-	maxArrayLen  = 1 << 24
-	nullBulkLen  = -1
-	nullArrayLen = -1
+	maxBulkLen  = 512 << 20
+	nullBulkLen = -1
 )
 
 // Error is an error reply (-ERR ...) from the server.
@@ -100,26 +98,12 @@ func readReply(r *bufio.Reader) (any, error) {
 			return nil, fmt.Errorf("resp: bulk string not CRLF-terminated")
 		}
 		return string(buf[:n]), nil
-	case '*':
-		n, err := parseInt(line[1:])
-		if err != nil {
-			return nil, err
-		}
-		if n == nullArrayLen {
-			return nil, nil
-		}
-		if n < 0 || n > maxArrayLen {
-			return nil, fmt.Errorf("resp: array length out of range: %d", n)
-		}
-		arr := make([]any, n)
-		for i := range arr {
-			if arr[i], err = readReply(r); err != nil {
-				return nil, err
-			}
-		}
-		return arr, nil
 	default:
-		return nil, fmt.Errorf("resp: unknown reply type %q", line[0])
+		// This client only issues GET/SET/DEL/PING/AUTH/SELECT, whose replies are
+		// simple strings, bulk strings, integers or errors — never arrays ('*').
+		// Not decoding arrays keeps the codec minimal and gives a malicious or
+		// misbehaving server no unbounded-recursion / large-allocation surface.
+		return nil, fmt.Errorf("resp: unexpected reply type %q", line[0])
 	}
 }
 
