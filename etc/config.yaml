@@ -24,7 +24,6 @@ cache:
   # the *_timeout / pool_size tunables apply only to the redis driver.
   driver: "memory"
   # addr: "localhost:6379"
-  ttl: 5m
 
 mq:
   driver: "nats" # "nats" | "kafka" (kafka needs the `integration` build tag)

@@ -2,13 +2,12 @@ package config_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/yshengliao/gortexa/internal/config"
 )
 
 func TestDotEnvLayerAndCustomPrefix(t *testing.T) {
-	envFile := writeFile(t, ".env", "APP_SERVER__ADDR=:6000\nAPP_AUTH__JWT_SECRET="+validSecret+"\nAPP_CACHE__TTL=30s\n")
+	envFile := writeFile(t, ".env", "APP_SERVER__ADDR=:6000\nAPP_AUTH__JWT_SECRET="+validSecret+"\nAPP_CACHE__DB=7\n")
 	c, err := config.BuildUnvalidated(
 		config.WithEnvPrefix("APP_"),
 		config.WithDotEnvFile(envFile),
@@ -20,8 +19,8 @@ func TestDotEnvLayerAndCustomPrefix(t *testing.T) {
 	if c.Server.Addr != ":6000" {
 		t.Errorf("addr from .env = %q", c.Server.Addr)
 	}
-	if c.Cache.TTL != 30*time.Second {
-		t.Errorf("cache ttl = %v", c.Cache.TTL)
+	if c.Cache.DB != 7 {
+		t.Errorf("cache db from .env = %d", c.Cache.DB)
 	}
 	if c.Auth.JWTSecret.Reveal() != validSecret {
 		t.Errorf("secret from .env not loaded")

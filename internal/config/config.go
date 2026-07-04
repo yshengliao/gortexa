@@ -62,15 +62,14 @@ type DBConfig struct {
 }
 
 type CacheConfig struct {
-	Driver   string        `koanf:"driver"` // "memory" (default, no external service) | "redis"
-	Addr     string        `koanf:"addr"`
-	Password Secret        `koanf:"password"`
-	DB       int           `koanf:"db"`
-	TTL      time.Duration `koanf:"ttl"`
-	// Client tunables. Each zero value keeps go-redis's built-in default (5s
-	// dial, 3s read/write, 10×GOMAXPROCS pool), so operators can shorten
-	// timeouts to fail fast behind a load balancer or size the pool for a busy
-	// service without the framework hard-coding either.
+	Driver   string `koanf:"driver"` // "memory" (default, no external service) | "redis"
+	Addr     string `koanf:"addr"`
+	Password Secret `koanf:"password"`
+	DB       int    `koanf:"db"`
+	// Client tunables (redis driver). Each zero value keeps the RESP client's
+	// built-in default (5s dial, 3s read/write, 10-conn pool), so operators can
+	// shorten timeouts to fail fast behind a load balancer or size the pool for a
+	// busy service without the framework hard-coding either.
 	DialTimeout  time.Duration `koanf:"dial_timeout"`
 	ReadTimeout  time.Duration `koanf:"read_timeout"`
 	WriteTimeout time.Duration `koanf:"write_timeout"`
@@ -136,7 +135,6 @@ func defaults() map[string]any {
 		"db.max_conns":               10,
 		"cache.driver":               "memory", // in-memory default; "redis" opts in to a distributed cache
 		"cache.addr":                 "localhost:6379",
-		"cache.ttl":                  "5m",
 		"mq.driver":                  "nats",
 		"log.level":                  "info",
 		"log.format":                 "json",
