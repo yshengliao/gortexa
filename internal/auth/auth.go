@@ -27,6 +27,14 @@ var ErrExpiredToken = errors.New("token expired")
 // be built with a weak key regardless of how it's constructed.
 const minSecretBytes = 32
 
+// clockSkewLeeway absorbs small clock differences between the host that signs a
+// token and the host that verifies it (a Verifier commonly validates tokens
+// minted by another instance sharing the secret). Without it, jwt/v5 uses zero
+// leeway and rejects a still-valid token right at its exp boundary on a
+// slightly-behind verifier. 60s is the conventional allowance — small enough
+// that a stolen expired token's usable window barely widens.
+const clockSkewLeeway = 60 * time.Second
+
 // MetadataKey is the gRPC metadata / HTTP header carrying the bearer token.
 const MetadataKey = "authorization"
 
@@ -92,6 +100,7 @@ func (v *Verifier) Verify(tokenStr string) (*Claims, error) {
 	opts := []jwt.ParserOption{
 		jwt.WithValidMethods([]string{"HS256"}),
 		jwt.WithExpirationRequired(),
+		jwt.WithLeeway(clockSkewLeeway),
 	}
 	if v.issuer != "" {
 		opts = append(opts, jwt.WithIssuer(v.issuer))

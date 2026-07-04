@@ -5,6 +5,7 @@ package mq_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -15,11 +16,23 @@ import (
 	"github.com/yshengliao/gortexa/internal/mq"
 )
 
-func TestNATSPubSub(t *testing.T) {
+// natsURL resolves the NATS server for the integration tests. If NATS_URL is set
+// (e.g. a docker-compose broker) it is used as-is and a connection failure fails
+// the test; otherwise an embedded nats-server (the real server library, run
+// in-process) is started and torn down with the test, so the default suite needs
+// no external broker.
+func natsURL(t *testing.T) string {
+	t.Helper()
+	if u := os.Getenv("NATS_URL"); u != "" {
+		return u
+	}
 	srv := natsserver.RunRandClientPortServer()
-	defer srv.Shutdown()
+	t.Cleanup(srv.Shutdown)
+	return srv.ClientURL()
+}
 
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+func TestNATSPubSub(t *testing.T) {
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(natsURL(t))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,10 +65,7 @@ func TestNATSPubSub(t *testing.T) {
 // TestNATSFanOut pins the cross-backend default (GroupID empty): every
 // subscription receives every message.
 func TestNATSFanOut(t *testing.T) {
-	srv := natsserver.RunRandClientPortServer()
-	defer srv.Shutdown()
-
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(natsURL(t))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,10 +104,7 @@ func TestNATSFanOut(t *testing.T) {
 // subscriptions share a queue group, so each message is delivered to exactly
 // one of them — no loss, no duplication.
 func TestNATSQueueGroupLoadBalance(t *testing.T) {
-	srv := natsserver.RunRandClientPortServer()
-	defer srv.Shutdown()
-
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL(), GroupID: "workers"})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(natsURL(t)), GroupID: "workers"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,10 +156,7 @@ func TestNATSQueueGroupLoadBalance(t *testing.T) {
 // finish before Close returns (given an unexpired ctx), so shutdown never
 // abandons work silently.
 func TestNATSCloseWaitsForInflightHandler(t *testing.T) {
-	srv := natsserver.RunRandClientPortServer()
-	defer srv.Shutdown()
-
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(natsURL(t))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,10 +205,7 @@ func TestNATSCloseWaitsForInflightHandler(t *testing.T) {
 // dropping the c.done case from the watcher's select would hang here; and goleak
 // (baselined after connect via IgnoreCurrent) flags any surviving watcher.
 func TestNATSSubscribeNoGoroutineLeakAfterClose(t *testing.T) {
-	srv := natsserver.RunRandClientPortServer()
-	defer srv.Shutdown()
-
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(natsURL(t))})
 	if err != nil {
 		t.Fatal(err)
 	}

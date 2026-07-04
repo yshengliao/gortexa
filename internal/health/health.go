@@ -47,6 +47,23 @@ func (s State) Serving() bool { return s != Unhealthy }
 // Check reports the current state of one component.
 type Check func(ctx context.Context) State
 
+// checkTimeout bounds a single check invocation. A check is expected to be
+// fast; without a ceiling a blocking check (a DB/Redis ping with no internal
+// deadline) would stall the serving Check RPC or a long-lived Watch stream for
+// as long as the caller's own deadline allows. The metrics exporter already
+// bounds its whole snapshot the same way — this applies it per check, so one
+// slow check can't hold up the others. The check must honour the ctx it is
+// given for the ceiling to take effect.
+const checkTimeout = 5 * time.Second
+
+// evalCheck runs one check under a bounded context so a hung check can't stall
+// the caller.
+func evalCheck(ctx context.Context, c Check) State {
+	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	defer cancel()
+	return c(ctx)
+}
+
 // Registry holds named checks and aggregates them.
 type Registry struct {
 	mu     sync.RWMutex
@@ -72,7 +89,7 @@ func (r *Registry) Snapshot(ctx context.Context) map[string]State {
 
 	out := make(map[string]State, len(checks))
 	for n, c := range checks {
-		out[n] = c(ctx)
+		out[n] = evalCheck(ctx, c)
 	}
 	return out
 }
@@ -97,7 +114,7 @@ func (r *Registry) State(ctx context.Context, name string) (state State, ok bool
 	if !ok {
 		return Healthy, false
 	}
-	return c(ctx), true
+	return evalCheck(ctx, c), true
 }
 
 // Names returns the registered check names, sorted.

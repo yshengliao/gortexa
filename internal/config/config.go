@@ -62,17 +62,28 @@ type DBConfig struct {
 }
 
 type CacheConfig struct {
+	Driver   string        `koanf:"driver"` // "memory" (default, no external service) | "redis"
 	Addr     string        `koanf:"addr"`
 	Password Secret        `koanf:"password"`
 	DB       int           `koanf:"db"`
 	TTL      time.Duration `koanf:"ttl"`
+	// Client tunables. Each zero value keeps go-redis's built-in default (5s
+	// dial, 3s read/write, 10×GOMAXPROCS pool), so operators can shorten
+	// timeouts to fail fast behind a load balancer or size the pool for a busy
+	// service without the framework hard-coding either.
+	DialTimeout  time.Duration `koanf:"dial_timeout"`
+	ReadTimeout  time.Duration `koanf:"read_timeout"`
+	WriteTimeout time.Duration `koanf:"write_timeout"`
+	PoolSize     int           `koanf:"pool_size"`
 }
 
 type MQConfig struct {
 	Driver string `koanf:"driver"` // "nats" | "kafka"
 	// URL accepts a comma-separated server list on both backends, e.g.
-	// "b1:9092,b2:9092" (kafka) or "nats://a:4222,nats://b:4222".
-	URL string `koanf:"url"`
+	// "b1:9092,b2:9092" (kafka) or "nats://a:4222,nats://b:4222". Typed Secret
+	// because a NATS/Kafka URL can embed credentials (nats://user:pass@host), so
+	// it must mask like DSN/Password rather than risk a debug log leaking it.
+	URL Secret `koanf:"url"`
 	// GroupID selects delivery semantics, identically on both backends: empty
 	// (default) fans out — every subscription receives every message published
 	// after it subscribed; non-empty load-balances — subscriptions sharing the
@@ -107,10 +118,13 @@ func defaults() map[string]any {
 	return map[string]any{
 		"server.addr":             ":8080",
 		"server.shutdown_timeout": "20s",
-		"server.read_timeout":     "15s",
-		// 0 = disabled: the single h2c server multiplexes long-lived gRPC
-		// server-streams (Health.Watch) and MCP SSE, which a per-stream
-		// WriteTimeout would kill mid-flight.
+		// read_timeout and write_timeout are 0 (disabled): the single h2c server
+		// multiplexes long-lived HTTP/2 streams and both deadlines are armed
+		// per-stream. write_timeout would kill a server-stream (Health.Watch) or
+		// MCP SSE mid-response; read_timeout would reset a slow
+		// client-streaming/bidi request whose body spans more than the window.
+		// read_header_timeout still bounds the header phase (slow-loris guard).
+		"server.read_timeout":        "0",
 		"server.write_timeout":       "0",
 		"server.idle_timeout":        "60s",
 		"server.read_header_timeout": "5s",
@@ -120,6 +134,7 @@ func defaults() map[string]any {
 		"auth.issuer":                "gortexa",
 		"auth.ttl":                   "1h",
 		"db.max_conns":               10,
+		"cache.driver":               "memory", // in-memory default; "redis" opts in to a distributed cache
 		"cache.addr":                 "localhost:6379",
 		"cache.ttl":                  "5m",
 		"mq.driver":                  "nats",

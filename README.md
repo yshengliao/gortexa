@@ -17,7 +17,11 @@ the single source of truth; **one h2c port** multiplexes three protocols:
 ## Highlights
 
 - **Single-port multiplexing** — Content-Type / path dispatch on native h2c
-  (`http.Server.Protocols`, no deprecated `x/net/h2c`).
+  (`http.Server.Protocols`, no deprecated `x/net/h2c`). External gRPC rides
+  grpc-go's `ServeHTTP` handler mode (Go's HTTP/2 stack), which upstream marks
+  Experimental — a few transport-level features differ from a dedicated gRPC
+  port. Split gRPC onto its own listener (e.g. cmux) if you need grpc-go's full
+  transport semantics on the external surface.
 - **Fixed-order interceptor chain** (recover → request-id → logger → load-shed →
   rate-limit → circuit-breaker → auth → validation), fail-loud if incomplete.
   OTel is a `StatsHandler`, covering unary **and** streaming.
@@ -31,7 +35,10 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   in-process loopback, so AI calls inherit auth/validation.
 - **Batteries** — config (layered, fail-loud, masked secrets),
   3-state health → gRPC Health, slog + OTLP, a PgBouncer-safe pgx pool + sqlc,
-  and pluggable cache (Redis) / MQ (NATS, Kafka) abstractions. MQ delivery
+  and pluggable cache / MQ abstractions. The cache defaults to a process-local
+  in-memory backend (no external service; `cache.driver: redis` opts in to a
+  distributed cache, served by a small in-tree zero-dependency RESP client);
+  MQ is NATS or Kafka. MQ delivery
   semantics are uniform across backends: `mq.group_id` empty (default) fans
   out, non-empty load-balances (NATS queue group / Kafka consumer group);
   `mq.url` accepts a comma-separated server list. The Kafka backend compiles

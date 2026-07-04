@@ -1,6 +1,7 @@
 package httpcompat
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
@@ -17,6 +18,81 @@ import (
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 	"github.com/yshengliao/gortexa/internal/interceptor"
 )
+
+// errReader fails every Read with a fixed error, standing in for a body whose
+// read deadline has fired.
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+func TestMaxBodyBytes(t *testing.T) {
+	var served bool
+	h := MaxBodyBytes(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A handler that reads the whole body, as the gateway decoder does.
+		_, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read", http.StatusRequestEntityTooLarge)
+			return
+		}
+		served = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	t.Run("over-declared content-length rejected up front", func(t *testing.T) {
+		served = false
+		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, MaxRequestBytes+1)))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413", rec.Code)
+		}
+		if served {
+			t.Fatal("handler ran despite oversize body")
+		}
+	})
+
+	t.Run("under-limit body passes", func(t *testing.T) {
+		served = false
+		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, 1024)))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || !served {
+			t.Fatalf("status = %d served = %v, want 200/true", rec.Code, served)
+		}
+	})
+
+	t.Run("chunked oversize body rejected with 413", func(t *testing.T) {
+		served = false
+		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, MaxRequestBytes+1)))
+		req.ContentLength = -1 // unknown length: Content-Length guard can't catch it
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413 (body read and size-checked in the middleware)", rec.Code)
+		}
+		if served {
+			t.Fatal("handler completed on an oversize chunked body")
+		}
+	})
+
+	t.Run("body read error maps to 408 not 413", func(t *testing.T) {
+		served = false
+		// A body that errors mid-read is exactly what a fired read deadline
+		// produces (os.ErrDeadlineExceeded). httptest.ResponseRecorder can't
+		// arm a real deadline, so inject the read error directly to exercise the
+		// non-MaxBytesError branch: it must map to 408, not 413.
+		req := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(errReader{os.ErrDeadlineExceeded}))
+		req.ContentLength = -1
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestTimeout {
+			t.Fatalf("status = %d, want 408 for a body-read error", rec.Code)
+		}
+		if served {
+			t.Fatal("handler ran despite a body read error")
+		}
+	})
+}
 
 func TestClientIPMetadata(t *testing.T) {
 	tests := []struct {

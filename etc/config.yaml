@@ -17,6 +17,15 @@ auth:
   issuer: "gortexa"
   ttl: 1h
 
+cache:
+  # driver "memory" (default) is a process-local in-memory cache — no external
+  # service, so the app runs without Redis. It is per-instance (not shared
+  # across replicas); use "redis" for a distributed cache. addr/password/db and
+  # the *_timeout / pool_size tunables apply only to the redis driver.
+  driver: "memory"
+  # addr: "localhost:6379"
+  ttl: 5m
+
 mq:
   driver: "nats" # "nats" | "kafka" (kafka needs the `integration` build tag)
   # url accepts a comma-separated server list, e.g. "b1:9092,b2:9092" (kafka)

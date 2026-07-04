@@ -36,8 +36,10 @@ func TestNewDefaultServerTimeouts(t *testing.T) {
 	if app.httpSrv.WriteTimeout != 0 {
 		t.Fatalf("default WriteTimeout = %v, want 0 (disabled)", app.httpSrv.WriteTimeout)
 	}
-	if app.httpSrv.ReadTimeout != 15*time.Second {
-		t.Fatalf("default ReadTimeout = %v, want 15s", app.httpSrv.ReadTimeout)
+	// ReadTimeout is disabled for the same reason as WriteTimeout: it is armed
+	// per-HTTP/2-stream and would reset long-lived client-streaming/bidi bodies.
+	if app.httpSrv.ReadTimeout != 0 {
+		t.Fatalf("default ReadTimeout = %v, want 0 (disabled)", app.httpSrv.ReadTimeout)
 	}
 	if app.httpSrv.IdleTimeout != 60*time.Second {
 		t.Fatalf("default IdleTimeout = %v, want 60s", app.httpSrv.IdleTimeout)

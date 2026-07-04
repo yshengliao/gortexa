@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/yshengliao/gortexa/internal/cache"
 	"github.com/yshengliao/gortexa/internal/config"
@@ -37,15 +36,16 @@ func TestNewRedis(t *testing.T) {
 func TestCacheUnavailableErrors(t *testing.T) {
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
-	// Disable retries and shorten dial/timeouts so, once the server is killed
-	// below, each op fails fast instead of burning ~5s in go-redis backoff.
-	c := cache.NewRedisFromClient(redis.NewClient(&redis.Options{
+	// Short dial/timeouts so, once the server is killed below, each op fails fast.
+	c, err := cache.NewRedis(config.CacheConfig{
 		Addr:         mr.Addr(),
-		MaxRetries:   -1,
 		DialTimeout:  100 * time.Millisecond,
 		ReadTimeout:  100 * time.Millisecond,
 		WriteTimeout: 100 * time.Millisecond,
-	}))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = c.Close() })
 
 	// Kill the server so every operation fails with a transport error.

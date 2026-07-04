@@ -89,7 +89,7 @@ func TestKafkaFanOut(t *testing.T) {
 	topic := fmt.Sprintf("events-%d", time.Now().UnixNano())
 	createKafkaTopic(t, broker, topic)
 
-	pub, sub, err := mq.NewKafka(config.MQConfig{URL: broker})
+	pub, sub, err := mq.NewKafka(config.MQConfig{URL: config.Secret(broker)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestKafkaGroupLoadBalance(t *testing.T) {
 	createKafkaTopicPartitions(t, broker, topic, 2)
 
 	group := fmt.Sprintf("lb-%d", time.Now().UnixNano())
-	pub, sub, err := mq.NewKafka(config.MQConfig{URL: broker, GroupID: group})
+	pub, sub, err := mq.NewKafka(config.MQConfig{URL: config.Secret(broker), GroupID: group})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestKafkaPubSub(t *testing.T) {
 	topic := fmt.Sprintf("events-%d", time.Now().UnixNano())
 	createKafkaTopic(t, broker, topic)
 
-	pub, sub, err := mq.NewKafka(config.MQConfig{URL: broker})
+	pub, sub, err := mq.NewKafka(config.MQConfig{URL: config.Secret(broker)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestKafkaSubscribeNoGoroutineLeakAfterClose(t *testing.T) {
 	topic := fmt.Sprintf("events-%d", time.Now().UnixNano())
 	createKafkaTopic(t, broker, topic)
 
-	pub, sub, err := mq.NewKafka(config.MQConfig{URL: broker})
+	pub, sub, err := mq.NewKafka(config.MQConfig{URL: config.Secret(broker)})
 	if err != nil {
 		t.Fatal(err)
 	}

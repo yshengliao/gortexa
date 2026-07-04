@@ -5,49 +5,57 @@ import (
 	"errors"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
+	"github.com/yshengliao/gortexa/internal/cache/resp"
 	"github.com/yshengliao/gortexa/internal/config"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
 
 type redisCache struct {
-	client *redis.Client
+	client *resp.Client
 }
 
-// NewRedis builds a Redis-backed cache from config.
+// NewRedis builds a Redis-backed cache from config, using the in-tree RESP
+// client (no third-party Redis dependency). It does no I/O — connections dial
+// lazily on first use.
 func NewRedis(cfg config.CacheConfig) (Cache, error) {
-	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.Addr,
-		Password: cfg.Password.Reveal(),
-		DB:       cfg.DB,
+	if cfg.PoolSize < 0 {
+		return nil, apperr.New(apperr.CatInvalidArgument, "cache.pool_size must not be negative")
+	}
+	// A zero timeout/pool value is passed through as-is: resp.NewClient reads
+	// zero as "use my default", so unset config preserves default behaviour while
+	// a set value tunes fail-fast/pool sizing.
+	client := resp.NewClient(resp.Options{
+		Addr:         cfg.Addr,
+		Password:     cfg.Password.Reveal(),
+		DB:           cfg.DB,
+		PoolSize:     cfg.PoolSize,
+		DialTimeout:  cfg.DialTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
 	})
 	return &redisCache{client: client}, nil
 }
 
-// NewRedisFromClient wraps an existing client (used by tests with miniredis).
-func NewRedisFromClient(client *redis.Client) Cache { return &redisCache{client: client} }
-
 func (r *redisCache) Get(ctx context.Context, key string) ([]byte, error) {
-	b, err := r.client.Get(ctx, key).Bytes()
-	if errors.Is(err, redis.Nil) {
+	s, err := r.client.Get(ctx, key)
+	if errors.Is(err, resp.ErrNil) {
 		return nil, ErrCacheMiss
 	}
 	if err != nil {
 		return nil, apperr.Wrap(apperr.CatUnavailable, "cache get", err)
 	}
-	return b, nil
+	return []byte(s), nil
 }
 
 func (r *redisCache) Set(ctx context.Context, key string, val []byte, ttl time.Duration) error {
-	if err := r.client.Set(ctx, key, val, ttl).Err(); err != nil {
+	if err := r.client.Set(ctx, key, string(val), ttl); err != nil {
 		return apperr.Wrap(apperr.CatUnavailable, "cache set", err)
 	}
 	return nil
 }
 
 func (r *redisCache) Del(ctx context.Context, key string) error {
-	if err := r.client.Del(ctx, key).Err(); err != nil {
+	if err := r.client.Del(ctx, key); err != nil {
 		return apperr.Wrap(apperr.CatUnavailable, "cache del", err)
 	}
 	return nil

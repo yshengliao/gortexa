@@ -30,14 +30,20 @@ type kafkaClient struct {
 
 // NewKafka builds a Kafka publisher/subscriber.
 func NewKafka(cfg config.MQConfig) (Publisher, Subscriber, error) {
-	brokers, err := splitBrokers(cfg.URL)
+	brokers, err := splitBrokers(cfg.URL.Reveal())
 	if err != nil {
 		return nil, nil, err
 	}
 	c := &kafkaClient{
 		brokers: brokers,
 		groupID: cfg.GroupID,
-		writer:  &kafka.Writer{Addr: kafka.TCP(brokers...), Balancer: &kafka.LeastBytes{}},
+		// RequireAll: wait for the full in-sync replica set to acknowledge before
+		// Publish returns. The kafka.Writer struct-literal zero value is
+		// RequireNone (fire-and-forget) — Publish would report success before the
+		// broker has durably stored anything, silently dropping messages on any
+		// broker-side failure. (kafka.NewWriter's config path defaults to
+		// RequireAll, but this code builds the Writer directly.)
+		writer: &kafka.Writer{Addr: kafka.TCP(brokers...), Balancer: &kafka.LeastBytes{}, RequiredAcks: kafka.RequireAll},
 	}
 	return c, c, nil
 }

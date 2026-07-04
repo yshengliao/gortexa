@@ -49,7 +49,8 @@ vet:
 	$(GO) vet ./...
 
 vuln:
-	govulncheck ./... || true
+	govulncheck ./...
+	govulncheck -tags integration ./...
 
 tidy:
 	$(GO) mod tidy
