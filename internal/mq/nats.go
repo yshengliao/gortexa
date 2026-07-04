@@ -29,7 +29,8 @@ type natsClient struct {
 }
 
 // NewNATS connects to NATS and returns a publisher and subscriber sharing one
-// connection.
+// connection. cfg.URL may be a comma-separated server list — nats.Connect
+// accepts one natively, so it is passed through unparsed.
 func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	url := cfg.URL
 	if url == "" {

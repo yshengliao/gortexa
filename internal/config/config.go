@@ -70,7 +70,9 @@ type CacheConfig struct {
 
 type MQConfig struct {
 	Driver string `koanf:"driver"` // "nats" | "kafka"
-	URL    string `koanf:"url"`
+	// URL accepts a comma-separated server list on both backends, e.g.
+	// "b1:9092,b2:9092" (kafka) or "nats://a:4222,nats://b:4222".
+	URL string `koanf:"url"`
 	// GroupID selects delivery semantics, identically on both backends: empty
 	// (default) fans out — every subscription receives every message published
 	// after it subscribed; non-empty load-balances — subscriptions sharing the

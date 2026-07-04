@@ -30,10 +30,10 @@ type kafkaClient struct {
 
 // NewKafka builds a Kafka publisher/subscriber.
 func NewKafka(cfg config.MQConfig) (Publisher, Subscriber, error) {
-	if cfg.URL == "" {
-		return nil, nil, apperr.New(apperr.CatInvalidArgument, "mq.url (kafka brokers) required")
+	brokers, err := splitBrokers(cfg.URL)
+	if err != nil {
+		return nil, nil, err
 	}
-	brokers := []string{cfg.URL}
 	c := &kafkaClient{
 		brokers: brokers,
 		groupID: cfg.GroupID,

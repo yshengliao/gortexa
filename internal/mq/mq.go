@@ -7,10 +7,14 @@
 // receives every message published after it subscribed; non-empty
 // load-balances — subscriptions sharing the group split the stream (a NATS
 // queue group or Kafka consumer group).
+//
+// config.MQConfig.URL accepts a comma-separated server list on both backends
+// (the bootstrap-server convention).
 package mq
 
 import (
 	"context"
+	"strings"
 
 	"github.com/yshengliao/gortexa/internal/config"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
@@ -36,6 +40,25 @@ type Publisher interface {
 type Subscriber interface {
 	Subscribe(ctx context.Context, topic string, h Handler) error
 	Close() error
+}
+
+// splitBrokers parses MQConfig.URL as a comma-separated broker list for the
+// Kafka backend. NATS instead passes the raw URL through — nats.Connect
+// natively accepts a comma-separated server list.
+func splitBrokers(url string) ([]string, error) {
+	if url == "" {
+		return nil, apperr.New(apperr.CatInvalidArgument, "mq.url (kafka brokers) required")
+	}
+	parts := strings.Split(url, ",")
+	brokers := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return nil, apperr.New(apperr.CatInvalidArgument, "mq.url: empty broker entry in list")
+		}
+		brokers = append(brokers, p)
+	}
+	return brokers, nil
 }
 
 // New selects a message queue backend from config.
