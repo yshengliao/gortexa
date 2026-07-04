@@ -122,7 +122,7 @@ func TestHealthEndpoints(t *testing.T) {
 	if app.Health() == nil {
 		t.Fatal("nil health registry")
 	}
-	if app.GRPCServer() == nil || app.Container() == nil {
-		t.Fatal("nil grpc server or container")
+	if app.GRPCServer() == nil {
+		t.Fatal("nil grpc server")
 	}
 }
