@@ -67,17 +67,3 @@ func OpenAPIRoute(next http.Handler, cfg config.ServerConfig, specPath string) h
 		next.ServeHTTP(w, r)
 	})
 }
-
-// OpenAPIHandler serves a swagger/OpenAPI JSON document from disk if present.
-// The path is typically gen/openapiv2/gortexa.swagger.json (produced by make gen).
-func OpenAPIHandler(path string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		spec, err := os.ReadFile(path)
-		if err != nil {
-			http.Error(w, `{"code":"not_found","message":"openapi spec unavailable"}`, http.StatusNotFound)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(spec)
-	})
-}
