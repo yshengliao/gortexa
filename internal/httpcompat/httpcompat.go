@@ -87,12 +87,18 @@ func incomingHeaderMatcher(key string) (string, bool) {
 
 // outgoingHeaderMatcher renders the request id the RequestID interceptor sets in
 // gRPC metadata as a clean "X-Request-Id" response header instead of the gateway
-// default "Grpc-Metadata-X-Request-Id"; other keys keep the default prefix.
+// default "Grpc-Metadata-X-Request-Id" — the sole allowlisted key. Everything
+// else is dropped: x-request-id is the only response metadata any interceptor
+// or handler currently sets (interceptor/requestid.go is the sole producer),
+// and the gateway default forwards all gRPC trailer/header metadata verbatim,
+// which would silently expose internal interceptor/handler metadata as
+// "Grpc-Metadata-*" response headers. Add future headers as explicit named
+// cases here, not by widening the default.
 func outgoingHeaderMatcher(key string) (string, bool) {
 	if strings.EqualFold(key, interceptor.RequestIDMetadataKey) {
 		return "X-Request-Id", true
 	}
-	return runtime.MetadataHeaderPrefix + key, true
+	return "", false
 }
 
 // routingErrorHandler preserves a 405 for a known path hit with the wrong method
