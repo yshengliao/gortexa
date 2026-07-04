@@ -198,7 +198,7 @@ func run() error {
 		return fmt.Errorf("register gateway: %w", err)
 	}
 	// gortexa:gateway — `gortexa gen` inserts RegisterXxxServiceHandler blocks above this line
-	app.SetGateway(gateway)
+	app.SetGateway(httpcompat.MaxBodyBytes(gateway))
 
 	descs, err := mcp.ServiceDescriptors(mcpServices()...)
 	if err != nil {

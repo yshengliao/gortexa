@@ -22,6 +22,29 @@ import (
 	"github.com/yshengliao/gortexa/internal/interceptor"
 )
 
+// MaxRequestBytes bounds a gateway JSON request body (1 MiB), matching the MCP
+// bridge's own limit so the two HTTP surfaces cap request size consistently.
+const MaxRequestBytes = 1 << 20
+
+// MaxBodyBytes caps the request body of the wrapped gateway handler. grpc-gateway
+// decodes straight from r.Body with an unbounded json.Decoder, so without this a
+// client could stream an arbitrarily large JSON body into memory (the MCP bridge
+// already guards its own path with an io.LimitReader). An over-declared
+// Content-Length is rejected up front with 413; a chunked or under-declared body
+// is capped by http.MaxBytesReader, which trips inside the decoder.
+func MaxBodyBytes(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > MaxRequestBytes {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte(`{"code":"invalid_argument","message":"request body too large"}`))
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBytes)
+		h.ServeHTTP(w, r)
+	})
+}
+
 // NewServeMux builds the gateway mux wired to the error registry.
 func NewServeMux(reg *apperr.Registry) *runtime.ServeMux {
 	return runtime.NewServeMux(

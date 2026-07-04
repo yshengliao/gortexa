@@ -1,6 +1,7 @@
 package httpcompat
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net/http"
@@ -17,6 +18,54 @@ import (
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 	"github.com/yshengliao/gortexa/internal/interceptor"
 )
+
+func TestMaxBodyBytes(t *testing.T) {
+	var served bool
+	h := MaxBodyBytes(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A handler that reads the whole body, as the gateway decoder does.
+		_, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "read", http.StatusRequestEntityTooLarge)
+			return
+		}
+		served = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	t.Run("over-declared content-length rejected up front", func(t *testing.T) {
+		served = false
+		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, MaxRequestBytes+1)))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status = %d, want 413", rec.Code)
+		}
+		if served {
+			t.Fatal("handler ran despite oversize body")
+		}
+	})
+
+	t.Run("under-limit body passes", func(t *testing.T) {
+		served = false
+		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, 1024)))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || !served {
+			t.Fatalf("status = %d served = %v, want 200/true", rec.Code, served)
+		}
+	})
+
+	t.Run("chunked oversize body capped inside the reader", func(t *testing.T) {
+		served = false
+		req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(make([]byte, MaxRequestBytes+1)))
+		req.ContentLength = -1 // unknown length: Content-Length guard can't catch it
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if served {
+			t.Fatal("handler completed on an oversize chunked body")
+		}
+	})
+}
 
 func TestClientIPMetadata(t *testing.T) {
 	tests := []struct {
