@@ -45,6 +45,20 @@ func main() {
 	}
 }
 
+// authSkip exempts health checks from authentication (probes carry no tokens)
+// and, only when reflection is enabled, the reflection service itself — the
+// flag exists for schema-discovery tooling like `buf curl --reflect`, whose
+// reflection stream carries no token. The trailing dots keep the prefixes from
+// matching any user service (e.g. a "grpc.healthx" package).
+func authSkip(reflection bool) func(method string) bool {
+	return func(method string) bool {
+		if strings.HasPrefix(method, "/grpc.health.") {
+			return true
+		}
+		return reflection && strings.HasPrefix(method, "/grpc.reflection.")
+	}
+}
+
 // mcpServices lists every service exposed over the MCP bridge and the ai.v1
 // schema export.
 func mcpServices() []protoreflect.FullName {
@@ -129,18 +143,10 @@ func run() error {
 		return fmt.Errorf("build auth verifier: %w", err)
 	}
 	set, err := interceptor.NewSet(interceptor.Config{
-		Logger:   log,
-		Verifier: verifier,
-		Metrics:  govMetrics,
-		// Health checks are unauthenticated. When reflection is enabled it is
-		// exempt too: the flag exists for schema-discovery tooling like
-		// `buf curl --reflect`, whose reflection stream carries no token.
-		AuthSkip: func(method string) bool {
-			if strings.HasPrefix(method, "/grpc.health.") {
-				return true
-			}
-			return cfg.Server.Reflection && strings.HasPrefix(method, "/grpc.reflection.")
-		},
+		Logger:         log,
+		Verifier:       verifier,
+		Metrics:        govMetrics,
+		AuthSkip:       authSkip(cfg.Server.Reflection),
 		RateLimit:      interceptor.RateLimitConfig{RPS: 200, Burst: 100, TTL: 10 * time.Minute},
 		CircuitBreaker: interceptor.CBConfig{MaxFailures: 5, OpenInterval: 10 * time.Second, HalfOpenMax: 2},
 		// Exempt control-plane health checks from the inflight budget so a flood of

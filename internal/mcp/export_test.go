@@ -27,3 +27,14 @@ func TestExportSchemasUnknownFormat(t *testing.T) {
 		t.Fatalf("want unknown-format error, got %v", err)
 	}
 }
+
+// TestExportSchemasDuplicateToolName pins export to the same collision rule as
+// NewBridge: a duplicate tool name refuses to serve at runtime, so it must
+// refuse to export too.
+func TestExportSchemasDuplicateToolName(t *testing.T) {
+	svc := resourcev1.File_resource_v1_resource_proto.Services().Get(0)
+	_, err := mcp.ExportSchemas("mcp", []protoreflect.ServiceDescriptor{svc, svc})
+	if err == nil || !strings.Contains(err.Error(), "duplicate tool name") {
+		t.Fatalf("want duplicate-tool-name error, got %v", err)
+	}
+}

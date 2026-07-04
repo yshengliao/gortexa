@@ -14,12 +14,22 @@ import (
 // output can be pasted into the target API without reshaping.
 func ExportSchemas(format string, svcs []protoreflect.ServiceDescriptor) ([]byte, error) {
 	var irs []ToolIR
+	seen := map[string]struct{}{}
 	for _, svc := range svcs {
 		tools, err := BuildIR(svc)
 		if err != nil {
 			return nil, err
 		}
-		irs = append(irs, tools...)
+		for _, ir := range tools {
+			// Same rule as NewBridge: a name collision would refuse to serve at
+			// runtime, so exporting it silently would hand out a schema the
+			// bridge can never back.
+			if _, dup := seen[ir.Name]; dup {
+				return nil, fmt.Errorf("mcp: duplicate tool name %q across services", ir.Name)
+			}
+			seen[ir.Name] = struct{}{}
+			irs = append(irs, ir)
+		}
 	}
 
 	var payload any
