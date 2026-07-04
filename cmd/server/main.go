@@ -132,8 +132,15 @@ func run() error {
 		Logger:   log,
 		Verifier: verifier,
 		Metrics:  govMetrics,
-		// Health checks are unauthenticated.
-		AuthSkip:       func(method string) bool { return strings.HasPrefix(method, "/grpc.health.") },
+		// Health checks are unauthenticated. When reflection is enabled it is
+		// exempt too: the flag exists for schema-discovery tooling like
+		// `buf curl --reflect`, whose reflection stream carries no token.
+		AuthSkip: func(method string) bool {
+			if strings.HasPrefix(method, "/grpc.health.") {
+				return true
+			}
+			return cfg.Server.Reflection && strings.HasPrefix(method, "/grpc.reflection.")
+		},
 		RateLimit:      interceptor.RateLimitConfig{RPS: 200, Burst: 100, TTL: 10 * time.Minute},
 		CircuitBreaker: interceptor.CBConfig{MaxFailures: 5, OpenInterval: 10 * time.Second, HalfOpenMax: 2},
 		// Exempt control-plane health checks from the inflight budget so a flood of
