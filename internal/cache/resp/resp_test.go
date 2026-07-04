@@ -82,3 +82,11 @@ func TestReadReplyRejectsOversizedBulk(t *testing.T) {
 		t.Fatal("want out-of-range error")
 	}
 }
+
+func TestReadReplyRejectsMisframedBulk(t *testing.T) {
+	// Declared length 5 but the payload+terminator isn't CRLF-terminated: a
+	// framing desync must fail loudly, not return corrupt bytes.
+	if _, err := readReply(bufio.NewReader(strings.NewReader("$5\r\nhelloXX"))); err == nil {
+		t.Fatal("want CRLF-termination error")
+	}
+}

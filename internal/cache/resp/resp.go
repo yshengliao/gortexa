@@ -92,6 +92,13 @@ func readReply(r *bufio.Reader) (any, error) {
 		if _, err := io.ReadFull(r, buf); err != nil {
 			return nil, err
 		}
+		// Validate the framing terminator: the same adversarial-input posture as
+		// the length bound above. A missing CRLF means a length/payload desync, so
+		// fail loudly here instead of silently returning bytes that belong to the
+		// next reply and corrupting every command after it on this connection.
+		if buf[n] != '\r' || buf[n+1] != '\n' {
+			return nil, fmt.Errorf("resp: bulk string not CRLF-terminated")
+		}
 		return string(buf[:n]), nil
 	case '*':
 		n, err := parseInt(line[1:])
