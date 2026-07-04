@@ -49,7 +49,7 @@ vet:
 	$(GO) vet ./...
 
 vuln:
-	govulncheck ./... || true
+	govulncheck ./...
 
 tidy:
 	$(GO) mod tidy
