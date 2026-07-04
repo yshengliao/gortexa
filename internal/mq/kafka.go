@@ -112,7 +112,7 @@ func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) er
 	return nil
 }
 
-func (c *kafkaClient) Close() error {
+func (c *kafkaClient) Close(ctx context.Context) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -122,19 +122,21 @@ func (c *kafkaClient) Close() error {
 	readers := c.readers
 	c.readers = nil
 	c.mu.Unlock()
-	// Close readers concurrently: each Close waits out a consumer-group
-	// leave/rebalance round, so closing sequentially scales O(n) with the
-	// subscription count and can blow the caller's shutdown budget.
-	var closers sync.WaitGroup
-	for _, r := range readers {
-		closers.Add(1)
-		go func() {
-			defer closers.Done()
-			_ = r.Close()
-		}()
-	}
-	closers.Wait()
-	err := c.writer.Close()
-	c.wg.Wait() // no reader goroutine outlives Close
-	return err
+	return closeWithin(ctx, func() error {
+		// Close readers concurrently: each Close waits out a consumer-group
+		// leave/rebalance round, so closing sequentially scales O(n) with the
+		// subscription count and can blow the caller's shutdown budget.
+		var closers sync.WaitGroup
+		for _, r := range readers {
+			closers.Add(1)
+			go func() {
+				defer closers.Done()
+				_ = r.Close()
+			}()
+		}
+		closers.Wait()
+		err := c.writer.Close()
+		c.wg.Wait() // no reader goroutine outlives the teardown
+		return err
+	})
 }

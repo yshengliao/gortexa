@@ -140,7 +140,7 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 	return nil
 }
 
-func (c *natsClient) Close() error {
+func (c *natsClient) Close(ctx context.Context) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -153,7 +153,9 @@ func (c *natsClient) Close() error {
 	}
 	c.subs = nil
 	c.mu.Unlock()
-	c.conn.Close()
-	c.wg.Wait() // no watcher goroutine outlives Close
-	return nil
+	return closeWithin(ctx, func() error {
+		c.conn.Close()
+		c.wg.Wait() // no watcher goroutine outlives the teardown
+		return nil
+	})
 }

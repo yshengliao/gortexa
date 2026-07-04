@@ -14,6 +14,7 @@ package mq
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/yshengliao/gortexa/internal/config"
@@ -30,16 +31,38 @@ type Message struct {
 // Handler processes a received message.
 type Handler func(ctx context.Context, m Message) error
 
-// Publisher publishes messages to a topic.
+// Publisher publishes messages to a topic. Close honours ctx as a shutdown
+// budget: on expiry it returns early while the underlying teardown finishes in
+// the background (see closeWithin).
 type Publisher interface {
 	Publish(ctx context.Context, topic string, m Message) error
-	Close() error
+	Close(ctx context.Context) error
 }
 
-// Subscriber subscribes a handler to a topic.
+// Subscriber subscribes a handler to a topic. Close semantics match Publisher.
 type Subscriber interface {
 	Subscribe(ctx context.Context, topic string, h Handler) error
-	Close() error
+	Close(ctx context.Context) error
+}
+
+// closeWithin runs fn (a blocking teardown) and honours ctx as an escape
+// hatch: a broker that is gone can park a client close indefinitely, and a
+// shutting-down caller needs its budget back. On expiry the wrapped ctx error
+// is returned immediately while fn keeps running in its goroutine until the
+// underlying close returns — the teardown is abandoned, not cancelled.
+func closeWithin(ctx context.Context, fn func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		cat := apperr.CatDeadlineExceeded
+		if errors.Is(ctx.Err(), context.Canceled) {
+			cat = apperr.CatCanceled
+		}
+		return apperr.Wrap(cat, "mq close", ctx.Err())
+	}
 }
 
 // splitBrokers parses MQConfig.URL as a comma-separated broker list for the

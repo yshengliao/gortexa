@@ -93,7 +93,7 @@ func TestKafkaFanOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	ctx := context.Background()
 	got1 := make(chan string, 256)
@@ -150,7 +150,7 @@ func TestKafkaGroupLoadBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	ctx := context.Background()
 	got := make(chan string, 256)
@@ -235,7 +235,7 @@ func TestKafkaPubSub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	ctx := context.Background()
 	// Buffered past the duplicate deliveries from the publish loop below, so the
@@ -303,7 +303,7 @@ func TestKafkaSubscribeNoGoroutineLeakAfterClose(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- pub.Close() }()
+	go func() { done <- pub.Close(context.Background()) }()
 	select {
 	case err := <-done:
 		if err != nil {

@@ -23,7 +23,7 @@ func TestNATSPubSub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	ctx := context.Background()
 	got := make(chan mq.Message, 1)
@@ -59,7 +59,7 @@ func TestNATSFanOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	ctx := context.Background()
 	got1 := make(chan mq.Message, 1)
@@ -101,7 +101,7 @@ func TestNATSQueueGroupLoadBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	ctx := context.Background()
 	const n = 8
@@ -170,7 +170,7 @@ func TestNATSSubscribeNoGoroutineLeakAfterClose(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- pub.Close() }()
+	go func() { done <- pub.Close(context.Background()) }()
 	select {
 	case err := <-done:
 		if err != nil {
