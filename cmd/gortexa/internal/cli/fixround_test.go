@@ -67,6 +67,10 @@ func TestValidModulePath(t *testing.T) {
 		{name: "contains at", module: "github.com/me/app@v1", want: false},
 		{name: "empty path segment", module: "a//b", want: false},
 		{name: "trailing slash", module: "github.com/me/app/", want: false},
+		{name: "dot-dot segment", module: "github.com/../../etc/passwd", want: false},
+		{name: "bare dot-dot", module: "..", want: false},
+		{name: "bare dot", module: ".", want: false},
+		{name: "dot segment mid-path", module: "github.com/./app", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

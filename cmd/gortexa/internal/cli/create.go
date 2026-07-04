@@ -157,7 +157,7 @@ func validModulePath(module string) bool {
 		return false
 	}
 	for seg := range strings.SplitSeq(module, "/") {
-		if seg == "" {
+		if seg == "" || seg == "." || seg == ".." {
 			return false
 		}
 		for _, r := range seg {
