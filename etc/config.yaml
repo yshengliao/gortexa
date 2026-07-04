@@ -15,6 +15,7 @@ auth:
   # replaces it with a fresh random secret; `make run` injects a local dev one.
   jwt_secret: "dev-only-insecure-secret-change-me-please"
   issuer: "gortexa"
+  # audience: "myapp"  # optional; isolates services sharing a secret+issuer (aud claim required when set)
   ttl: 1h
 
 cache:

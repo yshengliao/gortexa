@@ -44,26 +44,35 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Verifier signs and verifies HS256 tokens for a fixed secret and issuer.
+// Verifier signs and verifies HS256 tokens for a fixed secret and issuer, and
+// optionally a fixed audience.
 type Verifier struct {
-	secret []byte
-	issuer string
+	secret   []byte
+	issuer   string
+	audience string
 }
 
 // NewVerifier builds a Verifier with its own copy of the HS256 secret (so a
 // caller mutating the passed slice can't change the key), rejecting secrets
-// shorter than minSecretBytes.
-func NewVerifier(secret []byte, issuer string) (*Verifier, error) {
+// shorter than minSecretBytes. An optional audience isolates services that
+// share a secret and issuer: when set, Sign stamps it into `aud` and Verify
+// requires it, so a token minted for service A is rejected by service B.
+// Without it, issuer alone provides no cross-service isolation.
+func NewVerifier(secret []byte, issuer string, audience ...string) (*Verifier, error) {
 	if len(secret) < minSecretBytes {
 		return nil, fmt.Errorf("auth: verifier secret must be at least %d bytes", minSecretBytes)
 	}
-	return &Verifier{secret: append([]byte(nil), secret...), issuer: issuer}, nil
+	v := &Verifier{secret: append([]byte(nil), secret...), issuer: issuer}
+	if len(audience) > 0 {
+		v.audience = audience[0]
+	}
+	return v, nil
 }
 
 // MustNewVerifier builds a Verifier or panics. Intended for startup and test
 // setup where construction failure should be fatal (fail-loud).
-func MustNewVerifier(secret []byte, issuer string) *Verifier {
-	v, err := NewVerifier(secret, issuer)
+func MustNewVerifier(secret []byte, issuer string, audience ...string) *Verifier {
+	v, err := NewVerifier(secret, issuer, audience...)
 	if err != nil {
 		panic(err)
 	}
@@ -81,6 +90,9 @@ func (v *Verifier) Sign(subject string, roles []string, ttl time.Duration) (stri
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
+	}
+	if v.audience != "" {
+		claims.Audience = jwt.ClaimStrings{v.audience}
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := tok.SignedString(v.secret)
@@ -104,6 +116,9 @@ func (v *Verifier) Verify(tokenStr string) (*Claims, error) {
 	}
 	if v.issuer != "" {
 		opts = append(opts, jwt.WithIssuer(v.issuer))
+	}
+	if v.audience != "" {
+		opts = append(opts, jwt.WithAudience(v.audience))
 	}
 	tok, err := jwt.ParseWithClaims(tokenStr, &claims, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
