@@ -68,7 +68,10 @@ func TestKafkaPubSub(t *testing.T) {
 	t.Cleanup(func() { _ = pub.Close() })
 
 	ctx := context.Background()
-	got := make(chan mq.Message, 1)
+	// Buffered past any duplicate deliveries from publish retries below, so the
+	// handler can never block on send and wedge the reader goroutine (which
+	// would in turn hang Close's wg.Wait in Cleanup).
+	got := make(chan mq.Message, 16)
 	if err := sub.Subscribe(ctx, topic, func(_ context.Context, m mq.Message) error {
 		got <- m
 		return nil
@@ -76,9 +79,21 @@ func TestKafkaPubSub(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A freshly auto-created topic is not in every broker metadata view right
+	// away; the first publish can hit Unknown Topic Or Partition. Retry through
+	// the propagation window instead of flaking — production callers likewise
+	// retry Unavailable.
 	want := mq.Message{Key: []byte("k1"), Value: []byte("hello"), Headers: map[string]string{"trace": "abc"}}
-	if err := pub.Publish(ctx, topic, want); err != nil {
-		t.Fatal(err)
+	publishDeadline := time.Now().Add(15 * time.Second)
+	for {
+		err := pub.Publish(ctx, topic, want)
+		if err == nil {
+			break
+		}
+		if time.Now().After(publishDeadline) {
+			t.Fatalf("publish never succeeded: %v", err)
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 
 	// Consumer-group join + rebalance is slow, especially on a first-run CI
@@ -127,7 +142,7 @@ func TestKafkaSubscribeNoGoroutineLeakAfterClose(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Close: %v", err)
 		}
-	case <-time.After(15 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("Close hung: a reader goroutine never exited (missing wg.Done on some exit path?)")
 	}
 

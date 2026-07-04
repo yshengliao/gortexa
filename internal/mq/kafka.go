@@ -88,11 +88,21 @@ func (c *kafkaClient) Close() error {
 		return nil
 	}
 	c.closed = true
-	for _, r := range c.readers {
-		_ = r.Close()
-	}
+	readers := c.readers
 	c.readers = nil
 	c.mu.Unlock()
+	// Close readers concurrently: each Close waits out a consumer-group
+	// leave/rebalance round, so closing sequentially scales O(n) with the
+	// subscription count and can blow the caller's shutdown budget.
+	var closers sync.WaitGroup
+	for _, r := range readers {
+		closers.Add(1)
+		go func() {
+			defer closers.Done()
+			_ = r.Close()
+		}()
+	}
+	closers.Wait()
 	err := c.writer.Close()
 	c.wg.Wait() // no reader goroutine outlives Close
 	return err
