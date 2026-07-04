@@ -73,6 +73,30 @@ func TestVerifyExpiry(t *testing.T) {
 	})
 }
 
+// TestVerifyClockSkewLeeway pins the clock-skew allowance: a token that expired
+// within the leeway window is still accepted (a verifier whose clock runs a
+// little ahead must not reject a peer's freshly-valid token), but one expired
+// well beyond it is rejected.
+func TestVerifyClockSkewLeeway(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		v := auth.MustNewVerifier(secret, "gortexa")
+		tok, err := v.Sign("u", nil, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// 90s > 60s TTL but within the 60s leeway of the exp instant.
+		time.Sleep(90 * time.Second)
+		if _, err := v.Verify(tok); err != nil {
+			t.Fatalf("token expired within leeway should still verify: %v", err)
+		}
+		// Past exp + leeway: must be rejected.
+		time.Sleep(60 * time.Second)
+		if _, err := v.Verify(tok); !apperr.Is(err, apperr.CatUnauthenticated) {
+			t.Fatalf("token past leeway err = %v, want Unauthenticated", err)
+		}
+	})
+}
+
 // A token without an exp claim must be rejected: jwt/v5 otherwise treats a
 // missing expiry as "never expires", so WithExpirationRequired closes that gap.
 func TestVerifyRejectsTokenWithoutExpiry(t *testing.T) {
