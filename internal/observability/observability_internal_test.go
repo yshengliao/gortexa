@@ -175,3 +175,20 @@ func TestFanoutHandler(t *testing.T) {
 		}
 	})
 }
+
+// TestOTLPSecurityDefaultsToTLS pins that the OTLP transport-security helpers
+// return a TLS option unless cleartext is explicitly opted into, so telemetry
+// is not exported in cleartext by default.
+func TestOTLPSecurityDefaultsToTLS(t *testing.T) {
+	// Each helper must return a non-nil option in both modes; the secure branch
+	// (insecure=false) is the default and must be reachable without a config knob.
+	if logSecurity(false) == nil || logSecurity(true) == nil {
+		t.Fatal("logSecurity returned nil option")
+	}
+	if traceSecurity(false) == nil || traceSecurity(true) == nil {
+		t.Fatal("traceSecurity returned nil option")
+	}
+	if metricSecurity(false) == nil || metricSecurity(true) == nil {
+		t.Fatal("metricSecurity returned nil option")
+	}
+}

@@ -21,4 +21,8 @@ log:
 observ:
   service_name: "gortexa"
   # tracing_otlp: "localhost:4317"   # uncomment to export OTLP traces
+  # otlp_insecure exports telemetry over cleartext gRPC. TLS is the default;
+  # this is true here only for the local docker-compose collector. Do NOT set
+  # true against a remote collector — GenAI-captured content would go in clear.
+  otlp_insecure: true
   sample_ratio: 1.0

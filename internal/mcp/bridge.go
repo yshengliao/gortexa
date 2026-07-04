@@ -74,9 +74,8 @@ type Bridge struct {
 	observ   config.ObservConfig
 
 	// allowedOrigins gates browser access for DNS-rebinding protection (MCP
-	// Streamable HTTP). allowAllOrigins short-circuits when "*" is configured.
-	allowedOrigins  map[string]struct{}
-	allowAllOrigins bool
+	// Streamable HTTP): a browser request's Origin must be on this list.
+	allowedOrigins map[string]struct{}
 }
 
 // NewBridge builds a bridge exposing the ai.v1-annotated methods of the given
@@ -147,16 +146,19 @@ type rpcError struct {
 }
 
 // SetAllowedOrigins configures the browser-origin allowlist used for the MCP
-// Streamable-HTTP DNS-rebinding protection. Pass the server's CORS origins; "*"
-// allows any origin. A request carrying an Origin not on the list is rejected
-// with 403; requests without an Origin header (non-browser clients like the MCP
-// SDK or curl) are always allowed.
+// Streamable-HTTP DNS-rebinding protection. Pass the server's CORS origins. A
+// request carrying an Origin not on the list is rejected with 403; requests
+// without an Origin header (non-browser clients like the MCP SDK or curl) are
+// always allowed.
+//
+// A "*" entry is deliberately ignored here, NOT treated as allow-all: a wildcard
+// is safe for CORS (no-credentials reflection) but would defeat DNS-rebinding
+// protection, letting any website drive the MCP endpoint through a victim's
+// browser. To permit a browser origin, list it explicitly.
 func (b *Bridge) SetAllowedOrigins(origins []string) {
 	b.allowedOrigins = make(map[string]struct{}, len(origins))
-	b.allowAllOrigins = false
 	for _, o := range origins {
 		if o == "*" {
-			b.allowAllOrigins = true
 			continue
 		}
 		b.allowedOrigins[o] = struct{}{}
@@ -164,12 +166,9 @@ func (b *Bridge) SetAllowedOrigins(origins []string) {
 }
 
 // originAllowed implements the DNS-rebinding guard: absent Origin (non-browser)
-// is allowed; otherwise the origin must be explicitly allowlisted (or "*").
+// is allowed; otherwise the origin must be explicitly allowlisted.
 func (b *Bridge) originAllowed(origin string) bool {
 	if origin == "" {
-		return true
-	}
-	if b.allowAllOrigins {
 		return true
 	}
 	_, ok := b.allowedOrigins[origin]

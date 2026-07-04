@@ -58,7 +58,12 @@ func TestMaskSecretsRedacts(t *testing.T) {
 	}
 }
 
-func TestMaskSecretsCustomFieldsOverrideDefaults(t *testing.T) {
+// TestMaskSecretsCustomFieldsExtendDefaults pins that a configured mask list
+// EXTENDS the built-in secret floor rather than replacing it: a custom field is
+// masked AND the built-in defaults stay masked, so an operator adding one field
+// cannot silently expose password/token/secret/authorization/api_key in
+// telemetry.
+func TestMaskSecretsCustomFieldsExtendDefaults(t *testing.T) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(MaskSecrets(`{"password":"p","custom":"c"}`, []string{"custom"})), &m); err != nil {
 		t.Fatal(err)
@@ -66,7 +71,7 @@ func TestMaskSecretsCustomFieldsOverrideDefaults(t *testing.T) {
 	if m["custom"] != "[REDACTED]" {
 		t.Errorf("custom field not masked: %v", m["custom"])
 	}
-	if m["password"] != "p" {
-		t.Errorf("default field masked despite explicit custom list: %v", m["password"])
+	if m["password"] != "[REDACTED]" {
+		t.Errorf("built-in default field must stay masked when a custom list is set: %v", m["password"])
 	}
 }

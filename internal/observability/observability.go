@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/stats"
 
 	"github.com/yshengliao/gortexa/internal/config"
@@ -33,6 +34,30 @@ import (
 
 // ShutdownFunc flushes and stops an exporter.
 type ShutdownFunc func(context.Context) error
+
+// OTLP transport security is TLS by default and cleartext only when explicitly
+// opted in (obsCfg.OTLPInsecure) — telemetry, including GenAI-captured content,
+// must not cross an untrusted network to a remote collector in cleartext.
+func logSecurity(insecure bool) otlploggrpc.Option {
+	if insecure {
+		return otlploggrpc.WithInsecure()
+	}
+	return otlploggrpc.WithTLSCredentials(credentials.NewTLS(nil))
+}
+
+func traceSecurity(insecure bool) otlptracegrpc.Option {
+	if insecure {
+		return otlptracegrpc.WithInsecure()
+	}
+	return otlptracegrpc.WithTLSCredentials(credentials.NewTLS(nil))
+}
+
+func metricSecurity(insecure bool) otlpmetricgrpc.Option {
+	if insecure {
+		return otlpmetricgrpc.WithInsecure()
+	}
+	return otlpmetricgrpc.WithTLSCredentials(credentials.NewTLS(nil))
+}
 
 func noopShutdown(context.Context) error { return nil }
 
@@ -88,7 +113,7 @@ func SetupLogs(ctx context.Context, logCfg config.LogConfig, obsCfg config.Obser
 	if obsCfg.LogsOTLP == "" {
 		return slog.New(stdout), noopShutdown, nil
 	}
-	exp, err := otlploggrpc.New(ctx, otlploggrpc.WithEndpoint(obsCfg.LogsOTLP), otlploggrpc.WithInsecure())
+	exp, err := otlploggrpc.New(ctx, otlploggrpc.WithEndpoint(obsCfg.LogsOTLP), logSecurity(obsCfg.OTLPInsecure))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -166,7 +191,7 @@ func SetupTracing(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, e
 	}
 	exp, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithEndpoint(cfg.TracingOTLP),
-		otlptracegrpc.WithInsecure(),
+		traceSecurity(cfg.OTLPInsecure),
 	)
 	if err != nil {
 		return nil, err
@@ -192,7 +217,7 @@ func SetupMetrics(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, e
 	}
 	exp, err := otlpmetricgrpc.New(ctx,
 		otlpmetricgrpc.WithEndpoint(cfg.MetricsOTLP),
-		otlpmetricgrpc.WithInsecure(),
+		metricSecurity(cfg.OTLPInsecure),
 	)
 	if err != nil {
 		return nil, err

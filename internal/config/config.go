@@ -79,11 +79,16 @@ type LogConfig struct {
 }
 
 type ObservConfig struct {
-	ServiceName         string   `koanf:"service_name"`
-	ServiceVersion      string   `koanf:"service_version"`
-	TracingOTLP         string   `koanf:"tracing_otlp"` // OTLP endpoint; empty disables
-	MetricsOTLP         string   `koanf:"metrics_otlp"` // OTLP endpoint; empty disables
-	LogsOTLP            string   `koanf:"logs_otlp"`
+	ServiceName    string `koanf:"service_name"`
+	ServiceVersion string `koanf:"service_version"`
+	TracingOTLP    string `koanf:"tracing_otlp"` // OTLP endpoint; empty disables
+	MetricsOTLP    string `koanf:"metrics_otlp"` // OTLP endpoint; empty disables
+	LogsOTLP       string `koanf:"logs_otlp"`
+	// OTLPInsecure exports telemetry over cleartext gRPC (no TLS). Default false:
+	// the OTLP exporters use TLS so telemetry — including GenAI-captured content —
+	// is not sent in cleartext to a remote collector. Set true only for a local
+	// dev collector (e.g. the docker-compose stack).
+	OTLPInsecure        bool     `koanf:"otlp_insecure"`
 	SampleRatio         float64  `koanf:"sample_ratio"`
 	GenAICaptureContent bool     `koanf:"genai_capture_content"`
 	GenAIMaskFields     []string `koanf:"genai_mask_fields"`
@@ -237,6 +242,14 @@ func (c *Config) Validate() error {
 		errs = append(errs, "auth.jwt_secret is the built-in dev placeholder; set a real secret via GORTEXA_AUTH__JWT_SECRET")
 	case len(c.Auth.JWTSecret) < 32:
 		errs = append(errs, "auth.jwt_secret must be at least 32 bytes")
+	}
+	// Require a non-empty issuer so the JWT issuer check is always active. An
+	// empty issuer silently disables jwt.WithIssuer (see internal/auth), which
+	// would accept any token minted with a shared secret regardless of its iss
+	// claim — defence-in-depth an operator should not be able to drop by
+	// blanking GORTEXA_AUTH__ISSUER.
+	if strings.TrimSpace(c.Auth.Issuer) == "" {
+		errs = append(errs, "auth.issuer is required")
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("invalid config: %s", strings.Join(errs, "; "))

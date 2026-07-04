@@ -67,6 +67,10 @@ func TestValidModulePath(t *testing.T) {
 		{name: "contains at", module: "github.com/me/app@v1", want: false},
 		{name: "empty path segment", module: "a//b", want: false},
 		{name: "trailing slash", module: "github.com/me/app/", want: false},
+		{name: "dot-dot segment", module: "github.com/../../etc/passwd", want: false},
+		{name: "bare dot-dot", module: "..", want: false},
+		{name: "bare dot", module: ".", want: false},
+		{name: "dot segment mid-path", module: "github.com/./app", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -223,6 +227,18 @@ func TestIsGitToplevel(t *testing.T) {
 	}
 	if isGitToplevel(t.TempDir()) {
 		t.Error("isGitToplevel outside any repo = true, want false")
+	}
+
+	// A repo reached through a symlink must still count as toplevel: git
+	// reports the physical path, so an unresolved comparison would silently
+	// skip the breaking gate (as it did on macOS, where TMPDIR itself sits
+	// behind the /var → /private/var symlink).
+	link := filepath.Join(t.TempDir(), "repo-link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if !isGitToplevel(link) {
+		t.Error("isGitToplevel via symlinked path = false, want true")
 	}
 }
 

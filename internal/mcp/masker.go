@@ -14,8 +14,12 @@ func MaskSecrets(raw string, maskFields []string) string {
 	if raw == "" {
 		return raw
 	}
-	if len(maskFields) == 0 {
-		maskFields = defaultMaskFields
+	// The built-in secret fields are always masked; a configured list EXTENDS
+	// this floor rather than replacing it, so adding a custom field can never
+	// silently drop masking of password/token/secret/authorization/api_key.
+	fields := maskSet(defaultMaskFields)
+	for _, f := range maskFields {
+		fields[normalizeKey(f)] = struct{}{}
 	}
 	// UseNumber keeps integers exact: decoding into `any` would otherwise turn
 	// large numbers (e.g. 64-bit IDs) into float64 and lose precision on re-marshal.
@@ -31,7 +35,7 @@ func MaskSecrets(raw string, maskFields []string) string {
 	case string, json.Number, bool:
 		v = "[REDACTED]"
 	default:
-		mask(v, maskSet(maskFields))
+		mask(v, fields)
 	}
 	b, err := json.Marshal(v)
 	if err != nil {

@@ -215,10 +215,15 @@ func TestBridgeOriginValidation(t *testing.T) {
 	if code := postWithOrigin(t, allow.URL, ""); code != http.StatusOK {
 		t.Fatalf("no-origin request = %d, want 200", code)
 	}
-	// "*" allows any origin.
+	// A CORS "*" must NOT disarm the DNS-rebinding guard: a browser Origin is
+	// still rejected (a wildcard is CORS-only), while non-browser clients with
+	// no Origin keep working.
 	star := newBridgeServerWithOrigins(t, []string{"*"})
-	if code := postWithOrigin(t, star.URL, "https://anything.example"); code != http.StatusOK {
-		t.Fatalf("wildcard origin = %d, want 200", code)
+	if code := postWithOrigin(t, star.URL, "https://anything.example"); code != http.StatusForbidden {
+		t.Fatalf("wildcard must not allow arbitrary browser origin = %d, want 403", code)
+	}
+	if code := postWithOrigin(t, star.URL, ""); code != http.StatusOK {
+		t.Fatalf("no-origin request under wildcard = %d, want 200", code)
 	}
 }
 

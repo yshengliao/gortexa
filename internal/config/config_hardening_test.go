@@ -63,3 +63,36 @@ func TestDevPlaceholderSecretRejected(t *testing.T) {
 		t.Fatalf("error = %v, want a placeholder-secret message", err)
 	}
 }
+
+// TestEmptyIssuerRejected pins that blanking the issuer fails validation, so the
+// jwt.WithIssuer check can never be silently disabled by GORTEXA_AUTH__ISSUER=.
+func TestEmptyIssuerRejected(t *testing.T) {
+	c, err := config.Build(config.WithEnviron(func() []string {
+		return []string{
+			"GORTEXA_AUTH__JWT_SECRET=" + validSecret,
+			"GORTEXA_AUTH__ISSUER=",
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(); err == nil {
+		t.Fatal("an empty auth.issuer must be rejected")
+	} else if !strings.Contains(err.Error(), "issuer") {
+		t.Fatalf("error = %v, want an issuer-required message", err)
+	}
+}
+
+// TestOTLPSecureByDefault pins that OTLP export uses TLS unless cleartext is
+// explicitly opted in, so telemetry is never sent in cleartext by accident.
+func TestOTLPSecureByDefault(t *testing.T) {
+	c, err := config.Build(config.WithEnviron(func() []string {
+		return []string{"GORTEXA_AUTH__JWT_SECRET=" + validSecret}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Observ.OTLPInsecure {
+		t.Fatal("observ.otlp_insecure must default to false (TLS)")
+	}
+}
