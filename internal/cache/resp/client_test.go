@@ -108,6 +108,29 @@ func TestClientClosedRejectsCommands(t *testing.T) {
 	}
 }
 
+// TestClientDeadlineNotStaleOnReuse pins that a deadline armed by one command's
+// ctx does not persist on the pooled connection and fire on the next reuse.
+// With per-command timeouts disabled (-1), command 1 sets a net.Conn deadline
+// from its ctx; after that instant passes, command 2 (no ctx deadline) reuses
+// the same connection and must not inherit the stale, already-expired deadline.
+func TestClientDeadlineNotStaleOnReuse(t *testing.T) {
+	mr := miniredis.RunT(t)
+	c := resp.NewClient(resp.Options{Addr: mr.Addr(), ReadTimeout: -1, WriteTimeout: -1})
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx1, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	if err := c.Set(ctx1, "k", "v", 0); err != nil { // dials conn A, arms A's deadline to ~now+150ms
+		t.Fatal(err)
+	}
+	cancel()
+	time.Sleep(200 * time.Millisecond) // A's stale deadline is now in the past
+
+	// Reuses conn A with no ctx deadline: must clear A's stale deadline, not fail.
+	if got, err := c.Get(context.Background(), "k"); err != nil || got != "v" {
+		t.Fatalf("reuse after stale deadline: got %q, %v", got, err)
+	}
+}
+
 func TestClientUnreachable(t *testing.T) {
 	c := resp.NewClient(resp.Options{Addr: "127.0.0.1:1", DialTimeout: time.Second})
 	t.Cleanup(func() { _ = c.Close() })

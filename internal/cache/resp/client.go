@@ -119,10 +119,12 @@ func (c *Client) command(ctx context.Context, cn *conn, args ...any) error {
 }
 
 func (c *Client) roundtrip(ctx context.Context, cn *conn, args ...any) (any, error) {
-	if wd := deadline(ctx, c.opts.WriteTimeout); !wd.IsZero() {
-		if err := cn.nc.SetWriteDeadline(wd); err != nil {
-			return nil, err
-		}
+	// Set deadlines unconditionally — a zero time clears any deadline. Setting
+	// them only when non-zero would let a deadline armed by a previous command
+	// (e.g. from that command's ctx) persist on a pooled connection and fire
+	// spuriously on the next reuse when this command has no deadline of its own.
+	if err := cn.nc.SetWriteDeadline(deadline(ctx, c.opts.WriteTimeout)); err != nil {
+		return nil, err
 	}
 	if err := writeCommand(cn.bw, args...); err != nil {
 		return nil, err
@@ -130,10 +132,8 @@ func (c *Client) roundtrip(ctx context.Context, cn *conn, args ...any) (any, err
 	if err := cn.bw.Flush(); err != nil {
 		return nil, err
 	}
-	if rd := deadline(ctx, c.opts.ReadTimeout); !rd.IsZero() {
-		if err := cn.nc.SetReadDeadline(rd); err != nil {
-			return nil, err
-		}
+	if err := cn.nc.SetReadDeadline(deadline(ctx, c.opts.ReadTimeout)); err != nil {
+		return nil, err
 	}
 	reply, err := readReply(cn.br)
 	if err != nil {

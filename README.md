@@ -37,7 +37,8 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   3-state health → gRPC Health, slog + OTLP, a PgBouncer-safe pgx pool + sqlc,
   and pluggable cache / MQ abstractions. The cache defaults to a process-local
   in-memory backend (no external service; `cache.driver: redis` opts in to a
-  distributed cache); MQ is NATS or Kafka. MQ delivery
+  distributed cache, served by a small in-tree zero-dependency RESP client);
+  MQ is NATS or Kafka. MQ delivery
   semantics are uniform across backends: `mq.group_id` empty (default) fans
   out, non-empty load-balances (NATS queue group / Kafka consumer group);
   `mq.url` accepts a comma-separated server list. The Kafka backend compiles
