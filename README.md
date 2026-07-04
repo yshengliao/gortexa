@@ -29,7 +29,7 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   MCP / OpenAI-strict / Gemini tool schemas (golden-locked). The MCP bridge
   dispatches `tools/call` back through the **full interceptor chain** via an
   in-process loopback, so AI calls inherit auth/validation.
-- **Batteries** — config (layered, fail-loud, masked secrets), generic DI,
+- **Batteries** — config (layered, fail-loud, masked secrets),
   3-state health → gRPC Health, slog + OTLP, a PgBouncer-safe pgx pool + sqlc,
   and pluggable cache (Redis) / MQ (NATS, Kafka) abstractions.
 
