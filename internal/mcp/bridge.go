@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
@@ -492,6 +494,16 @@ func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
 	return resp
 }
 
+// inboundContext builds the dispatch context from an inbound /mcp request. It
+// continues W3C trace context but strips inbound baggage: /mcp is a public
+// surface and baggage members are attacker-controlled, so they must not
+// propagate over the loopback as trusted context (tenant/user hints and the
+// like). This mirrors the existing distrust of client X-Forwarded-For.
+func inboundContext(r *http.Request) context.Context {
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	return baggage.ContextWithoutBaggage(ctx)
+}
+
 func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawMessage) (any, *rpcError) {
 	var p struct {
 		Name      string          `json:"name"`
@@ -513,7 +525,7 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 	}
 	out := dynamicpb.NewMessage(tool.Output)
 
-	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx := inboundContext(r)
 	attrs := []attribute.KeyValue{attribute.String("gen_ai.tool.name", p.Name), attribute.String("mcp.method.name", "tools/call"), attribute.String("mcp.protocol.version", protocolVersion), attribute.String("jsonrpc.request.id", string(id))}
 	if sid := r.Header.Get("Mcp-Session-Id"); sid != "" {
 		attrs = append(attrs, attribute.String("mcp.session.id", sid))
