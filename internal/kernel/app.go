@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/stats"
 	"google.golang.org/grpc/test/bufconn"
 
@@ -140,6 +141,12 @@ func New(opts ...Option) (*App, error) {
 	}
 	a.grpcSrv = grpc.NewServer(serverOpts...)
 	grpc_health_v1.RegisterHealthServer(a.grpcSrv, a.health.GRPCHealthServer())
+	if ac.cfg.Server.Reflection {
+		// Reflection v1 serves live server state, so registering before domain
+		// services are added still reflects them. Gated off by default because it
+		// exposes the full schema on the shared gRPC/HTTP/MCP port.
+		reflection.Register(a.grpcSrv)
+	}
 	return a, nil
 }
 

@@ -5,6 +5,9 @@ server:
   shutdown_timeout: 20s
   enable_cors: true
   openapi: true
+  # reflection exposes the full service schema over the shared gRPC/HTTP/MCP
+  # port (grpc.reflection.v1); intended for dev tooling (e.g. `buf curl --reflect`).
+  reflection: false
 
 auth:
   # Placeholder only. The server REFUSES to start with this exact value, so set a

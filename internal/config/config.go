@@ -47,6 +47,7 @@ type ServerConfig struct {
 	EnableCORS        bool          `koanf:"enable_cors"`
 	CORSOrigins       []string      `koanf:"cors_origins"`
 	OpenAPI           bool          `koanf:"openapi"`
+	Reflection        bool          `koanf:"reflection"`
 }
 
 type AuthConfig struct {
@@ -108,6 +109,7 @@ func defaults() map[string]any {
 		"server.read_header_timeout": "5s",
 		"server.enable_cors":         false,
 		"server.openapi":             true,
+		"server.reflection":          false,
 		"auth.issuer":                "gortexa",
 		"auth.ttl":                   "1h",
 		"db.max_conns":               10,

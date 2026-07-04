@@ -46,6 +46,9 @@ func TestThreeLayerPrecedence(t *testing.T) {
 	if c.Server.OpenAPI != true { // untouched default
 		t.Errorf("openapi default not applied")
 	}
+	if c.Server.Reflection != false { // untouched default
+		t.Errorf("reflection default not applied")
+	}
 	if c.Auth.JWTSecret.Reveal() != validSecret {
 		t.Errorf("jwt secret not loaded from env")
 	}
