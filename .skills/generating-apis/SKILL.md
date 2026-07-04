@@ -23,7 +23,11 @@ truth; never hand-edit `gen/`.
 ## Procedure
 
 1. **Pick the target.** Choose `<domain>/<version>` (lowercase domain, `vN`
-   version) and a CamelCase `Entity`, e.g. `billing/v1 Invoice`.
+   version) and a CamelCase `Entity`, e.g. `billing/v1 Invoice`. Entity names
+   must be unique across domains: the logic stub lands at
+   `internal/logic/<entity>.go` without a domain prefix, so a second domain
+   reusing the same Entity collides with the first (do not `--force` through
+   that collision — it overwrites the other domain's logic).
 
 2. **Generate.** From the project root:
    ```bash

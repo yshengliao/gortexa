@@ -37,7 +37,8 @@ drops its git history, and rewrites the Go module path, leaving a working projec
    Smoke-test:
    ```bash
    curl localhost:8080/healthz
-   curl -XPOST localhost:8080/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+   curl -XPOST localhost:8080/mcp -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
    ```
 
 4. **Add your own APIs** with the generating-apis skill (`gortexa gen`).

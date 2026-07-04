@@ -33,9 +33,10 @@ versions are reproducible across machines.
    Confirms Go ≥ 1.26 and that buf + the proto plugins + sqlc are on PATH. Ensure
    `$(go env GOPATH)/bin` is on PATH (the Makefile adds it automatically).
 
-3. **Upgrade or re-pin a tool** when needed:
+3. **Upgrade or re-pin a tool** when needed (full module path required — bare
+   tool names are rejected by `go get -tool`):
    ```bash
-   gortexa tools sync buf@latest
+   gortexa tools sync github.com/bufbuild/buf/cmd/buf@latest
    ```
 
 ## Hard rules
