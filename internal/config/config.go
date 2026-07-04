@@ -107,10 +107,13 @@ func defaults() map[string]any {
 	return map[string]any{
 		"server.addr":             ":8080",
 		"server.shutdown_timeout": "20s",
-		"server.read_timeout":     "15s",
-		// 0 = disabled: the single h2c server multiplexes long-lived gRPC
-		// server-streams (Health.Watch) and MCP SSE, which a per-stream
-		// WriteTimeout would kill mid-flight.
+		// read_timeout and write_timeout are 0 (disabled): the single h2c server
+		// multiplexes long-lived HTTP/2 streams and both deadlines are armed
+		// per-stream. write_timeout would kill a server-stream (Health.Watch) or
+		// MCP SSE mid-response; read_timeout would reset a slow
+		// client-streaming/bidi request whose body spans more than the window.
+		// read_header_timeout still bounds the header phase (slow-loris guard).
+		"server.read_timeout":        "0",
 		"server.write_timeout":       "0",
 		"server.idle_timeout":        "60s",
 		"server.read_header_timeout": "5s",

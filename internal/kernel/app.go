@@ -91,10 +91,15 @@ func New(opts ...Option) (*App, error) {
 		ac.cfg = &config.Config{Server: config.ServerConfig{
 			Addr:            ":8080",
 			ShutdownTimeout: 20 * time.Second,
-			ReadTimeout:     15 * time.Second,
-			// WriteTimeout is 0 (disabled): this one server multiplexes long-lived
-			// gRPC server-streams (e.g. Health.Watch) and MCP SSE, and a non-zero
-			// WriteTimeout is applied per HTTP/2 stream, killing them mid-flight.
+			// ReadTimeout and WriteTimeout are 0 (disabled) for the same reason:
+			// this one server multiplexes long-lived HTTP/2 streams, and both
+			// deadlines are armed per-stream. WriteTimeout would kill a
+			// server-stream (Health.Watch) or MCP SSE mid-response; ReadTimeout
+			// (a one-shot per-stream timer, effectively a body-read deadline under
+			// HTTP/2) would reset a slow client-streaming/bidi request whose body
+			// spans more than the window. ReadHeaderTimeout still bounds the
+			// header phase, so slow-loris protection is retained.
+			ReadTimeout:       0,
 			WriteTimeout:      0,
 			IdleTimeout:       60 * time.Second,
 			ReadHeaderTimeout: 5 * time.Second,
