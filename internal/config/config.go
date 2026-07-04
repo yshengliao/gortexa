@@ -62,6 +62,7 @@ type DBConfig struct {
 }
 
 type CacheConfig struct {
+	Driver   string        `koanf:"driver"` // "memory" (default, no external service) | "redis"
 	Addr     string        `koanf:"addr"`
 	Password Secret        `koanf:"password"`
 	DB       int           `koanf:"db"`
@@ -133,6 +134,7 @@ func defaults() map[string]any {
 		"auth.issuer":                "gortexa",
 		"auth.ttl":                   "1h",
 		"db.max_conns":               10,
+		"cache.driver":               "memory", // in-memory default; "redis" opts in to a distributed cache
 		"cache.addr":                 "localhost:6379",
 		"cache.ttl":                  "5m",
 		"mq.driver":                  "nats",
