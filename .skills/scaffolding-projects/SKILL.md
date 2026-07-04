@@ -11,7 +11,7 @@ drops its git history, and rewrites the Go module path, leaving a working projec
 
 ## When to use this skill
 - The user wants to start a new Gortexa-based service/project from scratch.
-- A fresh contract-first gRPC project with batteries (config, DI, health,
+- A fresh contract-first gRPC project with batteries (config, health,
   interceptor chain, MCP) is needed.
 
 ## Procedure

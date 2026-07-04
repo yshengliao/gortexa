@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,6 +57,175 @@ func createKafkaTopic(t *testing.T, broker, topic string) {
 	t.Fatalf("create topic %q: %v", topic, lastErr)
 }
 
+// createKafkaTopicPartitions creates topic with an explicit partition count —
+// DialLeader auto-creation always yields the broker default (one partition),
+// which cannot exercise load-balancing across group members.
+func createKafkaTopicPartitions(t *testing.T, broker, topic string, partitions int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		conn, err := kafka.Dial("tcp", broker)
+		if err == nil {
+			err = conn.CreateTopics(kafka.TopicConfig{Topic: topic, NumPartitions: partitions, ReplicationFactor: 1})
+			_ = conn.Close()
+			if err == nil {
+				return
+			}
+		}
+		lastErr = err
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("create topic %q: %v", topic, lastErr)
+}
+
+// TestKafkaFanOut pins the cross-backend default (GroupID empty): each
+// subscription gets its own throwaway consumer group, so every subscriber sees
+// the published messages. The topic is auto-created with a single partition,
+// which makes the test sharp — under the old shared-group behaviour one
+// subscriber would own the sole partition and starve the other forever.
+func TestKafkaFanOut(t *testing.T) {
+	broker := kafkaBroker(t)
+	topic := fmt.Sprintf("events-%d", time.Now().UnixNano())
+	createKafkaTopic(t, broker, topic)
+
+	pub, sub, err := mq.NewKafka(config.MQConfig{URL: broker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
+
+	ctx := context.Background()
+	got1 := make(chan string, 256)
+	got2 := make(chan string, 256)
+	for _, ch := range []chan string{got1, got2} {
+		ch := ch
+		if err := sub.Subscribe(ctx, topic, func(_ context.Context, m mq.Message) error {
+			ch <- string(m.Value)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Fan-out readers start at LastOffset, so anything published before a
+	// reader's group join is invisible to it. Keep publishing until both
+	// subscribers have received something; publish errors during the fresh-topic
+	// metadata window are part of the same retry loop.
+	deadline := time.Now().Add(60 * time.Second)
+	var ok1, ok2 bool
+	for i := 0; !(ok1 && ok2); i++ {
+		if time.Now().After(deadline) {
+			t.Fatalf("fan-out: subscriber1 received=%v subscriber2 received=%v after 60s", ok1, ok2)
+		}
+		_ = pub.Publish(ctx, topic, mq.Message{Value: []byte(fmt.Sprintf("m-%d", i))})
+		select {
+		case <-got1:
+			ok1 = true
+		default:
+		}
+		select {
+		case <-got2:
+			ok2 = true
+		default:
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// TestKafkaGroupLoadBalance pins the non-empty GroupID semantics: the two
+// subscriptions join one consumer group over a two-partition topic, so the
+// group splits the stream. Kafka is at-least-once within a group (a rebalance
+// can redeliver an uncommitted message), so the invariants tested are the
+// flake-free pair: no message is lost, and the stream is genuinely split — a
+// fan-out regression would deliver every message to both subscribers (2n
+// receptions) and fail the total bound.
+func TestKafkaGroupLoadBalance(t *testing.T) {
+	broker := kafkaBroker(t)
+	topic := fmt.Sprintf("events-lb-%d", time.Now().UnixNano())
+	createKafkaTopicPartitions(t, broker, topic, 2)
+
+	group := fmt.Sprintf("lb-%d", time.Now().UnixNano())
+	pub, sub, err := mq.NewKafka(config.MQConfig{URL: broker, GroupID: group})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
+
+	ctx := context.Background()
+	got := make(chan string, 256)
+	for i := 0; i < 2; i++ {
+		if err := sub.Subscribe(ctx, topic, func(_ context.Context, m mq.Message) error {
+			got <- string(m.Value)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Probe until the group consumes something: proves topic metadata has
+	// propagated and group assignment completed. Probes are excluded from the
+	// assertions below, so probe duplicates from join-time rebalancing are
+	// harmless.
+	probeDeadline := time.Now().Add(60 * time.Second)
+	for probed := false; !probed; {
+		if time.Now().After(probeDeadline) {
+			t.Fatal("group never consumed a probe message within 60s")
+		}
+		_ = pub.Publish(ctx, topic, mq.Message{Value: []byte("probe")})
+		select {
+		case v := <-got:
+			probed = v == "probe"
+		default:
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	// Let the second member's join/rebalance settle before the counted batch,
+	// shrinking the redelivery window to near zero.
+	time.Sleep(3 * time.Second)
+	for len(got) > 0 {
+		<-got // drain residual probes
+	}
+
+	const n = 8
+	for i := 0; i < n; i++ {
+		if err := pub.Publish(ctx, topic, mq.Message{Value: []byte(fmt.Sprintf("final-%d", i))}); err != nil {
+			t.Fatalf("publish final-%d: %v", i, err)
+		}
+	}
+
+	seen := map[string]int{}
+	timeout := time.After(30 * time.Second)
+	for len(seen) < n {
+		select {
+		case v := <-got:
+			if strings.HasPrefix(v, "final-") {
+				seen[v]++
+			}
+		case <-timeout:
+			t.Fatalf("timed out: received %d/%d distinct messages", len(seen), n)
+		}
+	}
+	silence := time.After(1 * time.Second)
+	for draining := true; draining; {
+		select {
+		case v := <-got:
+			if strings.HasPrefix(v, "final-") {
+				seen[v]++
+			}
+		case <-silence:
+			draining = false
+		}
+	}
+	total := 0
+	for _, count := range seen {
+		total += count
+	}
+	if total >= 2*n {
+		t.Fatalf("stream was not split: %d receptions of %d messages (fan-out regression)", total, n)
+	}
+}
+
 func TestKafkaPubSub(t *testing.T) {
 	broker := kafkaBroker(t)
 	topic := fmt.Sprintf("events-%d", time.Now().UnixNano())
@@ -65,13 +235,13 @@ func TestKafkaPubSub(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pub.Close() })
+	t.Cleanup(func() { _ = pub.Close(context.Background()) })
 
 	ctx := context.Background()
-	// Buffered past any duplicate deliveries from publish retries below, so the
+	// Buffered past the duplicate deliveries from the publish loop below, so the
 	// handler can never block on send and wedge the reader goroutine (which
 	// would in turn hang Close's wg.Wait in Cleanup).
-	got := make(chan mq.Message, 16)
+	got := make(chan mq.Message, 256)
 	if err := sub.Subscribe(ctx, topic, func(_ context.Context, m mq.Message) error {
 		got <- m
 		return nil
@@ -79,32 +249,29 @@ func TestKafkaPubSub(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A freshly auto-created topic is not in every broker metadata view right
-	// away; the first publish can hit Unknown Topic Or Partition. Retry through
-	// the propagation window instead of flaking — production callers likewise
-	// retry Unavailable.
+	// Default (fan-out) subscriptions start at LastOffset: a message published
+	// before the reader's group join completes is invisible to it. Publish until
+	// received — this also rides out the fresh-topic metadata window, where the
+	// first publishes fail with Unknown Topic Or Partition. Group join is slow on
+	// a first-run CI broker, hence the generous deadline.
 	want := mq.Message{Key: []byte("k1"), Value: []byte("hello"), Headers: map[string]string{"trace": "abc"}}
-	publishDeadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
+	var lastPubErr error
 	for {
-		err := pub.Publish(ctx, topic, want)
-		if err == nil {
-			break
+		if err := pub.Publish(ctx, topic, want); err != nil {
+			lastPubErr = err
 		}
-		if time.Now().After(publishDeadline) {
-			t.Fatalf("publish never succeeded: %v", err)
+		select {
+		case m := <-got:
+			if string(m.Value) != "hello" || string(m.Key) != "k1" || m.Headers["trace"] != "abc" {
+				t.Fatalf("received %+v", m)
+			}
+			return
+		case <-time.After(250 * time.Millisecond):
 		}
-		time.Sleep(250 * time.Millisecond)
-	}
-
-	// Consumer-group join + rebalance is slow, especially on a first-run CI
-	// broker, so this timeout is longer than the NATS equivalent.
-	select {
-	case m := <-got:
-		if string(m.Value) != "hello" || string(m.Key) != "k1" || m.Headers["trace"] != "abc" {
-			t.Fatalf("received %+v", m)
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for message (last publish error: %v)", lastPubErr)
 		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("timed out waiting for message")
 	}
 }
 
@@ -136,7 +303,7 @@ func TestKafkaSubscribeNoGoroutineLeakAfterClose(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- pub.Close() }()
+	go func() { done <- pub.Close(context.Background()) }()
 	select {
 	case err := <-done:
 		if err != nil {

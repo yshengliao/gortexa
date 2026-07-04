@@ -4,6 +4,8 @@ package mq
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 
 	"github.com/segmentio/kafka-go"
@@ -16,6 +18,7 @@ import (
 // tag, since they require a live broker.
 type kafkaClient struct {
 	brokers []string
+	groupID string
 	writer  *kafka.Writer
 	mu      sync.Mutex
 	readers []*kafka.Reader
@@ -27,15 +30,27 @@ type kafkaClient struct {
 
 // NewKafka builds a Kafka publisher/subscriber.
 func NewKafka(cfg config.MQConfig) (Publisher, Subscriber, error) {
-	if cfg.URL == "" {
-		return nil, nil, apperr.New(apperr.CatInvalidArgument, "mq.url (kafka brokers) required")
+	brokers, err := splitBrokers(cfg.URL)
+	if err != nil {
+		return nil, nil, err
 	}
-	brokers := []string{cfg.URL}
 	c := &kafkaClient{
 		brokers: brokers,
+		groupID: cfg.GroupID,
 		writer:  &kafka.Writer{Addr: kafka.TCP(brokers...), Balancer: &kafka.LeastBytes{}},
 	}
 	return c, c, nil
+}
+
+// randomGroupID names the throwaway consumer group backing one fan-out
+// subscription. Random rather than sequential so independent processes never
+// collide into an accidental shared group.
+func randomGroupID() (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "gortexa-" + hex.EncodeToString(b[:]), nil
 }
 
 func (c *kafkaClient) Publish(ctx context.Context, topic string, m Message) error {
@@ -51,7 +66,25 @@ func (c *kafkaClient) Publish(ctx context.Context, topic string, m Message) erro
 }
 
 func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) error {
-	r := kafka.NewReader(kafka.ReaderConfig{Brokers: c.brokers, Topic: topic, GroupID: "gortexa"})
+	// LastOffset unconditionally: a group with no committed offsets starts at
+	// the tail, aligning with NATS live-start instead of replaying retained
+	// history; an established explicit group still resumes from its committed
+	// offsets. Note the group join is asynchronous — Subscribe returns before
+	// it completes, so messages published in that window are not delivered
+	// (see the package doc).
+	rc := kafka.ReaderConfig{Brokers: c.brokers, Topic: topic, GroupID: c.groupID, StartOffset: kafka.LastOffset}
+	explicit := c.groupID != ""
+	if !explicit {
+		// Fan-out (the cross-backend default): a fresh throwaway group per
+		// subscription so every subscriber sees every message. Its broker-side
+		// metadata expires via the offsets.retention window.
+		gid, err := randomGroupID()
+		if err != nil {
+			return apperr.Wrap(apperr.CatInternal, "mq: generate group id", err)
+		}
+		rc.GroupID = gid
+	}
+	r := kafka.NewReader(rc)
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -67,7 +100,12 @@ func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) er
 		defer c.wg.Done()
 		defer func() { _ = r.Close() }()
 		for {
-			km, err := r.ReadMessage(ctx)
+			// Fetch, run the handler, then commit — never the reverse: committing
+			// before the handler (ReadMessage's behaviour) would mark a message
+			// consumed that a crash mid-handler never processed. Handler errors are
+			// not retried on either backend (see the package doc), so the offset is
+			// committed once the handler has had its chance.
+			km, err := r.FetchMessage(ctx)
 			if err != nil {
 				return
 			}
@@ -76,12 +114,18 @@ func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) er
 				headers[kh.Key] = string(kh.Value)
 			}
 			_ = h(ctx, Message{Key: km.Key, Value: km.Value, Headers: headers})
+			if explicit {
+				// A failed commit is left for a later one to cover (offsets are
+				// cumulative); the cost is possible redelivery, not loss. Fan-out
+				// groups are throwaway and never commit.
+				_ = r.CommitMessages(ctx, km)
+			}
 		}
 	}()
 	return nil
 }
 
-func (c *kafkaClient) Close() error {
+func (c *kafkaClient) Close(ctx context.Context) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -91,19 +135,21 @@ func (c *kafkaClient) Close() error {
 	readers := c.readers
 	c.readers = nil
 	c.mu.Unlock()
-	// Close readers concurrently: each Close waits out a consumer-group
-	// leave/rebalance round, so closing sequentially scales O(n) with the
-	// subscription count and can blow the caller's shutdown budget.
-	var closers sync.WaitGroup
-	for _, r := range readers {
-		closers.Add(1)
-		go func() {
-			defer closers.Done()
-			_ = r.Close()
-		}()
-	}
-	closers.Wait()
-	err := c.writer.Close()
-	c.wg.Wait() // no reader goroutine outlives Close
-	return err
+	return closeWithin(ctx, func() error {
+		// Close readers concurrently: each Close waits out a consumer-group
+		// leave/rebalance round, so closing sequentially scales O(n) with the
+		// subscription count and can blow the caller's shutdown budget.
+		var closers sync.WaitGroup
+		for _, r := range readers {
+			closers.Add(1)
+			go func() {
+				defer closers.Done()
+				_ = r.Close()
+			}()
+		}
+		closers.Wait()
+		err := c.writer.Close()
+		c.wg.Wait() // no reader goroutine outlives the teardown
+		return err
+	})
 }

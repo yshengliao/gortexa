@@ -17,6 +17,17 @@ auth:
   issuer: "gortexa"
   ttl: 1h
 
+mq:
+  driver: "nats" # "nats" | "kafka" (kafka needs the `integration` build tag)
+  # url accepts a comma-separated server list, e.g. "b1:9092,b2:9092" (kafka)
+  # or "nats://a:4222,nats://b:4222". Empty falls back to the NATS default URL.
+  url: ""
+  # group_id selects delivery semantics, identically on both backends: empty
+  # (default) fans out — every subscription receives every message; non-empty
+  # load-balances — subscriptions sharing the group split the stream (NATS
+  # queue group / Kafka consumer group).
+  group_id: ""
+
 log:
   level: "info"
   format: "json"
