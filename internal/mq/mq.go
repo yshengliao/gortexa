@@ -8,6 +8,16 @@
 // load-balances — subscriptions sharing the group split the stream (a NATS
 // queue group or Kafka consumer group).
 //
+// Transport caveats callers must design for:
+//   - Kafka subscriptions become live asynchronously: Subscribe returns before
+//     the consumer-group join completes, so messages published in that window
+//     are not delivered to the new subscription. NATS subscriptions are live
+//     when Subscribe returns.
+//   - Handler errors are not retried on either backend. On Kafka an explicit
+//     group commits its offset only after the handler returns, so a crash
+//     mid-handler is redelivered after restart (and duplicates are possible);
+//     core NATS has no redelivery.
+//
 // config.MQConfig.URL accepts a comma-separated server list on both backends
 // (the bootstrap-server convention).
 package mq

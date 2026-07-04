@@ -66,21 +66,23 @@ func (c *kafkaClient) Publish(ctx context.Context, topic string, m Message) erro
 }
 
 func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) error {
-	rc := kafka.ReaderConfig{Brokers: c.brokers, Topic: topic, GroupID: c.groupID}
-	if c.groupID == "" {
-		// Fan-out (the cross-backend default): a fresh group per subscription so
-		// every subscriber sees every message, and LastOffset so it sees only
-		// messages published after it subscribed — matching NATS core semantics.
-		// The throwaway groups' broker-side metadata expires via the broker's
-		// offsets.retention window. A non-empty GroupID keeps kafka-go's default
-		// FirstOffset/committed-offset behaviour: the group splits the stream and
-		// resumes where it left off.
+	// LastOffset unconditionally: a group with no committed offsets starts at
+	// the tail, aligning with NATS live-start instead of replaying retained
+	// history; an established explicit group still resumes from its committed
+	// offsets. Note the group join is asynchronous — Subscribe returns before
+	// it completes, so messages published in that window are not delivered
+	// (see the package doc).
+	rc := kafka.ReaderConfig{Brokers: c.brokers, Topic: topic, GroupID: c.groupID, StartOffset: kafka.LastOffset}
+	explicit := c.groupID != ""
+	if !explicit {
+		// Fan-out (the cross-backend default): a fresh throwaway group per
+		// subscription so every subscriber sees every message. Its broker-side
+		// metadata expires via the offsets.retention window.
 		gid, err := randomGroupID()
 		if err != nil {
 			return apperr.Wrap(apperr.CatInternal, "mq: generate group id", err)
 		}
 		rc.GroupID = gid
-		rc.StartOffset = kafka.LastOffset
 	}
 	r := kafka.NewReader(rc)
 	c.mu.Lock()
@@ -98,7 +100,12 @@ func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) er
 		defer c.wg.Done()
 		defer func() { _ = r.Close() }()
 		for {
-			km, err := r.ReadMessage(ctx)
+			// Fetch, run the handler, then commit — never the reverse: committing
+			// before the handler (ReadMessage's behaviour) would mark a message
+			// consumed that a crash mid-handler never processed. Handler errors are
+			// not retried on either backend (see the package doc), so the offset is
+			// committed once the handler has had its chance.
+			km, err := r.FetchMessage(ctx)
 			if err != nil {
 				return
 			}
@@ -107,6 +114,12 @@ func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) er
 				headers[kh.Key] = string(kh.Value)
 			}
 			_ = h(ctx, Message{Key: km.Key, Value: km.Value, Headers: headers})
+			if explicit {
+				// A failed commit is left for a later one to cover (offsets are
+				// cumulative); the cost is possible redelivery, not loss. Fan-out
+				// groups are throwaway and never commit.
+				_ = r.CommitMessages(ctx, km)
+			}
 		}
 	}()
 	return nil
