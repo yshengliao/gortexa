@@ -61,26 +61,39 @@ func readModulePath(gomod string) (string, bool) {
 	return "", false
 }
 
-// runCmd runs name+args in dir, streaming stdio to the parent process. It
-// exports the corrected Go module env (mirroring the Makefile) so `go`-invoking
-// subcommands like `tools install` don't 403 against the container's broken
-// GOPROXY/GOPRIVATE defaults. Non-Go tools (git, buf) simply ignore these.
+// goModuleEnv is the corrected Go module env (mirroring the Makefile) so
+// `go`-invoking subcommands like `tools install` don't 403 against the
+// container's broken GOPROXY/GOPRIVATE defaults. Non-Go tools (git, buf)
+// simply ignore these. Later entries win in os/exec, so appending these to
+// os.Environ() overrides any inherited values.
+var goModuleEnv = []string{
+	"GOFLAGS=-mod=mod",
+	"GOPROXY=https://proxy.golang.org,direct",
+	"GOSUMDB=sum.golang.org",
+	"GOTOOLCHAIN=auto",
+	"GOPRIVATE=",
+	"GOINSECURE=",
+}
+
+// runCmd runs name+args in dir, streaming stdio to the parent process.
 func runCmd(dir, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	// Later entries win in os/exec, so these override any inherited values.
-	cmd.Env = append(os.Environ(),
-		"GOFLAGS=-mod=mod",
-		"GOPROXY=https://proxy.golang.org,direct",
-		"GOSUMDB=sum.golang.org",
-		"GOTOOLCHAIN=auto",
-		"GOPRIVATE=",
-		"GOINSECURE=",
-	)
+	cmd.Env = append(os.Environ(), goModuleEnv...)
 	return cmd.Run()
+}
+
+// runCmdOutput is runCmd capturing stdout (stderr still streams) for commands
+// whose output is the artifact.
+func runCmdOutput(dir, name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), goModuleEnv...)
+	return cmd.Output()
 }
 
 func mustGetwd() string {

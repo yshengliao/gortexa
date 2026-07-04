@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 	// gortexa:import — `gortexa gen` inserts generated-package imports above this line
@@ -27,10 +30,44 @@ import (
 )
 
 func main() {
+	exportFormat := flag.String("export-ai-schemas", "", "print the ai.v1 tool schemas (mcp|openai|gemini) to stdout and exit")
+	flag.Parse()
+	if *exportFormat != "" {
+		if err := exportSchemas(*exportFormat); err != nil {
+			fmt.Fprintln(os.Stderr, "fatal:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
 		os.Exit(1)
 	}
+}
+
+// mcpServices lists every service exposed over the MCP bridge and the ai.v1
+// schema export.
+func mcpServices() []protoreflect.FullName {
+	return []protoreflect.FullName{
+		"resource.v1.ResourceService",
+		// gortexa:mcp — `gortexa gen` inserts "domain.v1.XxxService" entries above this line
+	}
+}
+
+// exportSchemas renders the project's ai.v1 tool schemas without starting the
+// server: the contract is compiled into this binary, so no config, storage or
+// listener is needed.
+func exportSchemas(format string) error {
+	descs, err := mcp.ServiceDescriptors(mcpServices()...)
+	if err != nil {
+		return fmt.Errorf("mcp descriptors: %w", err)
+	}
+	out, err := mcp.ExportSchemas(format, descs)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(out)
+	return err
 }
 
 func configOptions() []config.Option {
@@ -150,10 +187,7 @@ func run() error {
 	// gortexa:gateway — `gortexa gen` inserts RegisterXxxServiceHandler blocks above this line
 	app.SetGateway(gateway)
 
-	descs, err := mcp.ServiceDescriptors(
-		"resource.v1.ResourceService",
-		// gortexa:mcp — `gortexa gen` inserts "domain.v1.XxxService" entries above this line
-	)
+	descs, err := mcp.ServiceDescriptors(mcpServices()...)
 	if err != nil {
 		return fmt.Errorf("mcp descriptors: %w", err)
 	}

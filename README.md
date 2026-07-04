@@ -83,6 +83,7 @@ curl localhost:8080/v1/resources/x
 | `gortexa gen <domain>/<v> [Entity]` | Generate a CRUD API end-to-end: proto + logic stub + server wiring, then regenerate. |
 | `gortexa regen` | Regenerate from proto (buf lint → breaking → generate). |
 | `gortexa run` | Build and run the dev server. |
+| `gortexa export --format=mcp\|openai\|gemini` | Export the project's `ai/v1` tool schemas as provider-ready JSON. |
 | `gortexa tools install` / `sync` | Install / re-pin the dev toolchain (`tools/go.mod` directives). |
 | `gortexa skills install` / `list` | Wire the AI-assist skills into Claude/Codex/Copilot/Antigravity. |
 | `gortexa doctor` | Check the Go toolchain and proto tools. |
