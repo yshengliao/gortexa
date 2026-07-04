@@ -42,11 +42,22 @@ func createProject(dest, module, repo, ref string) error {
 	if !validModulePath(module) {
 		return fmt.Errorf("invalid --module %q: expected a Go module path like github.com/me/app", module)
 	}
+	// Reject a --repo/--ref that git would parse as an option (e.g.
+	// "--upload-pack=...") — argument injection into the clone. The "--"
+	// terminator below is the primary guard; this rejects the shape outright
+	// with a clear message rather than letting git fail obscurely.
+	if strings.HasPrefix(repo, "-") {
+		return fmt.Errorf("invalid --repo %q: must not begin with '-'", repo)
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid --ref %q: must not begin with '-'", ref)
+	}
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("destination %q already exists", dest)
 	}
 	fmt.Printf("==> cloning %s (%s) → %s\n", repo, ref, dest)
-	if err := runCmd(".", "git", "clone", "--depth", "1", "--branch", ref, repo, dest); err != nil {
+	// "--" ends option parsing so repo/dest can never be read as git flags.
+	if err := runCmd(".", "git", "clone", "--depth", "1", "--branch", ref, "--", repo, dest); err != nil {
 		return fmt.Errorf("clone layout: %w", err)
 	}
 	// From here the directory exists and is ours; remove it on any failure so a

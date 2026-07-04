@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+func TestCreateProjectRejectsOptionLikeRepoRef(t *testing.T) {
+	// A --repo/--ref that git would parse as a flag (argument injection) must be
+	// refused before any git invocation. dest is inside t.TempDir so a regression
+	// that reached the clone would be visible, not silently network-dependent.
+	dest := filepath.Join(t.TempDir(), "proj")
+	cases := []struct {
+		name, repo, ref string
+	}{
+		{"option-like repo", "--upload-pack=touch /tmp/x", "main"},
+		{"option-like ref", "https://example.com/x", "--foo"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := createProject(dest, "github.com/example/proj", c.repo, c.ref)
+			if err == nil {
+				t.Fatal("createProject accepted an option-like repo/ref")
+			}
+			if _, statErr := os.Stat(dest); statErr == nil {
+				t.Fatal("clone ran despite the rejected argument")
+			}
+		})
+	}
+}
+
 func TestRewriteModulePath_IssueURLs(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "test.md")

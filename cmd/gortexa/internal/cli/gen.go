@@ -85,8 +85,11 @@ func generateAPI(root string, d tmplData, opt genOpts) error {
 			return fmt.Errorf("regen: %w", err)
 		}
 		// gofmt the new logic file and the rewired main.go now that the generated
-		// types exist.
-		_ = runCmd(root, "gofmt", "-w", logicPath, mainPath)
+		// types exist. A gofmt failure isn't fatal (the files still compile), but
+		// warn rather than swallow it so the user knows to format manually.
+		if err := runCmd(root, "gofmt", "-w", logicPath, mainPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: gofmt failed, format %s and %s manually: %v\n", logicPath, mainPath, err)
+		}
 	}
 	fmt.Printf("\n==> %s.%s.%sService ready — build with `go build ./...`\n", d.Domain, d.Version, d.Entity)
 	return nil
