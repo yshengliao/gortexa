@@ -36,12 +36,18 @@ func TestPgBouncerPoolCRUD(t *testing.T) {
 
 	pool, err := storage.NewPool(ctx, config.DBConfig{DSN: config.Secret(dsn), MaxConns: 4}, nil)
 	if err != nil {
+		t.Fatal(err) // DSN parse failure is a real bug, not an absent broker
+	}
+	t.Cleanup(pool.Close)
+
+	// NewPool connects lazily, so reachability must be probed explicitly for
+	// the skip-vs-fail decision.
+	if err := pool.Ping(ctx); err != nil {
 		if forced {
 			t.Fatalf("pgbouncer not reachable at %s: %v", dsn, err)
 		}
 		t.Skipf("pgbouncer not reachable: %v (start it with: docker compose -f deploy/docker-compose.yaml up -d postgres pgbouncer)", err)
 	}
-	t.Cleanup(pool.Close)
 
 	// Apply the real migration to a clean slate: schema drift between
 	// db/migrations and the sqlc-generated queries fails here.
