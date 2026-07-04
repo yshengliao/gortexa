@@ -17,6 +17,10 @@ func setupLayoutRepo(t *testing.T) string {
 	writeFixture(t, filepath.Join(layout, "go.mod"), "module "+layoutModule+"\n\ngo 1.26.0\n")
 	writeFixture(t, filepath.Join(layout, "main.go"),
 		"package main\n\nimport _ \""+layoutModule+"/internal/logic\"\n\n// docs: https://"+layoutModule+"\n")
+	// Repo meta that createProject must prune or replace.
+	writeFixture(t, filepath.Join(layout, "cmd", "gortexa", "main.go"), "package main\n")
+	writeFixture(t, filepath.Join(layout, "install.sh"), "#!/bin/sh\n")
+	writeFixture(t, filepath.Join(layout, "README.md"), "# gortexa framework readme\n")
 	gitRun(t, layout, "add", "-A")
 	gitRun(t, layout, "commit", "-q", "-m", "layout")
 	return layout
@@ -43,6 +47,18 @@ func TestCreateProject(t *testing.T) {
 	// The cloned history is dropped and a fresh repo is initialized.
 	if _, err := os.Stat(filepath.Join(dest, ".git")); err != nil {
 		t.Errorf("expected a fresh .git in the new project: %v", err)
+	}
+	// Framework repo meta is pruned: the CLI source and installer must not ship
+	// inside a generated project.
+	for _, p := range []string{"cmd/gortexa", "install.sh"} {
+		if _, err := os.Stat(filepath.Join(dest, p)); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be pruned from the new project", p)
+		}
+	}
+	// The framework README is replaced with a project README naming the module.
+	readme := readFile(t, filepath.Join(dest, "README.md"))
+	if !strings.Contains(readme, "github.com/me/x") || strings.Contains(readme, "framework readme") {
+		t.Errorf("project README not written:\n%s", readme)
 	}
 }
 

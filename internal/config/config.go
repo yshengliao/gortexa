@@ -51,9 +51,13 @@ type ServerConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSecret Secret        `koanf:"jwt_secret"`
-	Issuer    string        `koanf:"issuer"`
-	TTL       time.Duration `koanf:"ttl"`
+	JWTSecret Secret `koanf:"jwt_secret"`
+	Issuer    string `koanf:"issuer"`
+	// Audience, when set, is stamped into and required from every token: it
+	// isolates services that share a secret and issuer (a token minted for
+	// service A is rejected by service B). Empty keeps aud unchecked.
+	Audience string        `koanf:"audience"`
+	TTL      time.Duration `koanf:"ttl"`
 }
 
 type DBConfig struct {

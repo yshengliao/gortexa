@@ -98,6 +98,12 @@ func BuildIR(svc protoreflect.ServiceDescriptor) ([]ToolIR, error) {
 		if name == "" {
 			name = string(m.Name())
 		}
+		// tools/call dispatches over a unary loopback Invoke; a streaming RPC
+		// would fail at call time with an opaque protocol violation. Fail loud
+		// at build/export time instead.
+		if m.IsStreamingClient() || m.IsStreamingServer() {
+			return nil, fmt.Errorf("mcp: tool %q: streaming RPCs cannot be exposed as AI tools (unary only)", name)
+		}
 		if err := ValidateTool(name, opt.GetReadOnly(), opt.GetDestructive()); err != nil {
 			return nil, err
 		}

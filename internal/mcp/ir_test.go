@@ -178,3 +178,39 @@ func depthLimitService(t *testing.T, input string, messages []messageSpec) proto
 	}
 	return fd.Services().Get(0)
 }
+
+func TestBuildIRRejectsStreamingTool(t *testing.T) {
+	methodOptions := &descriptorpb.MethodOptions{}
+	proto.SetExtension(methodOptions, aiv1.E_AiTool, &aiv1.AIToolOptions{
+		Expose: true,
+		Name:   "stream_test",
+	})
+
+	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name:        new("mcp/streamtest.proto"),
+		Package:     new("mcp.streamtest"),
+		Syntax:      new("proto3"),
+		MessageType: []*descriptorpb.DescriptorProto{{Name: new("Empty")}},
+		Service: []*descriptorpb.ServiceDescriptorProto{{
+			Name: new("StreamService"),
+			Method: []*descriptorpb.MethodDescriptorProto{{
+				Name:            new("Watch"),
+				InputType:       new(".mcp.streamtest.Empty"),
+				OutputType:      new(".mcp.streamtest.Empty"),
+				ServerStreaming: new(true),
+				Options:         methodOptions,
+			}},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("build test descriptor: %v", err)
+	}
+
+	_, err = mcp.BuildIR(fd.Services().Get(0))
+	if err == nil {
+		t.Fatal("BuildIR should reject an exposed streaming RPC at build time, not at tools/call")
+	}
+	if !strings.Contains(err.Error(), "streaming") {
+		t.Fatalf("BuildIR error = %v, want streaming rejection", err)
+	}
+}

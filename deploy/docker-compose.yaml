@@ -13,6 +13,7 @@ services:
     depends_on: [postgres]
     volumes:
       - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
     ports: ["6432:6432"]
 
   redis:

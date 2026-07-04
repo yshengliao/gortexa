@@ -91,7 +91,12 @@ func deadline(ctx context.Context, timeout time.Duration) time.Time {
 }
 
 func (c *Client) dial(ctx context.Context) (*conn, error) {
-	d := net.Dialer{Timeout: c.opts.DialTimeout}
+	// A negative DialTimeout means "disabled" (see Options): leave the Dialer
+	// timeout unset rather than handing it an already-expired deadline.
+	d := net.Dialer{}
+	if c.opts.DialTimeout > 0 {
+		d.Timeout = c.opts.DialTimeout
+	}
 	nc, err := d.DialContext(ctx, "tcp", c.opts.Addr)
 	if err != nil {
 		return nil, err

@@ -138,7 +138,7 @@ func run() error {
 		return fmt.Errorf("setup governance metrics: %w", err)
 	}
 
-	verifier, err := auth.NewVerifier([]byte(cfg.Auth.JWTSecret.Reveal()), cfg.Auth.Issuer)
+	verifier, err := auth.NewVerifier([]byte(cfg.Auth.JWTSecret.Reveal()), cfg.Auth.Issuer, cfg.Auth.Audience)
 	if err != nil {
 		return fmt.Errorf("build auth verifier: %w", err)
 	}

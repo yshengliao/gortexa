@@ -53,6 +53,16 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Start Postgres + PgBouncer (deploy compose)
+        run: |
+          docker compose -f deploy/docker-compose.yaml up -d postgres pgbouncer
+          for i in $(seq 1 30); do
+            (exec 3<>/dev/tcp/127.0.0.1/6432) 2>/dev/null && exit 0; sleep 1
+          done
+          echo "pgbouncer not ready" >&2
+          docker compose -f deploy/docker-compose.yaml logs pgbouncer
+          exit 1
+
       - name: Put go-installed tools on PATH
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
@@ -78,6 +88,9 @@ jobs:
         run: make test-integration
         env:
           KAFKA_BROKER: 127.0.0.1:9092
+          # Forces the storage integration test (fail instead of skip) against
+          # the compose-provided PgBouncer started in the step above.
+          PGBOUNCER_DSN: postgres://postgres@127.0.0.1:6432/gortexa?sslmode=disable
 
       - name: Lint
         run: make lint

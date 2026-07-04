@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 
@@ -99,8 +101,32 @@ func (f fanoutHandler) WithGroup(name string) slog.Handler {
 	return out
 }
 
+// installErrorHandler routes OTel export errors (collector down, TLS
+// mismatch) into the structured slog pipeline exactly once per process.
+// Without it they hit OTel's default unstructured stderr handler and a dead
+// collector is invisible until traces are needed. Rate-limited so a long
+// outage cannot flood the log.
+var installErrorHandlerOnce sync.Once
+
+func installErrorHandler() {
+	installErrorHandlerOnce.Do(func() {
+		var mu sync.Mutex
+		var last time.Time
+		otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if time.Since(last) < 30*time.Second {
+				return
+			}
+			last = time.Now()
+			slog.Warn("otel export error (rate-limited to one per 30s)", "error", err)
+		}))
+	})
+}
+
 // SetupLogs builds the process logger and, when configured, an OTel Logs exporter.
 func SetupLogs(ctx context.Context, logCfg config.LogConfig, obsCfg config.ObservConfig) (*slog.Logger, ShutdownFunc, error) {
+	installErrorHandler()
 	lvl, err := parseLevel(logCfg.Level)
 	if err != nil {
 		return nil, nil, err
@@ -182,6 +208,7 @@ func newResource(ctx context.Context, service, version string) (*resource.Resour
 // SetupTracing installs the global tracer provider. With no OTLP endpoint it
 // installs a no-op provider and a no-op shutdown.
 func SetupTracing(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, error) {
+	installErrorHandler()
 	// Propagate W3C trace context and baggage across services and the in-process
 	// loopback, regardless of whether this service exports spans.
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
@@ -211,6 +238,7 @@ func SetupTracing(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, e
 
 // SetupMetrics installs the global meter provider. No-op without an endpoint.
 func SetupMetrics(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, error) {
+	installErrorHandler()
 	if cfg.MetricsOTLP == "" {
 		otel.SetMeterProvider(metricnoop.NewMeterProvider())
 		return noopShutdown, nil

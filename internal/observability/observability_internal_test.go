@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.opentelemetry.io/otel"
 )
 
 func TestParseLevel(t *testing.T) {
@@ -190,5 +192,19 @@ func TestOTLPSecurityDefaultsToTLS(t *testing.T) {
 	}
 	if metricSecurity(false) == nil || metricSecurity(true) == nil {
 		t.Fatal("metricSecurity returned nil option")
+	}
+}
+
+func TestInstallErrorHandlerRoutesToSlog(t *testing.T) {
+	installErrorHandler()
+
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(old) })
+
+	otel.Handle(errors.New("collector down"))
+	if !strings.Contains(buf.String(), "collector down") {
+		t.Fatalf("otel export error not routed to slog, got %q", buf.String())
 	}
 }
