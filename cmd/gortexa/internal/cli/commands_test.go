@@ -218,3 +218,27 @@ func TestVersionCmd(t *testing.T) {
 		t.Errorf("version output = %q, want it to contain %q", out, "gortexa "+version)
 	}
 }
+
+func TestGoMinorAtLeast(t *testing.T) {
+	cases := []struct {
+		ver   string
+		minor int
+		want  bool
+	}{
+		{"go1.26.4", 26, true},
+		{"go1.26", 26, true},
+		{"go1.25.1", 26, false},
+		{"go1.21.0", 21, true},
+		{"go1.18", 21, false},
+		{"go1.18.10", 26, false},
+		// Unparseable formats must not block doctor.
+		{"devel +abc123", 26, true},
+		{"go2.0.0", 26, true},
+		{"", 26, true},
+	}
+	for _, c := range cases {
+		if got := goMinorAtLeast(c.ver, c.minor); got != c.want {
+			t.Errorf("goMinorAtLeast(%q, %d) = %v, want %v", c.ver, c.minor, got, c.want)
+		}
+	}
+}
