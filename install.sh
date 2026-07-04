@@ -56,7 +56,9 @@ else
   fi
   DEST="${GORTEXA_DIR:-gortexa}"
   echo "==> cloning ${REPO_URL} (${REPO_REF}) into ${DEST}"
-  git clone --depth 1 --branch "${REPO_REF}" "${REPO_URL}" "${DEST}"
+  # "--" ends option parsing so a REPO_URL/DEST beginning with "-" can't be read
+  # as a git flag (argument injection), matching `gortexa create`.
+  git clone --depth 1 --branch "${REPO_REF}" -- "${REPO_URL}" "${DEST}"
   ROOT="$(cd "${DEST}" && pwd)"
 fi
 cd "${ROOT}"

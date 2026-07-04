@@ -17,6 +17,12 @@ type redisCache struct {
 
 // NewRedis builds a Redis-backed cache from config.
 func NewRedis(cfg config.CacheConfig) (Cache, error) {
+	// go-redis only defaults PoolSize when it is exactly zero; a negative value
+	// flows through and panics inside pool construction, which NewRedis could not
+	// turn into its declared error. Reject it up front.
+	if cfg.PoolSize < 0 {
+		return nil, apperr.New(apperr.CatInvalidArgument, "cache.pool_size must not be negative")
+	}
 	// A zero timeout/pool value is passed through as-is: go-redis reads zero as
 	// "use my default", so unset config preserves the previous behaviour while a
 	// set value tunes fail-fast/pool sizing.

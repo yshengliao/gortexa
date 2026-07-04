@@ -50,6 +50,7 @@ vet:
 
 vuln:
 	govulncheck ./...
+	govulncheck -tags integration ./...
 
 tidy:
 	$(GO) mod tidy

@@ -5,7 +5,18 @@ import (
 	"time"
 
 	"github.com/yshengliao/gortexa/internal/config"
+	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
+
+// TestNewRedisRejectsNegativePoolSize pins the guard: go-redis panics on a
+// negative pool size instead of defaulting it, so NewRedis must reject it as a
+// config error rather than crash.
+func TestNewRedisRejectsNegativePoolSize(t *testing.T) {
+	_, err := NewRedis(config.CacheConfig{Addr: "127.0.0.1:6379", PoolSize: -1})
+	if err == nil || !apperr.Is(err, apperr.CatInvalidArgument) {
+		t.Fatalf("err = %v, want InvalidArgument", err)
+	}
+}
 
 // TestNewRedisAppliesTunables pins that the client tunables flow from config
 // into the go-redis client, so an operator can actually shorten timeouts or
