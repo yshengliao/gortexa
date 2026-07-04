@@ -124,7 +124,7 @@ func defaults() map[string]any {
 	}
 }
 
-// Option configures Build.
+// Option configures BuildUnvalidated.
 type Option func(*options)
 
 type options struct {
@@ -154,8 +154,9 @@ func envKeyToPath(prefix string) func(string) string {
 	}
 }
 
-// Build assembles a Config from all configured layers (without validation).
-func Build(opts ...Option) (*Config, error) {
+// BuildUnvalidated assembles a Config from all configured layers but does not
+// run Validate; callers must call Validate themselves or use MustBuild.
+func BuildUnvalidated(opts ...Option) (*Config, error) {
 	o := options{prefix: "GORTEXA_", environ: os.Environ}
 	for _, opt := range opts {
 		opt(&o)
@@ -257,9 +258,10 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// MustBuild builds and validates, panicking on any failure (fail-loud startup).
+// MustBuild builds via BuildUnvalidated and validates, panicking on any
+// failure (fail-loud startup).
 func MustBuild(opts ...Option) *Config {
-	c, err := Build(opts...)
+	c, err := BuildUnvalidated(opts...)
 	if err != nil {
 		panic("config: " + err.Error())
 	}

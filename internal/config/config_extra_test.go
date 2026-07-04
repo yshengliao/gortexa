@@ -9,7 +9,7 @@ import (
 
 func TestDotEnvLayerAndCustomPrefix(t *testing.T) {
 	envFile := writeFile(t, ".env", "APP_SERVER__ADDR=:6000\nAPP_AUTH__JWT_SECRET="+validSecret+"\nAPP_CACHE__TTL=30s\n")
-	c, err := config.Build(
+	c, err := config.BuildUnvalidated(
 		config.WithEnvPrefix("APP_"),
 		config.WithDotEnvFile(envFile),
 		config.WithEnviron(func() []string { return nil }),
@@ -29,7 +29,7 @@ func TestDotEnvLayerAndCustomPrefix(t *testing.T) {
 }
 
 func TestBuildMissingConfigFile(t *testing.T) {
-	if _, err := config.Build(config.WithConfigFile("/no/such/file.yaml")); err == nil {
+	if _, err := config.BuildUnvalidated(config.WithConfigFile("/no/such/file.yaml")); err == nil {
 		t.Fatal("expected error for missing config file")
 	}
 }

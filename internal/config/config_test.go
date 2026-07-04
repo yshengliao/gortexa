@@ -30,7 +30,7 @@ func TestThreeLayerPrecedence(t *testing.T) {
 			"GORTEXA_AUTH__JWT_SECRET=" + validSecret,
 		}
 	}
-	c, err := config.Build(config.WithConfigFile(yamlFile), config.WithEnviron(environ))
+	c, err := config.BuildUnvalidated(config.WithConfigFile(yamlFile), config.WithEnviron(environ))
 	if err != nil {
 		t.Fatal(err)
 	}
