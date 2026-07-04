@@ -40,7 +40,6 @@ func TestReadReply(t *testing.T) {
 		{"bulk string", "$5\r\nhello\r\n", "hello"},
 		{"empty bulk string", "$0\r\n\r\n", ""},
 		{"null bulk (miss)", "$-1\r\n", nil},
-		{"null array", "*-1\r\n", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -55,14 +54,11 @@ func TestReadReply(t *testing.T) {
 	}
 }
 
-func TestReadReplyArray(t *testing.T) {
-	got, err := readReply(bufio.NewReader(strings.NewReader("*2\r\n$3\r\nfoo\r\n:7\r\n")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	arr, ok := got.([]any)
-	if !ok || len(arr) != 2 || arr[0] != "foo" || arr[1] != int64(7) {
-		t.Fatalf("got %#v", got)
+func TestReadReplyRejectsArray(t *testing.T) {
+	// This client issues no array-returning commands, so an array reply is
+	// unexpected and must error rather than be decoded.
+	if _, err := readReply(bufio.NewReader(strings.NewReader("*2\r\n$3\r\nfoo\r\n:7\r\n"))); err == nil {
+		t.Fatal("want unexpected-reply error for an array")
 	}
 }
 

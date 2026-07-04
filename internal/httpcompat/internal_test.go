@@ -309,24 +309,6 @@ func TestCORS(t *testing.T) {
 	}
 }
 
-func TestOpenAPIHandler(t *testing.T) {
-	dir := t.TempDir()
-	spec := filepath.Join(dir, "api.json")
-	_ = os.WriteFile(spec, []byte(`{"openapi":"x"}`), 0o600)
-
-	rec := httptest.NewRecorder()
-	OpenAPIHandler(spec).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi", nil))
-	if rec.Code != http.StatusOK || rec.Body.String() != `{"openapi":"x"}` {
-		t.Fatalf("present spec = %d %s", rec.Code, rec.Body.String())
-	}
-
-	rec = httptest.NewRecorder()
-	OpenAPIHandler(filepath.Join(dir, "missing.json")).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("missing spec = %d, want 404", rec.Code)
-	}
-}
-
 func TestOpenAPIRoute(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
 	dir := t.TempDir()

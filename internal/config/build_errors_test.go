@@ -19,7 +19,7 @@ func TestBuildErrorPaths(t *testing.T) {
 		{
 			name: "unmarshal failure on bad duration",
 			opts: []config.Option{config.WithEnviron(func() []string {
-				return []string{"GORTEXA_CACHE__TTL=not-a-duration"}
+				return []string{"GORTEXA_CACHE__DIAL_TIMEOUT=not-a-duration"}
 			})},
 		},
 	}

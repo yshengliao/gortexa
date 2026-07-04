@@ -119,6 +119,17 @@ curl localhost:8080/v1/resources/x
 - Integration tests needing real PgBouncer/Kafka are behind the `integration`
   build tag (`make test-integration`); the default suite needs no services.
 
+## Deploying
+
+- **Terminate TLS in front of it.** The port is cleartext h2c and the server
+  does no TLS itself — bearer tokens transit it — so put it behind a reverse
+  proxy, service mesh, or load balancer that terminates TLS before exposing it.
+- **Authorization is the app's job.** The framework authenticates (verifies the
+  JWT) and exposes the token's `Roles` via `auth.ClaimsFrom(ctx)`, but enforces
+  no role/permission policy — add your own checks in your handlers.
+- Register real dependency checks with `app.Health().Register(...)` so `/readyz`
+  reflects DB/cache/MQ reachability; the sample only registers a static `self`.
+
 ## Performance
 
 Measured on **Go 1.26** with `go test -benchmem -count=8` (summarized with
