@@ -47,7 +47,7 @@ the single source of truth; **one h2c port** multiplexes three protocols:
 
 ## Quickstart
 
-Install the dev toolchain — a Homebrew-style one-liner that corrects the Go env and installs the pinned tools (buf, protoc plugins, sqlc, …):
+Install the dev toolchain — a Homebrew-style one-liner that installs the pinned tools (buf, protoc plugins, sqlc, …). Run outside a checkout it clones this repo into `./gortexa` (override with `GORTEXA_DIR`, delete afterwards if unwanted); it only persists Go env corrections when it detects the broken dev-container values:
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/yshengliao/gortexa/main/install.sh)"
@@ -57,7 +57,11 @@ Install the CLI:
 
 ```bash
 go install github.com/yshengliao/gortexa/cmd/gortexa@latest
+export PATH="$(go env GOPATH)/bin:$PATH"   # go install lands here; add to your shell profile
 ```
+
+Without the PATH line the next command fails with `command not found: gortexa` —
+most shells do not have `$(go env GOPATH)/bin` on PATH by default.
 
 Scaffold a project, generate a CRUD API, and run it on one h2c port (`:8080`):
 
@@ -114,10 +118,12 @@ curl localhost:8080/v1/resources/x
 
 ## Notes
 
-- Requires Go 1.26 (auto-downloaded via `GOTOOLCHAIN`). `make` exports the
-  corrected module proxy env; run `install.sh` once if building outside `make`.
-- Integration tests needing real PgBouncer/Kafka are behind the `integration`
-  build tag (`make test-integration`); the default suite needs no services.
+- Requires Go 1.26 (auto-downloaded via `GOTOOLCHAIN`, which itself needs an
+  installed Go >= 1.21). `make` exports the corrected module proxy env; run
+  `install.sh` once if building outside `make`.
+- Integration tests needing real Kafka/NATS/Redis/Postgres+PgBouncer are behind
+  the `integration` build tag (`make test-integration`); the default suite
+  needs no services.
 
 ## Deploying
 
@@ -129,6 +135,11 @@ curl localhost:8080/v1/resources/x
   no role/permission policy — add your own checks in your handlers.
 - Register real dependency checks with `app.Health().Register(...)` so `/readyz`
   reflects DB/cache/MQ reachability; the sample only registers a static `self`.
+- **Per-peer rate limiting keys on the direct peer IP.** Behind a TLS-terminating
+  proxy or load balancer, all clients share the proxy's IP — and therefore one
+  200 RPS bucket — and one abusive client can exhaust it for everyone. Tune or
+  disable the rate limiter (`cmd/server/main.go`) in that topology, or enforce
+  limits at the proxy where the real client IP is visible.
 
 ## Performance
 
