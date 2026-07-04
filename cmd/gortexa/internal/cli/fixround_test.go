@@ -224,6 +224,18 @@ func TestIsGitToplevel(t *testing.T) {
 	if isGitToplevel(t.TempDir()) {
 		t.Error("isGitToplevel outside any repo = true, want false")
 	}
+
+	// A repo reached through a symlink must still count as toplevel: git
+	// reports the physical path, so an unresolved comparison would silently
+	// skip the breaking gate (as it did on macOS, where TMPDIR itself sits
+	// behind the /var → /private/var symlink).
+	link := filepath.Join(t.TempDir(), "repo-link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if !isGitToplevel(link) {
+		t.Error("isGitToplevel via symlinked path = false, want true")
+	}
 }
 
 // TestRunCmdSetsCorrectedGoEnv verifies runCmd overrides the container's broken

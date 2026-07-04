@@ -108,10 +108,23 @@ func isGitToplevel(root string) bool {
 	if err != nil {
 		return false
 	}
-	top, err := filepath.Abs(strings.TrimSpace(string(out)))
+	// git prints the physical (symlink-resolved) toplevel, while root may be a
+	// logical spelling of the same directory (macOS /var → /private/var, or a
+	// project reached through a symlink). Resolve both sides before comparing,
+	// or the breaking gate silently skips on such paths.
+	top, err := resolveDir(strings.TrimSpace(string(out)))
 	if err != nil {
 		return false
 	}
-	abs, err := filepath.Abs(root)
+	abs, err := resolveDir(root)
 	return err == nil && top == abs
+}
+
+// resolveDir returns the symlink-free absolute form of p.
+func resolveDir(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
 }
