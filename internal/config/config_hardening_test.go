@@ -82,3 +82,17 @@ func TestEmptyIssuerRejected(t *testing.T) {
 		t.Fatalf("error = %v, want an issuer-required message", err)
 	}
 }
+
+// TestOTLPSecureByDefault pins that OTLP export uses TLS unless cleartext is
+// explicitly opted in, so telemetry is never sent in cleartext by accident.
+func TestOTLPSecureByDefault(t *testing.T) {
+	c, err := config.Build(config.WithEnviron(func() []string {
+		return []string{"GORTEXA_AUTH__JWT_SECRET=" + validSecret}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Observ.OTLPInsecure {
+		t.Fatal("observ.otlp_insecure must default to false (TLS)")
+	}
+}

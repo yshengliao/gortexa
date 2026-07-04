@@ -79,11 +79,16 @@ type LogConfig struct {
 }
 
 type ObservConfig struct {
-	ServiceName         string   `koanf:"service_name"`
-	ServiceVersion      string   `koanf:"service_version"`
-	TracingOTLP         string   `koanf:"tracing_otlp"` // OTLP endpoint; empty disables
-	MetricsOTLP         string   `koanf:"metrics_otlp"` // OTLP endpoint; empty disables
-	LogsOTLP            string   `koanf:"logs_otlp"`
+	ServiceName    string `koanf:"service_name"`
+	ServiceVersion string `koanf:"service_version"`
+	TracingOTLP    string `koanf:"tracing_otlp"` // OTLP endpoint; empty disables
+	MetricsOTLP    string `koanf:"metrics_otlp"` // OTLP endpoint; empty disables
+	LogsOTLP       string `koanf:"logs_otlp"`
+	// OTLPInsecure exports telemetry over cleartext gRPC (no TLS). Default false:
+	// the OTLP exporters use TLS so telemetry — including GenAI-captured content —
+	// is not sent in cleartext to a remote collector. Set true only for a local
+	// dev collector (e.g. the docker-compose stack).
+	OTLPInsecure        bool     `koanf:"otlp_insecure"`
 	SampleRatio         float64  `koanf:"sample_ratio"`
 	GenAICaptureContent bool     `koanf:"genai_capture_content"`
 	GenAIMaskFields     []string `koanf:"genai_mask_fields"`
