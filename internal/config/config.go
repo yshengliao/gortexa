@@ -110,7 +110,6 @@ type ObservConfig struct {
 	SampleRatio         float64  `koanf:"sample_ratio"`
 	GenAICaptureContent bool     `koanf:"genai_capture_content"`
 	GenAIMaskFields     []string `koanf:"genai_mask_fields"`
-	SLOErrorBudget      float64  `koanf:"slo_error_budget"`
 }
 
 func defaults() map[string]any {
@@ -142,7 +141,6 @@ func defaults() map[string]any {
 		"observ.service_version":     "dev",
 		"observ.sample_ratio":        1.0,
 		"observ.genai_mask_fields":   []string{"password", "token", "secret", "authorization", "api_key"},
-		"observ.slo_error_budget":    0.001,
 	}
 }
 
