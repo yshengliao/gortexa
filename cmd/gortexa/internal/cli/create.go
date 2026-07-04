@@ -69,6 +69,16 @@ func createProject(dest, module, repo, ref string) error {
 	if err := os.RemoveAll(filepath.Join(dest, ".git")); err != nil {
 		return cleanup(fmt.Errorf("remove cloned .git: %w", err))
 	}
+	// Prune repo meta that must not ship inside a generated project: the CLI's
+	// own source tree and the bootstrap installer belong to the framework repo,
+	// and the module rewrite below would corrupt the install instructions they
+	// contain. The framework README is replaced with a project README after the
+	// rewrite.
+	for _, p := range []string{"cmd/gortexa", "install.sh"} {
+		if err := os.RemoveAll(filepath.Join(dest, p)); err != nil {
+			return cleanup(fmt.Errorf("prune %s: %w", p, err))
+		}
+	}
 	fmt.Printf("==> rewriting module path %s → %s\n", layoutModule, module)
 	if err := rewriteModulePath(dest, layoutModule, module); err != nil {
 		return cleanup(fmt.Errorf("rewrite module path: %w", err))
@@ -77,6 +87,9 @@ func createProject(dest, module, repo, ref string) error {
 	// not born using the publicly-known dev key.
 	if err := freshenJWTSecret(filepath.Join(dest, "etc", "config.yaml")); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: could not set a fresh jwt secret:", err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "README.md"), []byte(projectReadme(module)), 0o644); err != nil {
+		return cleanup(fmt.Errorf("write project README: %w", err))
 	}
 	if err := runCmd(dest, "git", "init", "-q"); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: git init failed:", err)
@@ -206,4 +219,35 @@ func isBinary(b []byte) bool {
 		}
 	}
 	return false
+}
+
+// projectReadme is the README written into a freshly created project, replacing
+// the framework's own README (whose install instructions would otherwise be
+// corrupted by the module rewrite).
+func projectReadme(module string) string {
+	return fmt.Sprintf(`# %s
+
+A [Gortexa](https://github.com/yshengliao/gortexa) service: one h2c port serves
+gRPC, HTTP/JSON (grpc-gateway) and MCP, sharing one interceptor chain, one
+error model and one auth path.
+
+## Develop
+
+`+"```bash"+`
+make bootstrap   # install the pinned toolchain
+make gen         # buf lint -> breaking -> generate
+make run         # dev server on :8080
+make test
+`+"```"+`
+
+## Layout
+
+- `+"`proto/`"+` — API contracts (the single source of truth; regenerate after edits)
+- `+"`internal/logic/`"+` — your business logic
+- `+"`cmd/server/`"+` — server wiring
+- `+"`etc/config.yaml`"+` — configuration
+- `+"`gen/`"+` — generated code: never edit, never commit
+
+Docs: https://gortexa.sheng.page
+`, module)
 }
