@@ -144,6 +144,56 @@ func TestNATSQueueGroupLoadBalance(t *testing.T) {
 	}
 }
 
+// TestNATSCloseWaitsForInflightHandler pins Close-vs-handler symmetry with the
+// Kafka backend: a handler that is already running when Close is called must
+// finish before Close returns (given an unexpired ctx), so shutdown never
+// abandons work silently.
+func TestNATSCloseWaitsForInflightHandler(t *testing.T) {
+	srv := natsserver.RunRandClientPortServer()
+	defer srv.Shutdown()
+
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	if err := sub.Subscribe(ctx, "events", func(context.Context, mq.Message) error {
+		close(entered)
+		<-release
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(ctx, "events", mq.Message{Value: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never invoked")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- pub.Close(context.Background()) }()
+	select {
+	case <-closed:
+		t.Fatal("Close returned while a handler was still in flight")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close never returned after the handler finished")
+	}
+}
+
 // TestNATSSubscribeNoGoroutineLeakAfterClose pins the fix for the per-Subscribe
 // watcher leak: subscribing with a non-cancellable context (Background) and then
 // closing the client must not leave a goroutine parked on ctx.Done() forever.

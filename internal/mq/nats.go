@@ -26,6 +26,11 @@ type natsClient struct {
 	// wg tracks watcher goroutines so Close returns only once they have all
 	// exited — no goroutine outlives the client.
 	wg sync.WaitGroup
+	// hwg tracks in-flight handler invocations so Close's teardown waits for
+	// them, matching the Kafka backend whose reader goroutine runs handlers
+	// inline. Add happens under mu against the closed flag, so it can never
+	// race a Wait that started at zero.
+	hwg sync.WaitGroup
 }
 
 // NewNATS connects to NATS and returns a publisher and subscriber sharing one
@@ -81,6 +86,16 @@ func (c *natsClient) flush(ctx context.Context) error {
 
 func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) error {
 	cb := func(m *nats.Msg) {
+		c.mu.Lock()
+		if c.closed {
+			// Racing Close: the client is gone, drop the delivery rather than run
+			// a handler the teardown can no longer wait for.
+			c.mu.Unlock()
+			return
+		}
+		c.hwg.Add(1)
+		c.mu.Unlock()
+		defer c.hwg.Done()
 		msg := Message{Value: m.Data, Headers: map[string]string{}}
 		for k, vs := range m.Header {
 			if len(vs) == 0 {
@@ -155,7 +170,8 @@ func (c *natsClient) Close(ctx context.Context) error {
 	c.mu.Unlock()
 	return closeWithin(ctx, func() error {
 		c.conn.Close()
-		c.wg.Wait() // no watcher goroutine outlives the teardown
+		c.wg.Wait()  // no watcher goroutine outlives the teardown
+		c.hwg.Wait() // nor does an in-flight handler invocation
 		return nil
 	})
 }
