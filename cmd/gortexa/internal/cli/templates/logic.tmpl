@@ -16,9 +16,6 @@ import (
 	apperr "[[.Module]]/internal/errors"
 )
 
-// defaultPageSize bounds a List page when the caller does not set one.
-const defaultPageSize = 50
-
 // [[.Entity]]Service is an in-memory implementation of
 // [[.Domain]].[[.Version]].[[.Entity]]Service. Back it with internal/storage for
 // a real datastore; the in-memory store is enough to exercise gRPC, the gateway
@@ -97,6 +94,10 @@ func (s *[[.Entity]]Service) List[[.Plural]](_ context.Context, req *[[.GoPkg]].
 			}
 		}
 	}
+	// defaultPageSize bounds a List page when the caller does not set one.
+	// Kept function-local so multiple generated services can share package logic
+	// without colliding on a package-level identifier.
+	const defaultPageSize = 50
 	size := int(req.GetPageSize())
 	if size <= 0 {
 		size = defaultPageSize
