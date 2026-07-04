@@ -30,7 +30,7 @@ type kafkaClient struct {
 
 // NewKafka builds a Kafka publisher/subscriber.
 func NewKafka(cfg config.MQConfig) (Publisher, Subscriber, error) {
-	brokers, err := splitBrokers(cfg.URL)
+	brokers, err := splitBrokers(cfg.URL.Reveal())
 	if err != nil {
 		return nil, nil, err
 	}

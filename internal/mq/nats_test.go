@@ -19,7 +19,7 @@ func TestNATSPubSub(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
 
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(srv.ClientURL())})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestNATSFanOut(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
 
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(srv.ClientURL())})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestNATSQueueGroupLoadBalance(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
 
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL(), GroupID: "workers"})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(srv.ClientURL()), GroupID: "workers"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +152,7 @@ func TestNATSCloseWaitsForInflightHandler(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
 
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(srv.ClientURL())})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestNATSSubscribeNoGoroutineLeakAfterClose(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
 
-	pub, sub, err := mq.NewNATS(config.MQConfig{URL: srv.ClientURL()})
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(srv.ClientURL())})
 	if err != nil {
 		t.Fatal(err)
 	}

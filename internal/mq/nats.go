@@ -37,7 +37,7 @@ type natsClient struct {
 // connection. cfg.URL may be a comma-separated server list — nats.Connect
 // accepts one natively, so it is passed through unparsed.
 func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
-	url := cfg.URL
+	url := cfg.URL.Reveal()
 	if url == "" {
 		url = nats.DefaultURL
 	} else if _, err := splitBrokers(url); err != nil {

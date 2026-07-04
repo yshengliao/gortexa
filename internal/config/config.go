@@ -79,8 +79,10 @@ type CacheConfig struct {
 type MQConfig struct {
 	Driver string `koanf:"driver"` // "nats" | "kafka"
 	// URL accepts a comma-separated server list on both backends, e.g.
-	// "b1:9092,b2:9092" (kafka) or "nats://a:4222,nats://b:4222".
-	URL string `koanf:"url"`
+	// "b1:9092,b2:9092" (kafka) or "nats://a:4222,nats://b:4222". Typed Secret
+	// because a NATS/Kafka URL can embed credentials (nats://user:pass@host), so
+	// it must mask like DSN/Password rather than risk a debug log leaking it.
+	URL Secret `koanf:"url"`
 	// GroupID selects delivery semantics, identically on both backends: empty
 	// (default) fans out — every subscription receives every message published
 	// after it subscribed; non-empty load-balances — subscriptions sharing the
