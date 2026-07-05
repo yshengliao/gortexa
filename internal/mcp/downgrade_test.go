@@ -21,13 +21,13 @@ func irTools(t *testing.T) []mcp.ToolIR {
 func TestDowngradeGolden(t *testing.T) {
 	tools := irTools(t)
 
-	mcpTools := make([]mcp.MCPTool, 0, len(tools))
-	openaiTools := make([]mcp.OpenAIFunction, 0, len(tools))
-	geminiTools := make([]mcp.GeminiFunctionDeclaration, 0, len(tools))
-	for _, ir := range tools {
-		mcpTools = append(mcpTools, mcp.DowngradeMCP(ir))
-		openaiTools = append(openaiTools, mcp.DowngradeOpenAI(ir))
-		geminiTools = append(geminiTools, mcp.DowngradeGemini(ir))
+	mcpTools := make([]mcp.MCPTool, len(tools))
+	openaiTools := make([]mcp.OpenAIFunction, len(tools))
+	geminiTools := make([]mcp.GeminiFunctionDeclaration, len(tools))
+	for i, ir := range tools {
+		mcpTools[i] = mcp.DowngradeMCP(ir)
+		openaiTools[i] = mcp.DowngradeOpenAI(ir)
+		geminiTools[i] = mcp.DowngradeGemini(ir)
 	}
 
 	marshal := func(v any) []byte {

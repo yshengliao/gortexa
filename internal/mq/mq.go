@@ -83,13 +83,13 @@ func splitBrokers(url string) ([]string, error) {
 		return nil, apperr.New(apperr.CatInvalidArgument, "mq.url (kafka brokers) required")
 	}
 	parts := strings.Split(url, ",")
-	brokers := make([]string, 0, len(parts))
-	for _, p := range parts {
+	brokers := make([]string, len(parts))
+	for i, p := range parts {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			return nil, apperr.New(apperr.CatInvalidArgument, "mq.url: empty broker entry in list")
 		}
-		brokers = append(brokers, p)
+		brokers[i] = p
 	}
 	return brokers, nil
 }

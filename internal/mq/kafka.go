@@ -60,9 +60,11 @@ func randomGroupID() (string, error) {
 }
 
 func (c *kafkaClient) Publish(ctx context.Context, topic string, m Message) error {
-	headers := make([]kafka.Header, 0, len(m.Headers))
+	headers := make([]kafka.Header, len(m.Headers))
+	i := 0
 	for k, v := range m.Headers {
-		headers = append(headers, kafka.Header{Key: k, Value: []byte(v)})
+		headers[i] = kafka.Header{Key: k, Value: []byte(v)}
+		i++
 	}
 	err := c.writer.WriteMessages(ctx, kafka.Message{Topic: topic, Key: m.Key, Value: m.Value, Headers: headers})
 	if err != nil {

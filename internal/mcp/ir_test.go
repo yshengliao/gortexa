@@ -132,8 +132,8 @@ type messageSpec struct {
 func depthLimitService(t *testing.T, input string, messages []messageSpec) protoreflect.ServiceDescriptor {
 	t.Helper()
 
-	msgProtos := make([]*descriptorpb.DescriptorProto, 0, len(messages)+1)
-	for _, msg := range messages {
+	msgProtos := make([]*descriptorpb.DescriptorProto, len(messages)+1)
+	for i, msg := range messages {
 		fields := []*descriptorpb.FieldDescriptorProto(nil)
 		if msg.fieldType != "" {
 			fields = []*descriptorpb.FieldDescriptorProto{{
@@ -145,12 +145,12 @@ func depthLimitService(t *testing.T, input string, messages []messageSpec) proto
 				TypeName: new(msg.fieldType),
 			}}
 		}
-		msgProtos = append(msgProtos, &descriptorpb.DescriptorProto{
+		msgProtos[i] = &descriptorpb.DescriptorProto{
 			Name:  new(msg.name),
 			Field: fields,
-		})
+		}
 	}
-	msgProtos = append(msgProtos, &descriptorpb.DescriptorProto{Name: new("Empty")})
+	msgProtos[len(messages)] = &descriptorpb.DescriptorProto{Name: new("Empty")}
 
 	methodOptions := &descriptorpb.MethodOptions{}
 	proto.SetExtension(methodOptions, aiv1.E_AiTool, &aiv1.AIToolOptions{

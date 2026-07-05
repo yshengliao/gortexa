@@ -92,12 +92,12 @@ func (s Set) UnaryChain() []grpc.UnaryServerInterceptor {
 		{"auth", s.Auth},
 		{"validation", s.Validation},
 	}
-	out := make([]grpc.UnaryServerInterceptor, 0, len(ordered))
-	for _, o := range ordered {
+	out := make([]grpc.UnaryServerInterceptor, len(ordered))
+	for i, o := range ordered {
 		if o.ic == nil {
 			panic("interceptor: missing required unary interceptor: " + o.name)
 		}
-		out = append(out, o.ic)
+		out[i] = o.ic
 	}
 	return out
 }
@@ -118,12 +118,12 @@ func (s Set) StreamChain() []grpc.StreamServerInterceptor {
 		{"auth", s.AuthStream},
 		{"validation", s.ValidationStream},
 	}
-	out := make([]grpc.StreamServerInterceptor, 0, len(ordered))
-	for _, o := range ordered {
+	out := make([]grpc.StreamServerInterceptor, len(ordered))
+	for i, o := range ordered {
 		if o.ic == nil {
 			panic("interceptor: missing required stream interceptor: " + o.name)
 		}
-		out = append(out, o.ic)
+		out[i] = o.ic
 	}
 	return out
 }

@@ -106,9 +106,9 @@ func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor,
 		}
 	}
 	sort.Strings(b.order)
-	b.mcpTools = make([]MCPTool, 0, len(b.order))
-	for _, name := range b.order {
-		b.mcpTools = append(b.mcpTools, DowngradeMCP(b.tools[name]))
+	b.mcpTools = make([]MCPTool, len(b.order))
+	for i, name := range b.order {
+		b.mcpTools[i] = DowngradeMCP(b.tools[name])
 	}
 	return b, nil
 }
@@ -116,8 +116,8 @@ func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor,
 // ServiceDescriptors resolves service descriptors by full name from the global
 // proto registry (e.g. "resource.v1.ResourceService").
 func ServiceDescriptors(names ...protoreflect.FullName) ([]protoreflect.ServiceDescriptor, error) {
-	out := make([]protoreflect.ServiceDescriptor, 0, len(names))
-	for _, n := range names {
+	out := make([]protoreflect.ServiceDescriptor, len(names))
+	for i, n := range names {
 		d, err := protoregistry.GlobalFiles.FindDescriptorByName(n)
 		if err != nil {
 			return nil, fmt.Errorf("mcp: service %q not found: %w", n, err)
@@ -126,7 +126,7 @@ func ServiceDescriptors(names ...protoreflect.FullName) ([]protoreflect.ServiceD
 		if !ok {
 			return nil, fmt.Errorf("mcp: %q is not a service", n)
 		}
-		out = append(out, svc)
+		out[i] = svc
 	}
 	return out, nil
 }

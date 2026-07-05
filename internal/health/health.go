@@ -121,9 +121,11 @@ func (r *Registry) State(ctx context.Context, name string) (state State, ok bool
 func (r *Registry) Names() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	names := make([]string, 0, len(r.checks))
+	names := make([]string, len(r.checks))
+	i := 0
 	for n := range r.checks {
-		names = append(names, n)
+		names[i] = n
+		i++
 	}
 	sort.Strings(names)
 	return names

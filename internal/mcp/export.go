@@ -35,21 +35,21 @@ func ExportSchemas(format string, svcs []protoreflect.ServiceDescriptor) ([]byte
 	var payload any
 	switch format {
 	case "mcp":
-		tools := make([]MCPTool, 0, len(irs))
-		for _, ir := range irs {
-			tools = append(tools, DowngradeMCP(ir))
+		tools := make([]MCPTool, len(irs))
+		for i, ir := range irs {
+			tools[i] = DowngradeMCP(ir)
 		}
 		payload = map[string]any{"tools": tools}
 	case "openai":
-		tools := make([]OpenAIFunction, 0, len(irs))
-		for _, ir := range irs {
-			tools = append(tools, DowngradeOpenAI(ir))
+		tools := make([]OpenAIFunction, len(irs))
+		for i, ir := range irs {
+			tools[i] = DowngradeOpenAI(ir)
 		}
 		payload = map[string]any{"tools": tools}
 	case "gemini":
-		decls := make([]GeminiFunctionDeclaration, 0, len(irs))
-		for _, ir := range irs {
-			decls = append(decls, DowngradeGemini(ir))
+		decls := make([]GeminiFunctionDeclaration, len(irs))
+		for i, ir := range irs {
+			decls[i] = DowngradeGemini(ir)
 		}
 		payload = map[string]any{"tools": []map[string]any{{"function_declarations": decls}}}
 	default:

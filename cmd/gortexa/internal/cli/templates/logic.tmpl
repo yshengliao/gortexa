@@ -77,9 +77,11 @@ func (s *[[.Entity]]Service) Get[[.Entity]](_ context.Context, req *[[.GoPkg]].G
 // page_token is the id of the last item on the previous page.
 func (s *[[.Entity]]Service) List[[.Plural]](_ context.Context, req *[[.GoPkg]].List[[.Plural]]Request) (*[[.GoPkg]].List[[.Plural]]Response, error) {
 	s.mu.RLock()
-	all := make([]*[[.GoPkg]].[[.Entity]], 0, len(s.store))
+	all := make([]*[[.GoPkg]].[[.Entity]], len(s.store))
+	i := 0
 	for _, r := range s.store {
-		all = append(all, clone[[.Entity]](r))
+		all[i] = clone[[.Entity]](r)
+		i++
 	}
 	s.mu.RUnlock()
 	slices.SortFunc(all, func(a, b *[[.GoPkg]].[[.Entity]]) int { return cmp.Compare(a.GetId(), b.GetId()) })
