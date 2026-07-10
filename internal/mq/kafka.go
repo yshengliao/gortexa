@@ -21,7 +21,10 @@ type kafkaClient struct {
 	groupID string
 	writer  *kafka.Writer
 	mu      sync.Mutex
-	readers []*kafka.Reader
+	// readers is keyed by reader so an ended subscription can remove its own entry
+	// on exit, bounding the set to live readers instead of growing for the client's
+	// lifetime (mirrors natsClient.subs).
+	readers map[*kafka.Reader]struct{}
 	closed  bool
 	// wg tracks reader goroutines so Close returns only once they have all
 	// exited — no goroutine outlives the client.
@@ -37,6 +40,7 @@ func NewKafka(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	c := &kafkaClient{
 		brokers: brokers,
 		groupID: cfg.GroupID,
+		readers: make(map[*kafka.Reader]struct{}),
 		// RequireAll: wait for the full in-sync replica set to acknowledge before
 		// Publish returns. The kafka.Writer struct-literal zero value is
 		// RequireNone (fire-and-forget) — Publish would report success before the
@@ -60,6 +64,9 @@ func randomGroupID() (string, error) {
 }
 
 func (c *kafkaClient) Publish(ctx context.Context, topic string, m Message) error {
+	if err := checkReservedHeaders(m.Headers); err != nil {
+		return err
+	}
 	headers := make([]kafka.Header, 0, len(m.Headers))
 	for k, v := range m.Headers {
 		headers = append(headers, kafka.Header{Key: k, Value: []byte(v)})
@@ -97,14 +104,21 @@ func (c *kafkaClient) Subscribe(ctx context.Context, topic string, h Handler) er
 		_ = r.Close()
 		return apperr.New(apperr.CatUnavailable, "mq: subscriber closed")
 	}
-	c.readers = append(c.readers, r)
+	c.readers[r] = struct{}{}
 	c.wg.Add(1)
 	c.mu.Unlock()
 	go func() {
 		// Close the reader on ctx cancellation or a terminal read error so
-		// consumer-group membership and reader goroutines are released promptly.
+		// consumer-group membership and reader goroutines are released promptly, and
+		// remove it from c.readers so the set tracks only live readers.
 		defer c.wg.Done()
-		defer func() { _ = r.Close() }()
+		defer func() {
+			_ = r.Close()
+			c.mu.Lock()
+			// After Close swept and nil'd c.readers, delete is a safe no-op.
+			delete(c.readers, r)
+			c.mu.Unlock()
+		}()
 		for {
 			// Fetch, run the handler, then commit — never the reverse: committing
 			// before the handler (ReadMessage's behaviour) would mark a message
@@ -146,7 +160,7 @@ func (c *kafkaClient) Close(ctx context.Context) error {
 		// leave/rebalance round, so closing sequentially scales O(n) with the
 		// subscription count and can blow the caller's shutdown budget.
 		var closers sync.WaitGroup
-		for _, r := range readers {
+		for r := range readers {
 			closers.Add(1)
 			go func() {
 				defer closers.Done()

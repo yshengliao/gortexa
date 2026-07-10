@@ -10,8 +10,6 @@ import (
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
 
-const natsKeyHeader = "gortexa-key"
-
 type natsClient struct {
 	conn    *nats.Conn
 	groupID string
@@ -61,9 +59,12 @@ func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 }
 
 func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error {
+	if err := checkReservedHeaders(m.Headers); err != nil {
+		return err
+	}
 	msg := &nats.Msg{Subject: topic, Data: m.Value, Header: nats.Header{}}
 	if len(m.Key) > 0 {
-		msg.Header.Set(natsKeyHeader, string(m.Key))
+		msg.Header.Set(reservedKeyHeader, string(m.Key))
 	}
 	for k, v := range m.Headers {
 		msg.Header.Set(k, v)
@@ -107,7 +108,7 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 			if len(vs) == 0 {
 				continue
 			}
-			if k == natsKeyHeader {
+			if k == reservedKeyHeader {
 				msg.Key = []byte(vs[0])
 				continue
 			}

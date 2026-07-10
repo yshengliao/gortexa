@@ -33,13 +33,33 @@ import (
 
 // Message is a transport-neutral message.
 type Message struct {
-	Key     []byte
-	Value   []byte
+	Key   []byte
+	Value []byte
+	// Headers are caller-defined. The name in reservedKeyHeader is reserved by the
+	// framework (the NATS backend uses it on the wire to carry Key), so publishing
+	// a header by that name is rejected on every backend — see checkReservedHeaders.
 	Headers map[string]string
 }
 
 // Handler processes a received message.
 type Handler func(ctx context.Context, m Message) error
+
+// reservedKeyHeader is the header name the NATS backend uses on the wire to carry
+// Message.Key. It is reserved on every backend: a caller header by this name would
+// otherwise silently overwrite Key on NATS (and be delivered as an ordinary header
+// on Kafka), so the two backends would diverge. Rejecting it everywhere keeps
+// publish behaviour uniform, as the package doc promises.
+const reservedKeyHeader = "gortexa-key"
+
+// checkReservedHeaders rejects a caller header that collides with a framework
+// reserved name. Called by every backend's Publish so a message never behaves
+// differently when the backend changes.
+func checkReservedHeaders(h map[string]string) error {
+	if _, ok := h[reservedKeyHeader]; ok {
+		return apperr.New(apperr.CatInvalidArgument, "mq: header "+reservedKeyHeader+" is reserved")
+	}
+	return nil
+}
 
 // Publisher publishes messages to a topic. Close honours ctx as a shutdown
 // budget: on expiry it returns early while the underlying teardown finishes in

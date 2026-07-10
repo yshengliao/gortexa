@@ -94,3 +94,24 @@ func TestSplitBrokers(t *testing.T) {
 		})
 	}
 }
+
+// checkReservedHeaders is the single choke point both backends' Publish call, so a
+// caller header colliding with the framework's reserved key name is rejected
+// uniformly (fail-loud) instead of silently overwriting Message.Key on the NATS
+// backend while passing through as an ordinary header on Kafka.
+func TestCheckReservedHeaders(t *testing.T) {
+	if err := checkReservedHeaders(nil); err != nil {
+		t.Fatalf("nil headers = %v, want nil", err)
+	}
+	if err := checkReservedHeaders(map[string]string{"trace": "abc"}); err != nil {
+		t.Fatalf("ordinary header = %v, want nil", err)
+	}
+
+	err := checkReservedHeaders(map[string]string{reservedKeyHeader: "x"})
+	if err == nil {
+		t.Fatalf("reserved header %q must be rejected", reservedKeyHeader)
+	}
+	if !apperr.Is(err, apperr.CatInvalidArgument) {
+		t.Fatalf("reserved header error = %v, want InvalidArgument", err)
+	}
+}
