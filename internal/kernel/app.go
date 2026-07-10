@@ -249,6 +249,11 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 func (a *App) Run(ctx context.Context) error {
 	ln, err := net.Listen("tcp", a.cfg.Server.Addr)
 	if err != nil {
+		// Pre-serve bind failure: serve() (which owns shutdown) is never reached,
+		// so run the shutdown hooks here to flush buffered startup telemetry.
+		// Shutdown is idempotent (shutdownOnce), so the normal serve() path that
+		// also calls Shutdown remains a no-op.
+		_ = a.Shutdown(context.Background())
 		return err
 	}
 	return a.serve(ctx, ln)

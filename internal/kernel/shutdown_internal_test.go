@@ -223,3 +223,33 @@ func TestLoopbackRefusedAfterShutdown(t *testing.T) {
 		t.Fatal("Loopback after Shutdown must error, not create a leaked conn")
 	}
 }
+
+// A pre-serve bind failure in Run() must still run the shutdown hooks: serve()
+// (which owns shutdown on the later error paths) is never reached, so without
+// this the buffered startup telemetry would never be flushed. Mirrors
+// TestServeErrorPathTearsDown for Run()'s earlier net.Listen-failure branch.
+func TestRunBindFailureRunsShutdownHooks(t *testing.T) {
+	defer testutil.AssertNoLeak(t)
+
+	// Occupy an address so Run()'s net.Listen fails with EADDRINUSE.
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = busy.Close() })
+
+	cfg := &config.Config{Server: config.ServerConfig{Addr: busy.Addr().String(), ShutdownTimeout: time.Second}}
+	var hookRan bool
+	app, err := New(WithConfig(cfg), WithLogger(quiet()),
+		WithShutdownHook(func(context.Context) error { hookRan = true; return nil }))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.Run(context.Background()); err == nil {
+		t.Fatal("Run() on an occupied address = nil, want the bind error")
+	}
+	if !hookRan {
+		t.Fatal("Run() bind-failure path must still run shutdown hooks (telemetry flush)")
+	}
+}
