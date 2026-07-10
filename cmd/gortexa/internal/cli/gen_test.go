@@ -76,7 +76,9 @@ func TestGenerateAPIWritesAndWires(t *testing.T) {
 	}
 
 	proto := readFile(t, filepath.Join(root, "proto", "billing", "v1", "invoice.proto"))
-	for _, want := range []string{"package billing.v1;", "service InvoiceService", `name: "create_invoice"`, "/v1/invoices/{invoice.id}"} {
+	// The PATCH request is a flat, presence-based body ({id} in the path, optional
+	// mutable fields) so a partial update need not re-send every constrained field.
+	for _, want := range []string{"package billing.v1;", "service InvoiceService", `name: "create_invoice"`, "/v1/invoices/{id}", "optional string name"} {
 		if !strings.Contains(proto, want) {
 			t.Errorf("proto missing %q", want)
 		}

@@ -112,21 +112,20 @@ func (s *[[.Entity]]Service) List[[.Plural]](_ context.Context, req *[[.GoPkg]].
 	return resp, nil
 }
 
-// Update[[.Entity]] applies a partial update (PATCH): only fields set in the
-// request replace the stored values.
+// Update[[.Entity]] applies a partial update (PATCH): only fields present in the
+// request replace the stored values, so omitting a field leaves it untouched.
 func (s *[[.Entity]]Service) Update[[.Entity]](_ context.Context, req *[[.GoPkg]].Update[[.Entity]]Request) (*[[.GoPkg]].[[.Entity]], error) {
-	in := req.Get[[.Entity]]()
-	if in == nil || in.GetId() == "" {
+	if req.GetId() == "" {
 		return nil, apperr.New(apperr.CatInvalidArgument, "[[.Snake]].id is required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	existing, ok := s.store[in.GetId()]
+	existing, ok := s.store[req.GetId()]
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "[[.Snake]] not found")
 	}
-	if in.GetName() != "" {
-		existing.Name = in.GetName()
+	if req.Name != nil {
+		existing.Name = req.GetName()
 	}
 	return clone[[.Entity]](existing), nil
 }

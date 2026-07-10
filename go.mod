@@ -3,9 +3,9 @@ module github.com/yshengliao/gortexa
 go 1.26.0
 
 // Build with the latest 1.26 patch toolchain so the stdlib is security-patched
-// (go1.26.0 has CVEs fixed in 1.26.1–1.26.4); the go directive stays at the
-// 1.26.0 language floor.
-toolchain go1.26.4
+// (go1.26.0 has CVEs fixed in 1.26.1–1.26.5, incl. GO-2026-5856 in crypto/tls);
+// the go directive stays at the 1.26.0 language floor.
+toolchain go1.26.5
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260415201107-50325440f8f2.1

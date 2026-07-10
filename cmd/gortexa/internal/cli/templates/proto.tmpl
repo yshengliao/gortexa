@@ -35,8 +35,14 @@ message List[[.Plural]]Response {
   string next_page_token = 2;
 }
 
+// Update[[.Entity]]Request is a PATCH body: id selects the row, every mutable
+// field is `optional` so its validation rule fires only when the caller sets it.
+// A partial update that omits a field therefore passes validation and leaves that
+// field untouched — reusing [[.Entity]] here would force every field's create-time
+// rules (e.g. name min_len) onto every partial update.
 message Update[[.Entity]]Request {
-  [[.Entity]] [[.Snake]] = 1 [(buf.validate.field).required = true];
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  optional string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 128}];
 }
 
 message Delete[[.Entity]]Request {
@@ -81,8 +87,8 @@ service [[.Entity]]Service {
 
   rpc Update[[.Entity]](Update[[.Entity]]Request) returns ([[.Entity]]) {
     option (google.api.http) = {
-      patch: "/[[.Version]]/[[.PluralSnake]]/{[[.Snake]].id}"
-      body: "[[.Snake]]"
+      patch: "/[[.Version]]/[[.PluralSnake]]/{id}"
+      body: "*"
     };
   }
 

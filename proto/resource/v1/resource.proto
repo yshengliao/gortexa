@@ -51,8 +51,16 @@ message ListResourcesResponse {
   string next_page_token = 2;
 }
 
+// UpdateResourceRequest is a PATCH body: id selects the row, every mutable field
+// is `optional` so its validation rule fires only when the caller sets it. A
+// partial update that omits a field passes validation and leaves that field
+// untouched — reusing Resource here would force every field's create-time rule
+// (e.g. name min_len) onto every partial update.
 message UpdateResourceRequest {
-  Resource resource = 1 [(buf.validate.field).required = true];
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  optional string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 128}];
+  optional string owner = 3 [(ai.v1.ai_field) = {description: "Owning user id."}];
+  optional Status status = 4;
 }
 
 message DeleteResourceRequest {
@@ -98,11 +106,12 @@ service ResourceService {
     };
   }
 
-  // UpdateResource partially updates a resource (PATCH + nested path + body).
+  // UpdateResource partially updates a resource (PATCH): fields present in the
+  // request replace the stored values; omitted fields are left untouched.
   rpc UpdateResource(UpdateResourceRequest) returns (Resource) {
     option (google.api.http) = {
-      patch: "/v1/resources/{resource.id}"
-      body: "resource"
+      patch: "/v1/resources/{id}"
+      body: "*"
     };
   }
 

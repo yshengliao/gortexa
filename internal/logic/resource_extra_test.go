@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 )
 
@@ -23,7 +25,7 @@ func TestUpdateResourcePartial(t *testing.T) {
 
 	// Update only Name; Owner and Status must be preserved.
 	got, err := s.UpdateResource(ctx, &resourcev1.UpdateResourceRequest{
-		Resource: &resourcev1.Resource{Id: created.Id, Name: "renamed"},
+		Id: created.Id, Name: proto.String("renamed"),
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -104,7 +106,7 @@ func TestConcurrentGetUpdateNoRace(t *testing.T) {
 		go func(n int) {
 			defer wg.Done()
 			_, _ = s.UpdateResource(ctx, &resourcev1.UpdateResourceRequest{
-				Resource: &resourcev1.Resource{Id: created.Id, Name: fmt.Sprintf("n%d", n), Owner: fmt.Sprintf("o%d", n)},
+				Id: created.Id, Name: proto.String(fmt.Sprintf("n%d", n)), Owner: proto.String(fmt.Sprintf("o%d", n)),
 			})
 		}(i)
 	}

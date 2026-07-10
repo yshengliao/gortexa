@@ -2,6 +2,7 @@ package httpcompat
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/yshengliao/gortexa/internal/auth"
 	"github.com/yshengliao/gortexa/internal/config"
@@ -267,6 +269,27 @@ func TestErrorHandlerWritesMappedBody(t *testing.T) {
 	body := rec.Body.String()
 	if !contains(body, `"code":"not_found"`) || !contains(body, `"request_id":"rid-1"`) {
 		t.Fatalf("body = %s", body)
+	}
+}
+
+// An error response to a caller that sent no inbound X-Request-Id must still carry
+// the server-minted id — recovered from the gRPC server metadata the success path
+// forwards via outgoingHeaderMatcher — in both the response header and the body.
+// Without the recovery the client has nothing to correlate the failure on.
+func TestErrorHandlerRecoversMintedRequestID(t *testing.T) {
+	h := errorHandler(apperr.Default)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil) // no inbound X-Request-Id
+	ctx := runtime.NewServerMetadataContext(context.Background(), runtime.ServerMetadata{
+		HeaderMD: metadata.Pairs(interceptor.RequestIDMetadataKey, "srv-minted-id"),
+	})
+	h(ctx, nil, jsonMarshaler(), rec, req, apperr.New(apperr.CatNotFound, "nope"))
+
+	if got := rec.Header().Get("X-Request-Id"); got != "srv-minted-id" {
+		t.Fatalf("X-Request-Id header = %q, want srv-minted-id", got)
+	}
+	if body := rec.Body.String(); !contains(body, `"request_id":"srv-minted-id"`) {
+		t.Fatalf("body missing minted request_id: %s", body)
 	}
 }
 

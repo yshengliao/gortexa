@@ -178,10 +178,27 @@ func routingErrorHandler(reg *apperr.Registry) runtime.RoutingErrorHandlerFunc {
 
 // errorHandler renders gateway errors via the shared 3-way mapping.
 func errorHandler(reg *apperr.Registry) runtime.ErrorHandlerFunc {
-	return func(_ context.Context, _ *runtime.ServeMux, m runtime.Marshaler, w http.ResponseWriter, r *http.Request, err error) {
+	return func(ctx context.Context, _ *runtime.ServeMux, m runtime.Marshaler, w http.ResponseWriter, r *http.Request, err error) {
 		code, body := reg.ToHTTP(err)
 		if rid := r.Header.Get("X-Request-Id"); interceptor.ValidRequestID(rid) {
 			body.RequestID = rid
+		}
+		// The success path forwards the server-minted request id through
+		// outgoingHeaderMatcher; this custom error handler bypasses that machinery,
+		// so recover the id from the gRPC server metadata when the caller supplied
+		// none. Without this, an error response to a caller that sent no inbound
+		// X-Request-Id carries the id in neither the header nor the body, leaving the
+		// client with nothing to correlate on. RequestID() sets the header metadata
+		// before the handler runs, so it is present even on error/trailers-only.
+		if body.RequestID == "" {
+			if md, ok := runtime.ServerMetadataFromContext(ctx); ok {
+				if vals := md.HeaderMD.Get(interceptor.RequestIDMetadataKey); len(vals) > 0 && interceptor.ValidRequestID(vals[0]) {
+					body.RequestID = vals[0]
+				}
+			}
+		}
+		if body.RequestID != "" {
+			w.Header().Set("X-Request-Id", body.RequestID)
 		}
 		w.Header().Set("Content-Type", m.ContentType(body))
 		buf, mErr := m.Marshal(body)
