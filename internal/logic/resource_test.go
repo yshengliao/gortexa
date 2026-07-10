@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -134,12 +135,10 @@ func TestResourceService(t *testing.T) {
 	// 4. UpdateResource
 	t.Run("UpdateResource", func(t *testing.T) {
 		req := &resourcev1.UpdateResourceRequest{
-			Resource: &resourcev1.Resource{
-				Id:     res1.Id,
-				Name:   "R1 Updated",
-				Owner:  "owner1",
-				Status: resourcev1.Status_STATUS_ARCHIVED,
-			},
+			Id:     res1.Id,
+			Name:   proto.String("R1 Updated"),
+			Owner:  proto.String("owner1"),
+			Status: resourcev1.Status_STATUS_ARCHIVED.Enum(),
 		}
 		updated, err := s.UpdateResource(ctx, req)
 		if err != nil {
@@ -153,15 +152,13 @@ func TestResourceService(t *testing.T) {
 		}
 
 		// Missing ID
-		_, err = s.UpdateResource(ctx, &resourcev1.UpdateResourceRequest{Resource: &resourcev1.Resource{}})
+		_, err = s.UpdateResource(ctx, &resourcev1.UpdateResourceRequest{})
 		if err == nil {
 			t.Errorf("UpdateResource with empty ID should return error")
 		}
 
 		// Not found
-		_, err = s.UpdateResource(ctx, &resourcev1.UpdateResourceRequest{
-			Resource: &resourcev1.Resource{Id: "nonexistent"},
-		})
+		_, err = s.UpdateResource(ctx, &resourcev1.UpdateResourceRequest{Id: "nonexistent"})
 		if err == nil {
 			t.Errorf("UpdateResource with nonexistent ID should return error")
 		}

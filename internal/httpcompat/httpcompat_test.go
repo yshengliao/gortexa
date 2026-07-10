@@ -106,7 +106,7 @@ func TestGatewayCRUDVerbs(t *testing.T) {
 		t.Fatalf("list = %d", code)
 	}
 
-	// PATCH update (nested path + body)
+	// PATCH update (id in path, flat presence-based body)
 	code, body = do(t, http.MethodPatch, ts.URL+"/v1/resources/"+created.ID, `{"name":"beta","owner":"u-1"}`, tok)
 	if code != http.StatusOK || !strings.Contains(string(body), "beta") {
 		t.Fatalf("update = %d (%s)", code, body)
@@ -115,6 +115,52 @@ func TestGatewayCRUDVerbs(t *testing.T) {
 	// DELETE
 	if code, _ := do(t, http.MethodDelete, ts.URL+"/v1/resources/"+created.ID, "", tok); code != http.StatusOK {
 		t.Fatalf("delete = %d", code)
+	}
+}
+
+// TestGatewayPartialPatch pins the PATCH contract fix: a partial update that omits
+// a create-constrained field (name) must succeed through the full validation
+// interceptor and leave that field untouched. The pre-fix request reused the
+// create-constrained entity as the body, so protovalidate rejected any partial
+// update dropping name. A name that is present but empty must still fail, proving
+// per-field validation is retained on presence.
+func TestGatewayPartialPatch(t *testing.T) {
+	ts := newGateway(t)
+	tok := token(t)
+
+	code, body := do(t, http.MethodPost, ts.URL+"/v1/resources", `{"name":"alpha","owner":"u-1"}`, tok)
+	if code != http.StatusOK {
+		t.Fatalf("create = %d (%s)", code, body)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil || created.ID == "" {
+		t.Fatalf("create body = %s err=%v", body, err)
+	}
+
+	// Change owner only, omitting name entirely — must be accepted, not rejected.
+	code, body = do(t, http.MethodPatch, ts.URL+"/v1/resources/"+created.ID, `{"owner":"owner-b"}`, tok)
+	if code != http.StatusOK {
+		t.Fatalf("partial PATCH (owner only) = %d (%s), want 200", code, body)
+	}
+	var updated struct {
+		Name  string `json:"name"`
+		Owner string `json:"owner"`
+	}
+	if err := json.Unmarshal(body, &updated); err != nil {
+		t.Fatalf("update body = %s err=%v", body, err)
+	}
+	if updated.Owner != "owner-b" {
+		t.Fatalf("owner = %q, want owner-b", updated.Owner)
+	}
+	if updated.Name != "alpha" {
+		t.Fatalf("name = %q, want alpha preserved (PATCH must neither require nor clear an omitted name)", updated.Name)
+	}
+
+	// A name that IS present but empty still violates min_len:1 → 400.
+	if code, body := do(t, http.MethodPatch, ts.URL+"/v1/resources/"+created.ID, `{"name":""}`, tok); code != http.StatusBadRequest {
+		t.Fatalf("empty-name PATCH = %d (%s), want 400 (validation fires on presence)", code, body)
 	}
 }
 

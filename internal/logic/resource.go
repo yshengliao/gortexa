@@ -128,27 +128,26 @@ func (s *ResourceService) ListResources(_ context.Context, req *resourcev1.ListR
 	return resp, nil
 }
 
-// UpdateResource applies a partial update (PATCH): only fields set in the
+// UpdateResource applies a partial update (PATCH): only fields present in the
 // request replace the stored values, so omitting a field leaves it untouched.
 func (s *ResourceService) UpdateResource(_ context.Context, req *resourcev1.UpdateResourceRequest) (*resourcev1.Resource, error) {
-	r := req.GetResource()
-	if r == nil || r.GetId() == "" {
+	if req.GetId() == "" {
 		return nil, apperr.New(apperr.CatInvalidArgument, "resource.id is required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	existing, ok := s.store[r.GetId()]
+	existing, ok := s.store[req.GetId()]
 	if !ok {
 		return nil, apperr.New(apperr.CatNotFound, "resource not found")
 	}
-	if r.GetName() != "" {
-		existing.Name = r.GetName()
+	if req.Name != nil {
+		existing.Name = req.GetName()
 	}
-	if r.GetOwner() != "" {
-		existing.Owner = r.GetOwner()
+	if req.Owner != nil {
+		existing.Owner = req.GetOwner()
 	}
-	if r.GetStatus() != resourcev1.Status_STATUS_UNSPECIFIED {
-		existing.Status = r.GetStatus()
+	if req.Status != nil {
+		existing.Status = req.GetStatus()
 	}
 	return clone(existing), nil
 }
