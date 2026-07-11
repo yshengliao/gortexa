@@ -20,9 +20,10 @@ service ResourceService {
   rpc CreateResource(CreateResourceRequest) returns (Resource) {
     option (google.api.http) = { post: "/v1/resources" body: "*" };
   }
-  // PATCH + 巢狀 path + 部分 body
+  // PATCH + flat body（部分更新：request 用 optional 欄位，未設欄位跳過驗證
+  // 且不覆寫——見 proto/resource/v1 的 UpdateResourceRequest）
   rpc UpdateResourcePartial(UpdateResourceRequest) returns (Resource) {
-    option (google.api.http) = { patch: "/v1/resources/{resource.id}" body: "resource" };
+    option (google.api.http) = { patch: "/v1/resources/{id}" body: "*" };
   }
   // PUT
   rpc ReplaceResource(ReplaceResourceRequest) returns (Resource) {
