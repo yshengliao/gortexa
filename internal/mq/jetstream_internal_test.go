@@ -3,6 +3,8 @@ package mq
 import (
 	"strings"
 	"testing"
+
+	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
 
 // TestStreamName pins the topic→stream-name derivation: legal topics pass
@@ -27,6 +29,27 @@ func TestStreamName(t *testing.T) {
 	}
 	if got := streamName("a_b"); got != "gortexa_a_b" {
 		t.Fatalf("legal topic must pass through unhashed: %q", got)
+	}
+}
+
+// TestValidateJSTopic pins the driver's literal-subject requirement: wildcard
+// tokens, whitespace and empty tokens fail loud as InvalidArgument instead of
+// surfacing later as a permanent-but-retryable server error.
+func TestValidateJSTopic(t *testing.T) {
+	for _, topic := range []string{"events", "orders.created", "a1.b-2.c_3"} {
+		if err := validateJSTopic(topic); err != nil {
+			t.Errorf("validateJSTopic(%q) = %v, want nil", topic, err)
+		}
+	}
+	for _, topic := range []string{"", "orders.*", "*", ">", "orders.>", "foo bar", "a..b", ".a", "a."} {
+		err := validateJSTopic(topic)
+		if err == nil {
+			t.Errorf("validateJSTopic(%q) = nil, want InvalidArgument", topic)
+			continue
+		}
+		if !apperr.Is(err, apperr.CatInvalidArgument) {
+			t.Errorf("validateJSTopic(%q) category = %v, want InvalidArgument", topic, err)
+		}
 	}
 }
 

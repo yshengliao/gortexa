@@ -68,7 +68,7 @@ func NewJetStream(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	}
 	conn, err := nats.Connect(url)
 	if err != nil {
-		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "jetstream connect", err)
+		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "jetstream connect", sanitizeConnectErr(err))
 	}
 	js, err := jetstream.New(conn)
 	if err != nil {
@@ -91,6 +91,31 @@ func NewJetStream(cfg config.MQConfig) (Publisher, Subscriber, error) {
 		done:      make(chan struct{}),
 	}
 	return c, c, nil
+}
+
+// validateJSTopic rejects topics this driver cannot serve. Unlike core NATS,
+// every topic needs a concrete stream subject: a wildcard token would make
+// the per-topic streams overlap (the server rejects overlapping subjects
+// permanently), and whitespace or an empty token is an invalid NATS subject
+// the server would reject on every retry. Failing loud here surfaces the
+// misuse as InvalidArgument instead of a permanent-but-retryable server
+// error.
+func validateJSTopic(topic string) error {
+	if topic == "" {
+		return apperr.New(apperr.CatInvalidArgument, "mq: topic required")
+	}
+	if strings.ContainsAny(topic, " \t\r\n") {
+		return apperr.New(apperr.CatInvalidArgument, "mq: topic contains whitespace")
+	}
+	for _, tok := range strings.Split(topic, ".") {
+		switch tok {
+		case "*", ">":
+			return apperr.New(apperr.CatInvalidArgument, "mq: wildcard topics are not supported by the jetstream driver (core nats only)")
+		case "":
+			return apperr.New(apperr.CatInvalidArgument, "mq: topic contains an empty token")
+		}
+	}
+	return nil
 }
 
 // streamName derives a JetStream stream name from a topic. Subjects may
@@ -183,6 +208,9 @@ func (c *jsClient) markEnsured(topic string) {
 }
 
 func (c *jsClient) Publish(ctx context.Context, topic string, m Message) error {
+	if err := validateJSTopic(topic); err != nil {
+		return err
+	}
 	if err := checkReservedHeaders(m.Headers); err != nil {
 		return err
 	}
@@ -199,6 +227,9 @@ func (c *jsClient) Publish(ctx context.Context, topic string, m Message) error {
 }
 
 func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error {
+	if err := validateJSTopic(topic); err != nil {
+		return err
+	}
 	if err := c.ensureStream(ctx, topic); err != nil {
 		return err
 	}

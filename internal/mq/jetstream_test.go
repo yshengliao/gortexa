@@ -13,6 +13,8 @@ import (
 
 	"github.com/nats-io/nats-server/v2/server"
 	natsserver "github.com/nats-io/nats-server/v2/test"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"go.uber.org/goleak"
 
 	"github.com/yshengliao/gortexa/internal/config"
@@ -208,6 +210,155 @@ func TestJetStreamRedeliveryOnHandlerError(t *testing.T) {
 	// robust on a loaded runner.
 	if gap := calls[1].Sub(calls[0]); gap < 500*time.Millisecond {
 		t.Fatalf("redelivery arrived after %v, want the ~1s NakWithDelay pacing", gap)
+	}
+}
+
+// TestJetStreamDeliverNewIgnoresHistory pins the DeliverNewPolicy half of the
+// package contract: a subscription receives only messages published AFTER it
+// subscribed — pre-existing stream history is not replayed. (Dropping the
+// DeliverPolicy from the consumer config would default to DeliverAll and
+// replay history; every other test subscribes before publishing, so only this
+// test catches that mutation.)
+func TestJetStreamDeliverNewIgnoresHistory(t *testing.T) {
+	url, _ := jetStreamServer(t)
+	pub, sub := newJetStreamClient(t, url, "")
+
+	ctx := context.Background()
+	// Publish before any subscription exists: the stream stores it as history.
+	if err := pub.Publish(ctx, "history", mq.Message{Value: []byte("old")}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := make(chan string, 2)
+	if err := sub.Subscribe(ctx, "history", func(_ context.Context, m mq.Message) error {
+		got <- string(m.Value)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(ctx, "history", mq.Message{Value: []byte("new")}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case v := <-got:
+		if v != "new" {
+			t.Fatalf("first delivery = %q, want only the post-subscribe message", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the post-subscribe message")
+	}
+	select {
+	case v := <-got:
+		t.Fatalf("history message %q replayed despite DeliverNew", v)
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// TestJetStreamNotEnabledFailsLoud pins the AccountInfo probe: constructing
+// the client against a server WITHOUT JetStream must fail within the probe
+// timeout as FailedPrecondition, not surface on first Publish/Subscribe.
+func TestJetStreamNotEnabledFailsLoud(t *testing.T) {
+	opts := natsserver.DefaultTestOptions
+	opts.Port = -1 // plain core server: no JetStream
+	srv := natsserver.RunServer(&opts)
+	t.Cleanup(srv.Shutdown)
+
+	pub, sub, err := mq.New(config.MQConfig{Driver: "jetstream", URL: config.Secret(srv.ClientURL())})
+	if err == nil {
+		_ = pub.Close(context.Background())
+		t.Fatal("New must fail against a server without JetStream")
+	}
+	if pub != nil || sub != nil {
+		t.Errorf("pub/sub should be nil on error, got %v, %v", pub, sub)
+	}
+	if !apperr.Is(err, apperr.CatFailedPrecondition) {
+		t.Fatalf("category = %v, want FailedPrecondition", err)
+	}
+}
+
+// TestJetStreamAdoptsOperatorStream pins the adoption contract: a pre-created
+// stream bearing the framework-derived name and covering the topic is used
+// as-is — its retention config is never rewritten.
+func TestJetStreamAdoptsOperatorStream(t *testing.T) {
+	url, _ := jetStreamServer(t)
+
+	// Operator pre-creates the stream with retention that differs from the
+	// framework default (24h).
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(nc.Close)
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const operatorMaxAge = time.Hour
+	if _, err := js.CreateStream(context.Background(), jetstream.StreamConfig{
+		Name:     "gortexa_adopt",
+		Subjects: []string{"adopt"},
+		MaxAge:   operatorMaxAge,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	pub, sub := newJetStreamClient(t, url, "")
+	ctx := context.Background()
+	got := make(chan mq.Message, 1)
+	if err := sub.Subscribe(ctx, "adopt", func(_ context.Context, m mq.Message) error {
+		got <- m
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(ctx, "adopt", mq.Message{Value: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("message never delivered through the adopted stream")
+	}
+
+	info, err := js.Stream(context.Background(), "gortexa_adopt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if age := info.CachedInfo().Config.MaxAge; age != operatorMaxAge {
+		t.Fatalf("operator stream MaxAge rewritten to %v, want %v untouched", age, operatorMaxAge)
+	}
+}
+
+// TestJetStreamStreamMismatchFailsLoud pins the coverage check: a stream that
+// bears the derived name but does not cover the topic is a FailedPrecondition,
+// never silently mis-routed.
+func TestJetStreamStreamMismatchFailsLoud(t *testing.T) {
+	url, _ := jetStreamServer(t)
+
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(nc.Close)
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := js.CreateStream(context.Background(), jetstream.StreamConfig{
+		Name:     "gortexa_blocked",
+		Subjects: []string{"something-else"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	pub, _ := newJetStreamClient(t, url, "")
+	err = pub.Publish(context.Background(), "blocked", mq.Message{Value: []byte("x")})
+	if err == nil {
+		t.Fatal("Publish must fail when the named stream does not cover the topic")
+	}
+	if !apperr.Is(err, apperr.CatFailedPrecondition) {
+		t.Fatalf("category = %v, want FailedPrecondition", err)
 	}
 }
 

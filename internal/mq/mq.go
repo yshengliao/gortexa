@@ -16,9 +16,16 @@
 // load-balances — subscriptions sharing the group split the stream (a core
 // NATS queue group / a shared durable JetStream consumer).
 //
-// JetStream caveat: a fan-out (GroupID empty) subscription is an ephemeral
-// consumer; if its client stalls past the server's inactive threshold the
-// server reclaims the consumer and the subscription goes silently dead.
+// JetStream caveats:
+//   - A fan-out (GroupID empty) subscription is an ephemeral consumer; if its
+//     client stalls past the server's inactive threshold the server reclaims
+//     the consumer and the subscription goes silently dead.
+//   - Topics must be literal subjects — wildcard tokens ("*", ">") are
+//     rejected as InvalidArgument (core NATS supports wildcard subscriptions;
+//     JetStream's per-topic streams cannot).
+//   - A pre-created operator stream is adopted only when it bears the name
+//     the framework derives ("gortexa_" + topic for a plain topic) and its
+//     subjects cover the topic; anything else fails loud.
 //
 // config.MQConfig.URL accepts a comma-separated server list.
 package mq

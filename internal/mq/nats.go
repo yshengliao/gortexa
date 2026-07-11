@@ -2,6 +2,8 @@ package mq
 
 import (
 	"context"
+	"errors"
+	"net/url"
 	"sync"
 
 	"github.com/nats-io/nats.go"
@@ -9,6 +11,19 @@ import (
 	"github.com/yshengliao/gortexa/internal/config"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
+
+// sanitizeConnectErr keeps nats.Connect failures safe to log: a URL parse
+// error embeds the raw URL — credentials included — verbatim in its message,
+// which is exactly what MQConfig.URL's Secret type exists to keep out of
+// logs. Parse errors are replaced wholesale; other dial errors carry no
+// userinfo and pass through untouched.
+func sanitizeConnectErr(err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		return errors.New("invalid server url (details redacted: the url may embed credentials)")
+	}
+	return err
+}
 
 type natsClient struct {
 	conn    *nats.Conn
@@ -45,7 +60,7 @@ func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	}
 	conn, err := nats.Connect(url)
 	if err != nil {
-		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "nats connect", err)
+		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "nats connect", sanitizeConnectErr(err))
 	}
 	c := &natsClient{
 		conn:    conn,
