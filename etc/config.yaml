@@ -27,13 +27,18 @@ cache:
   # addr: "localhost:6379"
 
 mq:
+  # driver "nats" (default) is core NATS: at-most-once, no redelivery.
+  # "jetstream" is durable at-least-once — a handler error is redelivered, so
+  # handlers must be idempotent. Both need a NATS server (jetstream needs it
+  # started with -js).
   driver: "nats"
   # url accepts a comma-separated server list, e.g. "nats://a:4222,nats://b:4222".
   # Empty falls back to the NATS default URL.
   url: ""
   # group_id selects delivery semantics: empty (default) fans out — every
   # subscription receives every message; non-empty load-balances —
-  # subscriptions sharing the group split the stream (NATS queue group).
+  # subscriptions sharing the group split the stream (NATS queue group /
+  # durable JetStream consumer).
   group_id: ""
 
 log:

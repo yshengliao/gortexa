@@ -1,13 +1,24 @@
-// Package mq is a pluggable publish/subscribe abstraction backed by NATS
-// (tested against an embedded server).
+// Package mq is a pluggable publish/subscribe abstraction backed by NATS,
+// with two drivers (both tested against an embedded server):
 //
-// Delivery semantics are selected by config.MQConfig.GroupID: empty (the
-// default) fans out — every subscription receives every message published
-// after it subscribed; non-empty load-balances — subscriptions sharing the
-// group split the stream (a NATS queue group).
+//   - "nats" (default): core NATS, at-most-once. Publish is fire-and-forget
+//     plus flush; there is no redelivery, so a message whose handler failed
+//     (or that arrived while no subscriber was up) is not seen again.
+//   - "jetstream": NATS JetStream, at-least-once. Publish blocks on the
+//     server's storage ack; a handler error negative-acks the message and the
+//     server redelivers it, so handlers must be idempotent. Streams the
+//     framework creates itself carry a 24h age cap; an operator can pre-create
+//     a stream with different retention — it is adopted, never modified.
 //
-// Handler errors are not retried: core NATS has no redelivery, so a message
-// whose handler failed is not seen again.
+// Delivery semantics are uniform across drivers, selected by
+// config.MQConfig.GroupID: empty (the default) fans out — every subscription
+// receives every message published after it subscribed; non-empty
+// load-balances — subscriptions sharing the group split the stream (a core
+// NATS queue group / a shared durable JetStream consumer).
+//
+// JetStream caveat: a fan-out (GroupID empty) subscription is an ephemeral
+// consumer; if its client stalls past the server's inactive threshold the
+// server reclaims the consumer and the subscription goes silently dead.
 //
 // config.MQConfig.URL accepts a comma-separated server list.
 package mq
@@ -104,6 +115,8 @@ func New(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	switch cfg.Driver {
 	case "nats", "":
 		return NewNATS(cfg)
+	case "jetstream":
+		return NewJetStream(cfg)
 	default:
 		return nil, nil, apperr.New(apperr.CatInvalidArgument, "mq: unsupported driver: "+cfg.Driver)
 	}

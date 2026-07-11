@@ -56,10 +56,10 @@ func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	return c, c, nil
 }
 
-func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error {
-	if err := checkReservedHeaders(m.Headers); err != nil {
-		return err
-	}
+// natsWireMsg builds the wire message both NATS-family backends publish:
+// Value as the payload, Key carried in the reserved header, caller headers
+// copied verbatim.
+func natsWireMsg(topic string, m Message) *nats.Msg {
 	msg := &nats.Msg{Subject: topic, Data: m.Value, Header: nats.Header{}}
 	if len(m.Key) > 0 {
 		msg.Header.Set(reservedKeyHeader, string(m.Key))
@@ -67,7 +67,31 @@ func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error
 	for k, v := range m.Headers {
 		msg.Header.Set(k, v)
 	}
-	if err := c.conn.PublishMsg(msg); err != nil {
+	return msg
+}
+
+// messageFromWire is the inverse mapping applied on delivery: the reserved
+// header becomes Key again and everything else surfaces as a caller header.
+func messageFromWire(data []byte, h nats.Header) Message {
+	msg := Message{Value: data, Headers: map[string]string{}}
+	for k, vs := range h {
+		if len(vs) == 0 {
+			continue
+		}
+		if k == reservedKeyHeader {
+			msg.Key = []byte(vs[0])
+			continue
+		}
+		msg.Headers[k] = vs[0]
+	}
+	return msg
+}
+
+func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error {
+	if err := checkReservedHeaders(m.Headers); err != nil {
+		return err
+	}
+	if err := c.conn.PublishMsg(natsWireMsg(topic, m)); err != nil {
 		return apperr.Wrap(apperr.CatUnavailable, "nats publish", err)
 	}
 	if err := c.flush(ctx); err != nil {
@@ -100,18 +124,7 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 		c.hwg.Add(1)
 		c.mu.Unlock()
 		defer c.hwg.Done()
-		msg := Message{Value: m.Data, Headers: map[string]string{}}
-		for k, vs := range m.Header {
-			if len(vs) == 0 {
-				continue
-			}
-			if k == reservedKeyHeader {
-				msg.Key = []byte(vs[0])
-				continue
-			}
-			msg.Headers[k] = vs[0]
-		}
-		_ = h(ctx, msg)
+		_ = h(ctx, messageFromWire(m.Data, m.Header))
 	}
 	var sub *nats.Subscription
 	var err error

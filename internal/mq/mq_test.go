@@ -42,6 +42,16 @@ func TestNewDriverErrors(t *testing.T) {
 			cfg:     config.MQConfig{Driver: "nats", URL: "nats://127.0.0.1:1,,nats://127.0.0.1:2"},
 			wantCat: apperr.CatInvalidArgument,
 		},
+		{
+			name:    "jetstream unreachable url",
+			cfg:     config.MQConfig{Driver: "jetstream", URL: "nats://127.0.0.1:1"},
+			wantCat: apperr.CatUnavailable,
+		},
+		{
+			name:    "jetstream blank server-list entry fails loud",
+			cfg:     config.MQConfig{Driver: "jetstream", URL: "nats://127.0.0.1:1,,nats://127.0.0.1:2"},
+			wantCat: apperr.CatInvalidArgument,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

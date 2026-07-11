@@ -81,7 +81,10 @@ type CacheConfig struct {
 }
 
 type MQConfig struct {
-	Driver string `koanf:"driver"` // "nats"
+	// Driver selects the MQ backend: "nats" (default; core NATS, at-most-once)
+	// or "jetstream" (durable, at-least-once with redelivery — handlers must
+	// be idempotent).
+	Driver string `koanf:"driver"`
 	// URL accepts a comma-separated NATS server list, e.g.
 	// "nats://a:4222,nats://b:4222". Typed Secret because a NATS URL can embed
 	// credentials (nats://user:pass@host), so it must mask like DSN/Password
@@ -90,7 +93,7 @@ type MQConfig struct {
 	// GroupID selects delivery semantics: empty (default) fans out — every
 	// subscription receives every message published after it subscribed;
 	// non-empty load-balances — subscriptions sharing the group split the
-	// stream (a NATS queue group).
+	// stream (a core NATS queue group / a shared durable JetStream consumer).
 	GroupID string `koanf:"group_id"`
 }
 

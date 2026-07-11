@@ -38,9 +38,11 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   and pluggable cache / MQ abstractions. The cache defaults to a process-local
   in-memory backend (no external service; `cache.driver: redis` opts in to a
   distributed cache, served by a small in-tree zero-dependency RESP client);
-  MQ is NATS: `mq.group_id` empty (default) fans out, non-empty
-  load-balances (a NATS queue group); `mq.url` accepts a comma-separated
-  server list.
+  MQ is NATS — core (default, at-most-once) or JetStream
+  (`mq.driver: jetstream`; durable, at-least-once with redelivery on handler
+  error, so handlers must be idempotent). Delivery semantics are uniform:
+  `mq.group_id` empty (default) fans out, non-empty load-balances (queue
+  group / durable consumer); `mq.url` accepts a comma-separated server list.
 
 ## Quickstart
 
