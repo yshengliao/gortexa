@@ -25,9 +25,8 @@ type natsClient struct {
 	// exited — no goroutine outlives the client.
 	wg sync.WaitGroup
 	// hwg tracks in-flight handler invocations so Close's teardown waits for
-	// them, matching the Kafka backend whose reader goroutine runs handlers
-	// inline. Add happens under mu against the closed flag, so it can never
-	// race a Wait that started at zero.
+	// them — shutdown never abandons a running handler. Add happens under mu
+	// against the closed flag, so it can never race a Wait that started at zero.
 	hwg sync.WaitGroup
 }
 
@@ -38,11 +37,10 @@ func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	url := cfg.URL.Reveal()
 	if url == "" {
 		url = nats.DefaultURL
-	} else if _, err := splitBrokers(url); err != nil {
-		// nats.Connect would silently drop a blank list entry; validate with the
-		// same fail-loud rule as the Kafka backend — a blank entry is a config
-		// typo, not a smaller cluster. The original string is still passed
-		// through, since nats.Connect parses its own server list.
+	} else if err := validateServerList(url); err != nil {
+		// nats.Connect would silently drop a blank list entry; fail loud instead.
+		// The original string is still passed through, since nats.Connect parses
+		// its own server list.
 		return nil, nil, err
 	}
 	conn, err := nats.Connect(url)
@@ -82,8 +80,7 @@ func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error
 // set one. The SDK's FlushWithContext rejects a deadline-less context, so a
 // caller that opted out of deadlines (e.g. context.Background) falls back to the
 // plain Flush and its fixed 10s cap. This threads the caller's timeout budget
-// through — the Kafka backend already does this — instead of always blocking on
-// a fixed 10s round-trip regardless of ctx.
+// through instead of always blocking on a fixed 10s round-trip regardless of ctx.
 func (c *natsClient) flush(ctx context.Context) error {
 	if _, ok := ctx.Deadline(); ok {
 		return c.conn.FlushWithContext(ctx)
@@ -121,8 +118,7 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 	if c.groupID == "" {
 		sub, err = c.conn.Subscribe(topic, cb)
 	} else {
-		// Load-balance: a NATS queue group is the counterpart of a Kafka consumer
-		// group — subscriptions sharing the group split the stream.
+		// Load-balance: subscriptions sharing the queue group split the stream.
 		sub, err = c.conn.QueueSubscribe(topic, c.groupID, cb)
 	}
 	if err != nil {
@@ -147,7 +143,7 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 	// Stop delivery when the caller's context is cancelled OR the client is
 	// closed. Selecting on c.done as well means a caller that passed a
 	// non-cancellable context (e.g. Background) does not leak this goroutine
-	// past Close, matching the Kafka backend whose Close unblocks its read loop.
+	// past Close.
 	go func() {
 		defer c.wg.Done()
 		select {

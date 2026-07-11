@@ -81,18 +81,17 @@ type CacheConfig struct {
 }
 
 type MQConfig struct {
-	Driver string `koanf:"driver"` // "nats" | "kafka"
-	// URL accepts a comma-separated server list on both backends, e.g.
-	// "b1:9092,b2:9092" (kafka) or "nats://a:4222,nats://b:4222". Typed Secret
-	// because a NATS/Kafka URL can embed credentials (nats://user:pass@host), so
-	// it must mask like DSN/Password rather than risk a debug log leaking it.
+	Driver string `koanf:"driver"` // "nats"
+	// URL accepts a comma-separated NATS server list, e.g.
+	// "nats://a:4222,nats://b:4222". Typed Secret because a NATS URL can embed
+	// credentials (nats://user:pass@host), so it must mask like DSN/Password
+	// rather than risk a debug log leaking it.
 	URL Secret `koanf:"url"`
-	// GroupID selects delivery semantics, identically on both backends: empty
-	// (default) fans out — every subscription receives every message published
-	// after it subscribed; non-empty load-balances — subscriptions sharing the
-	// group split the stream (NATS queue group / Kafka consumer group).
-	GroupID string   `koanf:"group_id"`
-	Topics  []string `koanf:"topics"`
+	// GroupID selects delivery semantics: empty (default) fans out — every
+	// subscription receives every message published after it subscribed;
+	// non-empty load-balances — subscriptions sharing the group split the
+	// stream (a NATS queue group).
+	GroupID string `koanf:"group_id"`
 }
 
 type LogConfig struct {
@@ -219,8 +218,9 @@ func BuildUnvalidated(opts ...Option) (*Config, error) {
 			DecodeHook: mapstructure.ComposeDecodeHookFunc(
 				mapstructure.StringToTimeDurationHookFunc(),
 				// Env/dotenv values arrive as strings; split comma lists into slices
-				// so a list-valued key (cors_origins, mq.topics) can be set from the
-				// environment instead of collapsing to a single-element slice.
+				// so a list-valued key (cors_origins, observ.genai_mask_fields) can be
+				// set from the environment instead of collapsing to a single-element
+				// slice.
 				mapstructure.StringToSliceHookFunc(","),
 				rejectBareNumericDuration(),
 			),

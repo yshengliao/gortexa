@@ -151,10 +151,10 @@ func TestNATSQueueGroupLoadBalance(t *testing.T) {
 	}
 }
 
-// TestNATSCloseWaitsForInflightHandler pins Close-vs-handler symmetry with the
-// Kafka backend: a handler that is already running when Close is called must
-// finish before Close returns (given an unexpired ctx), so shutdown never
-// abandons work silently.
+// TestNATSCloseWaitsForInflightHandler pins Close-vs-handler ordering: a
+// handler that is already running when Close is called must finish before
+// Close returns (given an unexpired ctx), so shutdown never abandons work
+// silently.
 func TestNATSCloseWaitsForInflightHandler(t *testing.T) {
 	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(natsURL(t))})
 	if err != nil {

@@ -3,7 +3,6 @@ package mq
 import (
 	"context"
 	"errors"
-	"reflect"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -60,25 +59,24 @@ func TestCloseWithin(t *testing.T) {
 	})
 }
 
-func TestSplitBrokers(t *testing.T) {
+func TestValidateServerList(t *testing.T) {
 	cases := []struct {
 		name    string
 		url     string
-		want    []string
 		wantErr bool
 	}{
-		{name: "single broker", url: "127.0.0.1:9092", want: []string{"127.0.0.1:9092"}},
-		{name: "multi broker with spaces", url: "b1:9092, b2:9092 ,b3:9092", want: []string{"b1:9092", "b2:9092", "b3:9092"}},
+		{name: "single server", url: "nats://127.0.0.1:4222"},
+		{name: "multi server with spaces", url: "nats://a:4222, nats://b:4222 ,nats://c:4222"},
 		{name: "empty url", url: "", wantErr: true},
-		{name: "trailing comma", url: "b1:9092,", wantErr: true},
-		{name: "blank entry", url: "b1:9092, ,b2:9092", wantErr: true},
+		{name: "trailing comma", url: "nats://a:4222,", wantErr: true},
+		{name: "blank entry", url: "nats://a:4222, ,nats://b:4222", wantErr: true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := splitBrokers(c.url)
+			err := validateServerList(c.url)
 			if c.wantErr {
 				if err == nil {
-					t.Fatalf("want error, got %v", got)
+					t.Fatal("want error, got nil")
 				}
 				if !apperr.Is(err, apperr.CatInvalidArgument) {
 					t.Fatalf("category = %v, want InvalidArgument", err)
@@ -88,17 +86,14 @@ func TestSplitBrokers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(got, c.want) {
-				t.Fatalf("got %v, want %v", got, c.want)
-			}
 		})
 	}
 }
 
-// checkReservedHeaders is the single choke point both backends' Publish call, so a
-// caller header colliding with the framework's reserved key name is rejected
-// uniformly (fail-loud) instead of silently overwriting Message.Key on the NATS
-// backend while passing through as an ordinary header on Kafka.
+// checkReservedHeaders is the single choke point every backend's Publish calls,
+// so a caller header colliding with the framework's reserved key name is
+// rejected uniformly (fail-loud) instead of silently overwriting Message.Key on
+// the wire.
 func TestCheckReservedHeaders(t *testing.T) {
 	if err := checkReservedHeaders(nil); err != nil {
 		t.Fatalf("nil headers = %v, want nil", err)
