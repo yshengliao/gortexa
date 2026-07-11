@@ -1,5 +1,5 @@
-# Backing services for `make test-integration` (real PgBouncer / Redis / NATS /
-# Kafka). The default `make test` needs none of these — it uses in-process fakes.
+# Backing services for `make test-integration` (real PgBouncer / Redis / NATS).
+# The default `make test` needs none of these — it uses in-process fakes.
 services:
   postgres:
     image: postgres:18
@@ -22,16 +22,10 @@ services:
 
   nats:
     image: nats:2
+    # -js enables JetStream so the durable MQ driver (mq.driver: jetstream)
+    # works against this stack; core NATS behaviour is unaffected.
+    command: ["-js"]
     ports: ["4222:4222"]
-
-  kafka:
-    # apache/kafka's default config is a single-node KRaft broker advertising
-    # PLAINTEXT://localhost:9092 — exactly what host-side integration tests
-    # need through the port mapping. (bitnami/kafka's free Docker Hub tags were
-    # retired and no longer pull.) Pinned to match .github/workflows/ci.yml —
-    # bump both together.
-    image: apache/kafka:4.3.1
-    ports: ["9092:9092"]
 
   otelcol:
     image: otel/opentelemetry-collector-contrib:latest

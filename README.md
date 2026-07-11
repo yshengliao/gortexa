@@ -38,12 +38,9 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   and pluggable cache / MQ abstractions. The cache defaults to a process-local
   in-memory backend (no external service; `cache.driver: redis` opts in to a
   distributed cache, served by a small in-tree zero-dependency RESP client);
-  MQ is NATS or Kafka. MQ delivery
-  semantics are uniform across backends: `mq.group_id` empty (default) fans
-  out, non-empty load-balances (NATS queue group / Kafka consumer group);
-  `mq.url` accepts a comma-separated server list. The Kafka backend compiles
-  only under the `integration` build tag — default builds return an error for
-  `mq.driver: kafka`.
+  MQ is NATS: `mq.group_id` empty (default) fans out, non-empty
+  load-balances (a NATS queue group); `mq.url` accepts a comma-separated
+  server list.
 
 ## Quickstart
 
@@ -121,7 +118,7 @@ curl localhost:8080/v1/resources/x
 - Requires Go 1.26 (auto-downloaded via `GOTOOLCHAIN`, which itself needs an
   installed Go >= 1.21). `make` exports the corrected module proxy env; run
   `install.sh` once if building outside `make`.
-- Integration tests needing real Kafka/NATS/Redis/Postgres+PgBouncer are behind
+- Integration tests needing real NATS/Redis/Postgres+PgBouncer are behind
   the `integration` build tag (`make test-integration`); the default suite
   needs no services.
 
