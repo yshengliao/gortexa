@@ -1,25 +1,33 @@
-// Package mq is a pluggable publish/subscribe abstraction with a NATS
-// implementation (tested against an embedded server) and a Kafka implementation
-// behind the integration build tag.
+// Package mq is a pluggable publish/subscribe abstraction backed by NATS,
+// with two drivers (both tested against an embedded server):
 //
-// Delivery semantics are uniform across backends, selected by
+//   - "nats" (default): core NATS, at-most-once. Publish is fire-and-forget
+//     plus flush; there is no redelivery, so a message whose handler failed
+//     (or that arrived while no subscriber was up) is not seen again.
+//   - "jetstream": NATS JetStream, at-least-once. Publish blocks on the
+//     server's storage ack; a handler error negative-acks the message and the
+//     server redelivers it, so handlers must be idempotent. Streams the
+//     framework creates itself carry a 24h age cap; an operator can pre-create
+//     a stream with different retention — it is adopted, never modified.
+//
+// Delivery semantics are uniform across drivers, selected by
 // config.MQConfig.GroupID: empty (the default) fans out — every subscription
 // receives every message published after it subscribed; non-empty
-// load-balances — subscriptions sharing the group split the stream (a NATS
-// queue group or Kafka consumer group).
+// load-balances — subscriptions sharing the group split the stream (a core
+// NATS queue group / a shared durable JetStream consumer).
 //
-// Transport caveats callers must design for:
-//   - Kafka subscriptions become live asynchronously: Subscribe returns before
-//     the consumer-group join completes, so messages published in that window
-//     are not delivered to the new subscription. NATS subscriptions are live
-//     when Subscribe returns.
-//   - Handler errors are not retried on either backend. On Kafka an explicit
-//     group commits its offset only after the handler returns, so a crash
-//     mid-handler is redelivered after restart (and duplicates are possible);
-//     core NATS has no redelivery.
+// JetStream caveats:
+//   - A fan-out (GroupID empty) subscription is an ephemeral consumer; if its
+//     client stalls past the server's inactive threshold the server reclaims
+//     the consumer and the subscription goes silently dead.
+//   - Topics must be literal subjects — wildcard tokens ("*", ">") are
+//     rejected as InvalidArgument (core NATS supports wildcard subscriptions;
+//     JetStream's per-topic streams cannot).
+//   - A pre-created operator stream is adopted only when it bears the name
+//     the framework derives ("gortexa_" + topic for a plain topic) and its
+//     subjects cover the topic; anything else fails loud.
 //
-// config.MQConfig.URL accepts a comma-separated server list on both backends
-// (the bootstrap-server convention).
+// config.MQConfig.URL accepts a comma-separated server list.
 package mq
 
 import (
@@ -45,10 +53,9 @@ type Message struct {
 type Handler func(ctx context.Context, m Message) error
 
 // reservedKeyHeader is the header name the NATS backend uses on the wire to carry
-// Message.Key. It is reserved on every backend: a caller header by this name would
-// otherwise silently overwrite Key on NATS (and be delivered as an ordinary header
-// on Kafka), so the two backends would diverge. Rejecting it everywhere keeps
-// publish behaviour uniform, as the package doc promises.
+// Message.Key. It is reserved: a caller header by this name would otherwise
+// silently overwrite Key on delivery, so Publish rejects it — see
+// checkReservedHeaders.
 const reservedKeyHeader = "gortexa-key"
 
 // checkReservedHeaders rejects a caller header that collides with a framework
@@ -95,23 +102,19 @@ func closeWithin(ctx context.Context, fn func() error) error {
 	}
 }
 
-// splitBrokers parses MQConfig.URL as a comma-separated broker list for the
-// Kafka backend. NATS instead passes the raw URL through — nats.Connect
-// natively accepts a comma-separated server list.
-func splitBrokers(url string) ([]string, error) {
+// validateServerList validates MQConfig.URL as a comma-separated server list.
+// nats.Connect parses the list natively but silently drops a blank entry — a
+// blank entry is a config typo, not a smaller cluster, so it fails loud here.
+func validateServerList(url string) error {
 	if url == "" {
-		return nil, apperr.New(apperr.CatInvalidArgument, "mq.url (kafka brokers) required")
+		return apperr.New(apperr.CatInvalidArgument, "mq.url required")
 	}
-	parts := strings.Split(url, ",")
-	brokers := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			return nil, apperr.New(apperr.CatInvalidArgument, "mq.url: empty broker entry in list")
+	for _, p := range strings.Split(url, ",") {
+		if strings.TrimSpace(p) == "" {
+			return apperr.New(apperr.CatInvalidArgument, "mq.url: empty server entry in list")
 		}
-		brokers = append(brokers, p)
 	}
-	return brokers, nil
+	return nil
 }
 
 // New selects a message queue backend from config.
@@ -119,8 +122,8 @@ func New(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	switch cfg.Driver {
 	case "nats", "":
 		return NewNATS(cfg)
-	case "kafka":
-		return NewKafka(cfg)
+	case "jetstream":
+		return NewJetStream(cfg)
 	default:
 		return nil, nil, apperr.New(apperr.CatInvalidArgument, "mq: unsupported driver: "+cfg.Driver)
 	}

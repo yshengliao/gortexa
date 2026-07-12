@@ -2,6 +2,8 @@ package mq
 
 import (
 	"context"
+	"errors"
+	"net/url"
 	"sync"
 
 	"github.com/nats-io/nats.go"
@@ -9,6 +11,19 @@ import (
 	"github.com/yshengliao/gortexa/internal/config"
 	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
+
+// sanitizeConnectErr keeps nats.Connect failures safe to log: a URL parse
+// error embeds the raw URL — credentials included — verbatim in its message,
+// which is exactly what MQConfig.URL's Secret type exists to keep out of
+// logs. Parse errors are replaced wholesale; other dial errors carry no
+// userinfo and pass through untouched.
+func sanitizeConnectErr(err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		return errors.New("invalid server url (details redacted: the url may embed credentials)")
+	}
+	return err
+}
 
 type natsClient struct {
 	conn    *nats.Conn
@@ -25,9 +40,8 @@ type natsClient struct {
 	// exited — no goroutine outlives the client.
 	wg sync.WaitGroup
 	// hwg tracks in-flight handler invocations so Close's teardown waits for
-	// them, matching the Kafka backend whose reader goroutine runs handlers
-	// inline. Add happens under mu against the closed flag, so it can never
-	// race a Wait that started at zero.
+	// them — shutdown never abandons a running handler. Add happens under mu
+	// against the closed flag, so it can never race a Wait that started at zero.
 	hwg sync.WaitGroup
 }
 
@@ -38,16 +52,15 @@ func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	url := cfg.URL.Reveal()
 	if url == "" {
 		url = nats.DefaultURL
-	} else if _, err := splitBrokers(url); err != nil {
-		// nats.Connect would silently drop a blank list entry; validate with the
-		// same fail-loud rule as the Kafka backend — a blank entry is a config
-		// typo, not a smaller cluster. The original string is still passed
-		// through, since nats.Connect parses its own server list.
+	} else if err := validateServerList(url); err != nil {
+		// nats.Connect would silently drop a blank list entry; fail loud instead.
+		// The original string is still passed through, since nats.Connect parses
+		// its own server list.
 		return nil, nil, err
 	}
 	conn, err := nats.Connect(url)
 	if err != nil {
-		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "nats connect", err)
+		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "nats connect", sanitizeConnectErr(err))
 	}
 	c := &natsClient{
 		conn:    conn,
@@ -58,10 +71,10 @@ func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	return c, c, nil
 }
 
-func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error {
-	if err := checkReservedHeaders(m.Headers); err != nil {
-		return err
-	}
+// natsWireMsg builds the wire message both NATS-family backends publish:
+// Value as the payload, Key carried in the reserved header, caller headers
+// copied verbatim.
+func natsWireMsg(topic string, m Message) *nats.Msg {
 	msg := &nats.Msg{Subject: topic, Data: m.Value, Header: nats.Header{}}
 	if len(m.Key) > 0 {
 		msg.Header.Set(reservedKeyHeader, string(m.Key))
@@ -69,7 +82,31 @@ func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error
 	for k, v := range m.Headers {
 		msg.Header.Set(k, v)
 	}
-	if err := c.conn.PublishMsg(msg); err != nil {
+	return msg
+}
+
+// messageFromWire is the inverse mapping applied on delivery: the reserved
+// header becomes Key again and everything else surfaces as a caller header.
+func messageFromWire(data []byte, h nats.Header) Message {
+	msg := Message{Value: data, Headers: map[string]string{}}
+	for k, vs := range h {
+		if len(vs) == 0 {
+			continue
+		}
+		if k == reservedKeyHeader {
+			msg.Key = []byte(vs[0])
+			continue
+		}
+		msg.Headers[k] = vs[0]
+	}
+	return msg
+}
+
+func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error {
+	if err := checkReservedHeaders(m.Headers); err != nil {
+		return err
+	}
+	if err := c.conn.PublishMsg(natsWireMsg(topic, m)); err != nil {
 		return apperr.Wrap(apperr.CatUnavailable, "nats publish", err)
 	}
 	if err := c.flush(ctx); err != nil {
@@ -82,8 +119,7 @@ func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error
 // set one. The SDK's FlushWithContext rejects a deadline-less context, so a
 // caller that opted out of deadlines (e.g. context.Background) falls back to the
 // plain Flush and its fixed 10s cap. This threads the caller's timeout budget
-// through — the Kafka backend already does this — instead of always blocking on
-// a fixed 10s round-trip regardless of ctx.
+// through instead of always blocking on a fixed 10s round-trip regardless of ctx.
 func (c *natsClient) flush(ctx context.Context) error {
 	if _, ok := ctx.Deadline(); ok {
 		return c.conn.FlushWithContext(ctx)
@@ -103,26 +139,14 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 		c.hwg.Add(1)
 		c.mu.Unlock()
 		defer c.hwg.Done()
-		msg := Message{Value: m.Data, Headers: map[string]string{}}
-		for k, vs := range m.Header {
-			if len(vs) == 0 {
-				continue
-			}
-			if k == reservedKeyHeader {
-				msg.Key = []byte(vs[0])
-				continue
-			}
-			msg.Headers[k] = vs[0]
-		}
-		_ = h(ctx, msg)
+		_ = h(ctx, messageFromWire(m.Data, m.Header))
 	}
 	var sub *nats.Subscription
 	var err error
 	if c.groupID == "" {
 		sub, err = c.conn.Subscribe(topic, cb)
 	} else {
-		// Load-balance: a NATS queue group is the counterpart of a Kafka consumer
-		// group — subscriptions sharing the group split the stream.
+		// Load-balance: subscriptions sharing the queue group split the stream.
 		sub, err = c.conn.QueueSubscribe(topic, c.groupID, cb)
 	}
 	if err != nil {
@@ -147,7 +171,7 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 	// Stop delivery when the caller's context is cancelled OR the client is
 	// closed. Selecting on c.done as well means a caller that passed a
 	// non-cancellable context (e.g. Background) does not leak this goroutine
-	// past Close, matching the Kafka backend whose Close unblocks its read loop.
+	// past Close.
 	go func() {
 		defer c.wg.Done()
 		select {
