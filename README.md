@@ -165,7 +165,7 @@ curl localhost:8080/v1/resources/x
 | Path | What |
 |---|---|
 | `proto/` | Proto SSOT (`resource/v1`, `ai/v1`). Edit here, then `make gen`. |
-| `gen/` | Generated code — **never hand-edit**, produced by `make gen`. Gitignored except `gen/ai/` (committed so module consumers can import the ai.v1 annotation bindings; CI guards drift). |
+| `gen/` | Generated code — **never hand-edit**, produced by `make gen`. Committed so the published module is self-contained for consumers; CI guards drift. |
 | `apperr/ auth/ cache/ client/ config/ health/ httpcompat/ interceptor/ kernel/ mcp/ mq/ observability/ storage/ testutil/` | Importable framework packages (`go get github.com/yshengliao/gortexa`). |
 | `internal/` | Non-API internals: `logic` (sample business logic, `gortexa gen` writes here), `resp` (RESP client backing the redis cache), `storage/db` (sqlc output). |
 | `cmd/server/` | Sample server wiring everything onto one port. |
