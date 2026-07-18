@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
 
-	aiv1 "github.com/yshengliao/gortexa/gen/ai/v1"
+	aiv1 "github.com/yshengliao/gortexa/gen/gortexa/ai/v1"
 )
 
 // oneofToolService builds a one-method service whose input message carries a

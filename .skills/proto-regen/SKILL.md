@@ -8,7 +8,7 @@ description: Regenerate gRPC stubs, grpc-gateway HTTP handlers, OpenAPI spec, an
 Regenerate all code artifacts from Protobuf definitions in this Gortexa project. Protobuf is the single source of truth (SSOT); never hand-edit anything under `gen/`.
 
 ## When to use this skill
-- A `.proto` file under `proto/` (including `proto/ai/v1/`) was added or changed.
+- A `.proto` file under `proto/` (including `proto/gortexa/ai/v1/`) was added or changed.
 - The user asks to "regen", "regenerate", "rebuild stubs", "update the gRPC code", "add an RPC", or otherwise change the API contract.
 - After editing `google.api.http` annotations (HTTP/JSON mapping) or `ai/v1` AI-skill annotations.
 

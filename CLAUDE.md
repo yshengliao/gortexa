@@ -12,7 +12,7 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
   packages) — but it is never hand-edited; `make gen` regenerates it
   byte-identically and CI fails on drift. Editing the contract means editing
   `proto/` then regenerating.
-- **The proto SSOT lives in `proto/`** (`proto/resource/v1`, `proto/ai/v1`).
+- **The proto SSOT lives in `proto/`** (`proto/resource/v1`, `proto/gortexa/ai/v1`).
   Use the `proto-regen` skill (`.skills/proto-regen/`) when changing it.
 - **Type alignment:** proto `int64` ↔ PostgreSQL `bigint`, `string` ↔ `text`;
   JSON serializes `int64` as a string. Keep proto field types aligned with

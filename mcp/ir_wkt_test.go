@@ -15,7 +15,7 @@ import (
 	_ "google.golang.org/protobuf/types/known/structpb"
 	_ "google.golang.org/protobuf/types/known/wrapperspb"
 
-	aiv1 "github.com/yshengliao/gortexa/gen/ai/v1"
+	aiv1 "github.com/yshengliao/gortexa/gen/gortexa/ai/v1"
 	"github.com/yshengliao/gortexa/testutil"
 )
 

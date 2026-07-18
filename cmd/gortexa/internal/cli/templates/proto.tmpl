@@ -6,7 +6,7 @@ import "google/api/annotations.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "buf/validate/validate.proto";
-import "ai/v1/annotations.proto";
+import "gortexa/ai/v1/annotations.proto";
 
 option go_package = "[[.Module]]/gen/[[.Domain]]/[[.Version]];[[.GoPkg]]";
 
@@ -57,7 +57,7 @@ service [[.Entity]]Service {
       post: "/[[.Version]]/[[.PluralSnake]]"
       body: "[[.Snake]]"
     };
-    option (ai.v1.ai_tool) = {
+    option (gortexa.ai.v1.ai_tool) = {
       expose: true
       name: "create_[[.Snake]]"
       description: "Create a new [[.Snake]]."
@@ -67,7 +67,7 @@ service [[.Entity]]Service {
 
   rpc Get[[.Entity]](Get[[.Entity]]Request) returns ([[.Entity]]) {
     option (google.api.http) = {get: "/[[.Version]]/[[.PluralSnake]]/{id}"};
-    option (ai.v1.ai_tool) = {
+    option (gortexa.ai.v1.ai_tool) = {
       expose: true
       name: "get_[[.Snake]]"
       description: "Fetch a [[.Snake]] by id."
@@ -77,7 +77,7 @@ service [[.Entity]]Service {
 
   rpc List[[.Plural]](List[[.Plural]]Request) returns (List[[.Plural]]Response) {
     option (google.api.http) = {get: "/[[.Version]]/[[.PluralSnake]]"};
-    option (ai.v1.ai_tool) = {
+    option (gortexa.ai.v1.ai_tool) = {
       expose: true
       name: "list_[[.PluralSnake]]"
       description: "List [[.PluralSnake]] with paging."
@@ -94,7 +94,7 @@ service [[.Entity]]Service {
 
   rpc Delete[[.Entity]](Delete[[.Entity]]Request) returns (google.protobuf.Empty) {
     option (google.api.http) = {delete: "/[[.Version]]/[[.PluralSnake]]/{id}"};
-    option (ai.v1.ai_tool) = {
+    option (gortexa.ai.v1.ai_tool) = {
       expose: true
       name: "delete_[[.Snake]]"
       description: "Delete a [[.Snake]] by id."

@@ -14,5 +14,12 @@ lint:
     - RPC_RESPONSE_STANDARD_NAME
     - RPC_REQUEST_RESPONSE_UNIQUE
 breaking:
+  # One-time v0.27 vendor-prefix move of ai/v1 -> gortexa/ai/v1: the old path
+  # was deleted and the extension names changed (wire-compatible: extension
+  # numbers unchanged). Drop both entries once a release containing
+  # gortexa/ai is the comparison base.
+  ignore:
+    - proto/ai
+    - proto/gortexa/ai
   use:
     - FILE

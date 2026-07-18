@@ -2,9 +2,9 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        (unknown)
-// source: ai/v1/annotations.proto
+// source: gortexa/ai/v1/annotations.proto
 
-// Package ai.v1 defines annotations that expose gRPC methods and request
+// Package gortexa.ai.v1 defines annotations that expose gRPC methods and request
 // fields to AI/LLM agents. They are opt-in: a method is only surfaced as a
 // tool when ai_tool.expose is true.
 
@@ -48,7 +48,7 @@ type AIToolOptions struct {
 
 func (x *AIToolOptions) Reset() {
 	*x = AIToolOptions{}
-	mi := &file_ai_v1_annotations_proto_msgTypes[0]
+	mi := &file_gortexa_ai_v1_annotations_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -60,7 +60,7 @@ func (x *AIToolOptions) String() string {
 func (*AIToolOptions) ProtoMessage() {}
 
 func (x *AIToolOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_v1_annotations_proto_msgTypes[0]
+	mi := &file_gortexa_ai_v1_annotations_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -73,7 +73,7 @@ func (x *AIToolOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AIToolOptions.ProtoReflect.Descriptor instead.
 func (*AIToolOptions) Descriptor() ([]byte, []int) {
-	return file_ai_v1_annotations_proto_rawDescGZIP(), []int{0}
+	return file_gortexa_ai_v1_annotations_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *AIToolOptions) GetExpose() bool {
@@ -124,7 +124,7 @@ type AIFieldOptions struct {
 
 func (x *AIFieldOptions) Reset() {
 	*x = AIFieldOptions{}
-	mi := &file_ai_v1_annotations_proto_msgTypes[1]
+	mi := &file_gortexa_ai_v1_annotations_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -136,7 +136,7 @@ func (x *AIFieldOptions) String() string {
 func (*AIFieldOptions) ProtoMessage() {}
 
 func (x *AIFieldOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_ai_v1_annotations_proto_msgTypes[1]
+	mi := &file_gortexa_ai_v1_annotations_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -149,7 +149,7 @@ func (x *AIFieldOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AIFieldOptions.ProtoReflect.Descriptor instead.
 func (*AIFieldOptions) Descriptor() ([]byte, []int) {
-	return file_ai_v1_annotations_proto_rawDescGZIP(), []int{1}
+	return file_gortexa_ai_v1_annotations_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *AIFieldOptions) GetDescription() string {
@@ -166,42 +166,42 @@ func (x *AIFieldOptions) GetRequired() bool {
 	return false
 }
 
-var file_ai_v1_annotations_proto_extTypes = []protoimpl.ExtensionInfo{
+var file_gortexa_ai_v1_annotations_proto_extTypes = []protoimpl.ExtensionInfo{
 	{
 		ExtendedType:  (*descriptorpb.MethodOptions)(nil),
 		ExtensionType: (*AIToolOptions)(nil),
 		Field:         50001,
-		Name:          "ai.v1.ai_tool",
+		Name:          "gortexa.ai.v1.ai_tool",
 		Tag:           "bytes,50001,opt,name=ai_tool",
-		Filename:      "ai/v1/annotations.proto",
+		Filename:      "gortexa/ai/v1/annotations.proto",
 	},
 	{
 		ExtendedType:  (*descriptorpb.FieldOptions)(nil),
 		ExtensionType: (*AIFieldOptions)(nil),
 		Field:         50002,
-		Name:          "ai.v1.ai_field",
+		Name:          "gortexa.ai.v1.ai_field",
 		Tag:           "bytes,50002,opt,name=ai_field",
-		Filename:      "ai/v1/annotations.proto",
+		Filename:      "gortexa/ai/v1/annotations.proto",
 	},
 }
 
 // Extension fields to descriptorpb.MethodOptions.
 var (
-	// optional ai.v1.AIToolOptions ai_tool = 50001;
-	E_AiTool = &file_ai_v1_annotations_proto_extTypes[0]
+	// optional gortexa.ai.v1.AIToolOptions ai_tool = 50001;
+	E_AiTool = &file_gortexa_ai_v1_annotations_proto_extTypes[0]
 )
 
 // Extension fields to descriptorpb.FieldOptions.
 var (
-	// optional ai.v1.AIFieldOptions ai_field = 50002;
-	E_AiField = &file_ai_v1_annotations_proto_extTypes[1]
+	// optional gortexa.ai.v1.AIFieldOptions ai_field = 50002;
+	E_AiField = &file_gortexa_ai_v1_annotations_proto_extTypes[1]
 )
 
-var File_ai_v1_annotations_proto protoreflect.FileDescriptor
+var File_gortexa_ai_v1_annotations_proto protoreflect.FileDescriptor
 
-const file_ai_v1_annotations_proto_rawDesc = "" +
+const file_gortexa_ai_v1_annotations_proto_rawDesc = "" +
 	"\n" +
-	"\x17ai/v1/annotations.proto\x12\x05ai.v1\x1a google/protobuf/descriptor.proto\"\x9c\x01\n" +
+	"\x1fgortexa/ai/v1/annotations.proto\x12\rgortexa.ai.v1\x1a google/protobuf/descriptor.proto\"\x9c\x01\n" +
 	"\rAIToolOptions\x12\x16\n" +
 	"\x06expose\x18\x01 \x01(\bR\x06expose\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -210,34 +210,34 @@ const file_ai_v1_annotations_proto_rawDesc = "" +
 	"\vdestructive\x18\x05 \x01(\bR\vdestructive\"N\n" +
 	"\x0eAIFieldOptions\x12 \n" +
 	"\vdescription\x18\x01 \x01(\tR\vdescription\x12\x1a\n" +
-	"\brequired\x18\x02 \x01(\bR\brequired:O\n" +
-	"\aai_tool\x12\x1e.google.protobuf.MethodOptions\x18ц\x03 \x01(\v2\x14.ai.v1.AIToolOptionsR\x06aiTool:Q\n" +
-	"\bai_field\x12\x1d.google.protobuf.FieldOptions\x18҆\x03 \x01(\v2\x15.ai.v1.AIFieldOptionsR\aaiFieldB.Z,github.com/yshengliao/gortexa/gen/ai/v1;aiv1b\x06proto3"
+	"\brequired\x18\x02 \x01(\bR\brequired:W\n" +
+	"\aai_tool\x12\x1e.google.protobuf.MethodOptions\x18ц\x03 \x01(\v2\x1c.gortexa.ai.v1.AIToolOptionsR\x06aiTool:Y\n" +
+	"\bai_field\x12\x1d.google.protobuf.FieldOptions\x18҆\x03 \x01(\v2\x1d.gortexa.ai.v1.AIFieldOptionsR\aaiFieldB6Z4github.com/yshengliao/gortexa/gen/gortexa/ai/v1;aiv1b\x06proto3"
 
 var (
-	file_ai_v1_annotations_proto_rawDescOnce sync.Once
-	file_ai_v1_annotations_proto_rawDescData []byte
+	file_gortexa_ai_v1_annotations_proto_rawDescOnce sync.Once
+	file_gortexa_ai_v1_annotations_proto_rawDescData []byte
 )
 
-func file_ai_v1_annotations_proto_rawDescGZIP() []byte {
-	file_ai_v1_annotations_proto_rawDescOnce.Do(func() {
-		file_ai_v1_annotations_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_ai_v1_annotations_proto_rawDesc), len(file_ai_v1_annotations_proto_rawDesc)))
+func file_gortexa_ai_v1_annotations_proto_rawDescGZIP() []byte {
+	file_gortexa_ai_v1_annotations_proto_rawDescOnce.Do(func() {
+		file_gortexa_ai_v1_annotations_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_gortexa_ai_v1_annotations_proto_rawDesc), len(file_gortexa_ai_v1_annotations_proto_rawDesc)))
 	})
-	return file_ai_v1_annotations_proto_rawDescData
+	return file_gortexa_ai_v1_annotations_proto_rawDescData
 }
 
-var file_ai_v1_annotations_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_ai_v1_annotations_proto_goTypes = []any{
-	(*AIToolOptions)(nil),              // 0: ai.v1.AIToolOptions
-	(*AIFieldOptions)(nil),             // 1: ai.v1.AIFieldOptions
+var file_gortexa_ai_v1_annotations_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_gortexa_ai_v1_annotations_proto_goTypes = []any{
+	(*AIToolOptions)(nil),              // 0: gortexa.ai.v1.AIToolOptions
+	(*AIFieldOptions)(nil),             // 1: gortexa.ai.v1.AIFieldOptions
 	(*descriptorpb.MethodOptions)(nil), // 2: google.protobuf.MethodOptions
 	(*descriptorpb.FieldOptions)(nil),  // 3: google.protobuf.FieldOptions
 }
-var file_ai_v1_annotations_proto_depIdxs = []int32{
-	2, // 0: ai.v1.ai_tool:extendee -> google.protobuf.MethodOptions
-	3, // 1: ai.v1.ai_field:extendee -> google.protobuf.FieldOptions
-	0, // 2: ai.v1.ai_tool:type_name -> ai.v1.AIToolOptions
-	1, // 3: ai.v1.ai_field:type_name -> ai.v1.AIFieldOptions
+var file_gortexa_ai_v1_annotations_proto_depIdxs = []int32{
+	2, // 0: gortexa.ai.v1.ai_tool:extendee -> google.protobuf.MethodOptions
+	3, // 1: gortexa.ai.v1.ai_field:extendee -> google.protobuf.FieldOptions
+	0, // 2: gortexa.ai.v1.ai_tool:type_name -> gortexa.ai.v1.AIToolOptions
+	1, // 3: gortexa.ai.v1.ai_field:type_name -> gortexa.ai.v1.AIFieldOptions
 	4, // [4:4] is the sub-list for method output_type
 	4, // [4:4] is the sub-list for method input_type
 	2, // [2:4] is the sub-list for extension type_name
@@ -245,27 +245,27 @@ var file_ai_v1_annotations_proto_depIdxs = []int32{
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_ai_v1_annotations_proto_init() }
-func file_ai_v1_annotations_proto_init() {
-	if File_ai_v1_annotations_proto != nil {
+func init() { file_gortexa_ai_v1_annotations_proto_init() }
+func file_gortexa_ai_v1_annotations_proto_init() {
+	if File_gortexa_ai_v1_annotations_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_ai_v1_annotations_proto_rawDesc), len(file_ai_v1_annotations_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gortexa_ai_v1_annotations_proto_rawDesc), len(file_gortexa_ai_v1_annotations_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   2,
 			NumExtensions: 2,
 			NumServices:   0,
 		},
-		GoTypes:           file_ai_v1_annotations_proto_goTypes,
-		DependencyIndexes: file_ai_v1_annotations_proto_depIdxs,
-		MessageInfos:      file_ai_v1_annotations_proto_msgTypes,
-		ExtensionInfos:    file_ai_v1_annotations_proto_extTypes,
+		GoTypes:           file_gortexa_ai_v1_annotations_proto_goTypes,
+		DependencyIndexes: file_gortexa_ai_v1_annotations_proto_depIdxs,
+		MessageInfos:      file_gortexa_ai_v1_annotations_proto_msgTypes,
+		ExtensionInfos:    file_gortexa_ai_v1_annotations_proto_extTypes,
 	}.Build()
-	File_ai_v1_annotations_proto = out.File
-	file_ai_v1_annotations_proto_goTypes = nil
-	file_ai_v1_annotations_proto_depIdxs = nil
+	File_gortexa_ai_v1_annotations_proto = out.File
+	file_gortexa_ai_v1_annotations_proto_goTypes = nil
+	file_gortexa_ai_v1_annotations_proto_depIdxs = nil
 }

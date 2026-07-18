@@ -1,8 +1,8 @@
 {
   "swagger": "2.0",
   "info": {
-    "title": "ai/v1/annotations.proto",
-    "description": "Package ai.v1 defines annotations that expose gRPC methods and request\nfields to AI/LLM agents. They are opt-in: a method is only surfaced as a\ntool when ai_tool.expose is true.",
+    "title": "gortexa/ai/v1/annotations.proto",
+    "description": "Package gortexa.ai.v1 defines annotations that expose gRPC methods and request\nfields to AI/LLM agents. They are opt-in: a method is only surfaced as a\ntool when ai_tool.expose is true.",
     "version": "version not set"
   },
   "tags": [
