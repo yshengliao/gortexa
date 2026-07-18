@@ -15,8 +15,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	apperr "github.com/yshengliao/gortexa/apperr"
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
-	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
 
 // clone returns a deep copy so callers (and concurrent readers) never share a

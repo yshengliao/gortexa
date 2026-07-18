@@ -10,8 +10,8 @@ import (
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	apperr "github.com/yshengliao/gortexa/apperr"
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
-	apperr "github.com/yshengliao/gortexa/internal/errors"
 )
 
 func TestResourceService(t *testing.T) {

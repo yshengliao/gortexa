@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/yshengliao/gortexa/auth"
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
-	"github.com/yshengliao/gortexa/internal/auth"
-	"github.com/yshengliao/gortexa/internal/interceptor"
+	"github.com/yshengliao/gortexa/interceptor"
 	"github.com/yshengliao/gortexa/internal/logic"
 	"github.com/yshengliao/gortexa/testutil"
 )
