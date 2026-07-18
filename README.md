@@ -80,6 +80,63 @@ make test
 make run
 ```
 
+## Use as a module
+
+The scaffold above gives you the full experience — proto pipeline, sample
+service, one-command codegen. But every framework package is also importable
+directly:
+
+```bash
+go get github.com/yshengliao/gortexa@latest
+```
+
+A minimal app — one h2c port with gRPC health, `/healthz`, `/readyz` — needs no
+code generation at all:
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+	"os/signal"
+	"syscall"
+
+	"github.com/yshengliao/gortexa/health"
+	"github.com/yshengliao/gortexa/kernel"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	app, err := kernel.New() // defaults: h2c on :8080, graceful shutdown
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Register your own generated gRPC services on app.GRPCServer().
+	app.Health().Register("self", func(context.Context) health.State { return health.Healthy })
+
+	if err := app.Run(ctx); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+From there, add what you need — both the AI and the non-AI path are first-class:
+
+- **Non-AI service**: `config.Load` for layered config, `interceptor.NewSet`
+  for the governed chain, `httpcompat` for the grpc-gateway mux, `apperr` for
+  the three-transport error model, and `mq` / `cache` / `storage` / `client`
+  as batteries. See `cmd/server/main.go` for the full wiring.
+- **AI service**: annotate your protos with `ai/v1/annotations.proto` (its Go
+  bindings ship in this module at `gen/ai/v1`) and wire `mcp.NewBridge` to
+  expose the annotated RPCs as MCP tools behind the same interceptor chain.
+
+Note: a project created by `gortexa create` already contains the framework
+source under its own module path — never also `go get` the framework there, or
+both copies register `ai/v1/annotations.proto` and the binary panics at init.
+
 Then, against the running server (health is open; `/v1/resources/x` returns 401 — auth is shared with gRPC):
 
 ```bash
@@ -108,8 +165,9 @@ curl localhost:8080/v1/resources/x
 | Path | What |
 |---|---|
 | `proto/` | Proto SSOT (`resource/v1`, `ai/v1`). Edit here, then `make gen`. |
-| `gen/` | Generated code — **never hand-edit**, gitignored, produced by `make gen`. |
-| `internal/` | Framework packages (kernel, interceptor, errors, httpcompat, mcp, …). |
+| `gen/` | Generated code — **never hand-edit**, produced by `make gen`. Gitignored except `gen/ai/` (committed so module consumers can import the ai.v1 annotation bindings; CI guards drift). |
+| `apperr/ auth/ cache/ client/ config/ health/ httpcompat/ interceptor/ kernel/ mcp/ mq/ observability/ storage/ testutil/` | Importable framework packages (`go get github.com/yshengliao/gortexa`). |
+| `internal/` | Non-API internals: `logic` (sample business logic, `gortexa gen` writes here), `resp` (RESP client backing the redis cache), `storage/db` (sqlc output). |
 | `cmd/server/` | Sample server wiring everything onto one port. |
 | `cmd/gortexa/` | The `gortexa` developer CLI (create / gen / regen / run / tools / skills / doctor). |
 | `tools/` | Pinned dev toolchain as go.mod `tool` directives (buf, protoc plugins, sqlc, …). |
@@ -145,7 +203,7 @@ curl localhost:8080/v1/resources/x
 Measured on **Go 1.26** with `go test -benchmem -count=8` (summarized with
 `benchstat`) on a shared Intel Xeon @ 2.1 GHz. `allocs/op` and `B/op` are the machine-independent signals;
 `ns/op` is indicative (shared CI CPU). Reproduce with
-`go test -run='^$' -bench=. -benchmem -count=8 ./internal/...`.
+`go test -run='^$' -bench=. -benchmem -count=8 ./...`.
 
 **The Go 1.26 win — `errors.AsType` on the error hot path.** The three-transport
 error resolver swapped the reflection-based `errors.As` for the new generic

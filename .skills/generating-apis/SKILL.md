@@ -45,7 +45,7 @@ truth; never hand-edit `gen/`.
 
 4. **Customize.** Edit the proto fields/RPCs to the real shape, then regenerate
    with `gortexa regen`. Back the logic stub in `internal/logic/<entity>.go` with
-   `internal/storage` for a real datastore.
+   `storage` for a real datastore.
 
 ## Hard rules
 - Never hand-edit files under `gen/`; they are produced only by `buf generate`
