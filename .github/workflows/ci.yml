@@ -58,6 +58,9 @@ jobs:
       - name: Generate (buf lint + generate)
         run: make gen
 
+      - name: Committed gen/ai bindings must not drift from proto
+        run: git diff --exit-code -- gen/ai
+
       - name: Build
         run: make build
 

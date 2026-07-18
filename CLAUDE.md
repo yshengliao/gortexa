@@ -6,8 +6,11 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
 
 ## Iron rules
 - **Never hand-edit anything under `gen/`.** It is produced only by `make gen`
-  (`buf lint → buf breaking → buf generate`). `gen/` is gitignored; regenerate
-  after cloning. Editing the contract means editing `proto/` then regenerating.
+  (`buf lint → buf breaking → buf generate`). `gen/` is gitignored with one
+  exception: `gen/ai/` (the ai.v1 annotation bindings) is committed so module
+  consumers can import it — still never hand-edited; `make gen` regenerates it
+  byte-identically and CI fails on drift. Editing the contract means editing
+  `proto/` then regenerating.
 - **The proto SSOT lives in `proto/`** (`proto/resource/v1`, `proto/ai/v1`).
   Use the `proto-regen` skill (`.skills/proto-regen/`) when changing it.
 - **Type alignment:** proto `int64` ↔ PostgreSQL `bigint`, `string` ↔ `text`;

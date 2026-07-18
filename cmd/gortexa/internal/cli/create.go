@@ -72,9 +72,11 @@ func createProject(dest, module, repo, ref string) error {
 	// Prune repo meta that must not ship inside a generated project: the CLI's
 	// own source tree and the bootstrap installer belong to the framework repo,
 	// and the module rewrite below would corrupt the install instructions they
-	// contain. The framework README is replaced with a project README after the
-	// rewrite.
-	for _, p := range []string{"cmd/gortexa", "install.sh"} {
+	// contain. gen/ is pruned because the framework commits gen/ai/ — a naive
+	// string rewrite inside its length-prefixed rawDesc would corrupt the proto
+	// descriptor; the project regenerates all of gen/ via `make gen`. The
+	// framework README is replaced with a project README after the rewrite.
+	for _, p := range []string{"cmd/gortexa", "install.sh", "gen"} {
 		if err := os.RemoveAll(filepath.Join(dest, p)); err != nil {
 			return cleanup(fmt.Errorf("prune %s: %w", p, err))
 		}
@@ -101,7 +103,7 @@ func createProject(dest, module, repo, ref string) error {
 
 // rewriteModulePath replaces every occurrence of oldMod with newMod across the
 // project's text files (go.mod, tools/go.mod, *.go, *.proto, docs). gen/ is
-// gitignored and absent from a fresh clone, so generated code is later produced
+// pruned from the clone before this runs, so generated code is later produced
 // against newMod by `make gen`.
 func rewriteModulePath(root, oldMod, newMod string) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
