@@ -45,6 +45,16 @@ func newGenCmd() *cobra.Command {
 type genOpts struct{ noWire, skipGen, force, allowBreaking bool }
 
 func generateAPI(root string, d tmplData, opt genOpts) error {
+	// Fail loud on a pre-v0.27 project layout: this CLI's logic template imports
+	// <module>/apperr, which does not exist in projects scaffolded before the
+	// framework packages moved out of internal/. Detect the old layout
+	// affirmatively (internal/errors present, apperr/ absent) so minimal or
+	// partial roots are not misclassified.
+	if _, err := os.Stat(filepath.Join(root, "internal", "errors")); err == nil {
+		if _, err := os.Stat(filepath.Join(root, "apperr")); os.IsNotExist(err) {
+			return fmt.Errorf("project layout predates gortexa v0.27 (internal/errors exists, apperr/ does not): regenerate with a gortexa CLI matching the project's framework version, or migrate the project to the v0.27 layout")
+		}
+	}
 	protoPath := filepath.Join(root, "proto", d.Domain, d.Version, d.Snake+".proto")
 	logicPath := filepath.Join(root, "internal", "logic", d.Snake+".go")
 	mainPath := filepath.Join(root, "cmd", "server", "main.go")

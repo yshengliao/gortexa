@@ -272,7 +272,7 @@ func (c *Config) Validate() error {
 		errs = append(errs, "auth.jwt_secret must be at least 32 bytes")
 	}
 	// Require a non-empty issuer so the JWT issuer check is always active. An
-	// empty issuer silently disables jwt.WithIssuer (see internal/auth), which
+	// empty issuer silently disables jwt.WithIssuer (see the auth package), which
 	// would accept any token minted with a shared secret regardless of its iss
 	// claim — defence-in-depth an operator should not be able to drop by
 	// blanking GORTEXA_AUTH__ISSUER.

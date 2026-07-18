@@ -1,7 +1,7 @@
 // Package interceptor provides Gortexa's gRPC server interceptors and the
 // fixed-order chain that wires them. Recovery is outermost; validation is
-// innermost. OTel is installed separately as a StatsHandler (see
-// internal/observability), not as an interceptor.
+// innermost. OTel is installed separately as a StatsHandler (see the
+// observability package), not as an interceptor.
 package interceptor
 
 import (

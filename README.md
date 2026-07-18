@@ -80,6 +80,14 @@ make test
 make run
 ```
 
+Then, against the running server (health is open; `/v1/resources/x` returns 401 — auth is shared with gRPC):
+
+```bash
+curl localhost:8080/healthz
+curl -XPOST localhost:8080/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+curl localhost:8080/v1/resources/x
+```
+
 ## Use as a module
 
 The scaffold above gives you the full experience — proto pipeline, sample
@@ -91,7 +99,9 @@ go get github.com/yshengliao/gortexa@latest
 ```
 
 A minimal app — one h2c port with gRPC health, `/healthz`, `/readyz` — needs no
-code generation at all:
+code generation at all (unlike the scaffold's sample server above, it wires no
+gateway and no MCP bridge, so only the health endpoints respond until you add
+them):
 
 ```go
 package main
@@ -125,25 +135,22 @@ func main() {
 
 From there, add what you need — both the AI and the non-AI path are first-class:
 
-- **Non-AI service**: `config.Load` for layered config, `interceptor.NewSet`
+- **Non-AI service**: `config.MustBuild` for layered config, `interceptor.NewSet`
   for the governed chain, `httpcompat` for the grpc-gateway mux, `apperr` for
   the three-transport error model, and `mq` / `cache` / `storage` / `client`
   as batteries. See `cmd/server/main.go` for the full wiring.
-- **AI service**: annotate your protos with `ai/v1/annotations.proto` (its Go
-  bindings ship in this module at `gen/ai/v1`) and wire `mcp.NewBridge` to
-  expose the annotated RPCs as MCP tools behind the same interceptor chain.
+- **AI service**: annotate your protos with the ai.v1 annotations (their Go
+  bindings ship in this module) and wire `mcp.NewBridge` to expose the
+  annotated RPCs as MCP tools behind the same interceptor chain.
 
-Note: a project created by `gortexa create` already contains the framework
-source under its own module path — never also `go get` the framework there, or
-both copies register `ai/v1/annotations.proto` and the binary panics at init.
+Notes:
 
-Then, against the running server (health is open; `/v1/resources/x` returns 401 — auth is shared with gRPC):
-
-```bash
-curl localhost:8080/healthz
-curl -XPOST localhost:8080/mcp -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-curl localhost:8080/v1/resources/x
-```
+- A project created by `gortexa create` already contains the framework source
+  under its own module path — never also `go get` the framework there, or both
+  copies register the ai.v1 annotations proto and the binary panics at init.
+- Pair versions: a `gortexa` CLI ≥ v0.27 generates code for projects
+  scaffolded from ≥ v0.27 (and vice versa) — the framework package layout
+  changed in v0.27.
 
 ## Developer CLI
 

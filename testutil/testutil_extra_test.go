@@ -2,7 +2,6 @@ package testutil_test
 
 import (
 	"context"
-	"flag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -60,14 +59,7 @@ func TestNewTestServerWithAuthSecret(t *testing.T) {
 
 func TestGoldenUpdateAndMatch(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := flag.Set("update", "true"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := flag.Set("update", "false"); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	t.Setenv("GORTEXA_UPDATE_GOLDEN", "1")
 
 	data := []byte("hello golden\n")
 	testutil.Golden(t, "sample", data)
@@ -81,9 +73,7 @@ func TestGoldenUpdateAndMatch(t *testing.T) {
 	}
 
 	// Compare path: identical content must pass.
-	if err := flag.Set("update", "false"); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("GORTEXA_UPDATE_GOLDEN", "0")
 	testutil.Golden(t, "sample", data)
 }
 

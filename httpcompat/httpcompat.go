@@ -1,5 +1,5 @@
 // Package httpcompat builds the grpc-gateway HTTP/JSON layer: a ServeMux whose
-// error handler funnels through internal/errors (so HTTP, gRPC and MCP all map
+// error handler funnels through apperr (so HTTP, gRPC and MCP all map
 // errors identically and Internal never leaks), a protojson marshaler, and an
 // incoming header matcher that forwards Authorization to the gRPC metadata key
 // the auth interceptor reads — so HTTP and gRPC share one auth path.

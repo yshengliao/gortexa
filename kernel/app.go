@@ -1,3 +1,7 @@
+// Package kernel is Gortexa's composition root: App owns the single h2c
+// listener that multiplexes gRPC, HTTP/JSON (grpc-gateway) and MCP by
+// Content-Type/path, the gRPC server with the interceptor chain, the health
+// registry, an in-process loopback for MCP dispatch, and graceful shutdown.
 package kernel
 
 import (

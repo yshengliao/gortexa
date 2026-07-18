@@ -248,7 +248,7 @@ make test
 - `+"`internal/logic/`"+` — your business logic
 - `+"`cmd/server/`"+` — server wiring
 - `+"`etc/config.yaml`"+` — configuration
-- `+"`gen/`"+` — generated code: never edit, never commit
+- `+"`gen/`"+` — generated code: never hand-edit; regenerate with `+"`make gen`"+` (committed — the copied CI guards drift)
 
 Docs: https://gortexa.sheng.page
 `, module)
