@@ -16,7 +16,7 @@ func newExportCmd() *cobra.Command {
 	var format, out string
 	cmd := &cobra.Command{
 		Use:   "export",
-		Short: "Export the project's ai.v1 tool schemas (mcp | openai | gemini)",
+		Short: "Export the project's gortexa.ai.v1 tool schemas (mcp | openai | gemini)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if !slices.Contains([]string{"mcp", "openai", "gemini"}, format) {

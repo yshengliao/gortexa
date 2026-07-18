@@ -1,5 +1,5 @@
 // Package mcp turns Gortexa's proto contract into AI-agent tools. It builds a
-// provider-neutral intermediate representation (IR) from the ai.v1 annotations
+// provider-neutral intermediate representation (IR) from the gortexa.ai.v1 annotations
 // and proto descriptors, downgrades that IR to MCP / OpenAI / Gemini tool
 // schemas, and serves a Streamable-HTTP MCP endpoint whose tools/call dispatches
 // back through the full gRPC interceptor chain via an in-process loopback.
@@ -55,7 +55,7 @@ type ToolIR struct {
 	Destructive bool
 }
 
-// ValidateTool enforces the ai.v1 tool constraints: a name no longer than 64
+// ValidateTool enforces the gortexa.ai.v1 tool constraints: a name no longer than 64
 // chars and read_only/destructive being mutually exclusive.
 func ValidateTool(name string, readOnly, destructive bool) error {
 	if len(name) > maxToolNameLen {
@@ -84,7 +84,7 @@ func aiField(f protoreflect.FieldDescriptor) *aiv1.AIFieldOptions {
 }
 
 // BuildIR builds the tool IR for every exposed method of a service, validating
-// the ai.v1 constraints (name length, read_only/destructive exclusivity).
+// the gortexa.ai.v1 constraints (name length, read_only/destructive exclusivity).
 func BuildIR(svc protoreflect.ServiceDescriptor) ([]ToolIR, error) {
 	var tools []ToolIR
 	methods := svc.Methods()

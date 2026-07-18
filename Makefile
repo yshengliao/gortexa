@@ -2,7 +2,7 @@ GO ?= go
 GOBIN := $(shell $(GO) env GOPATH)/bin
 
 # Override the container's broken GOPRIVATE/GOPROXY for every recipe shell
-# (Make-exported vars win over inherited OS env). See install.sh for the why.
+# (Make-exported vars win over inherited OS env). See install.sh in the framework repo for the why.
 export GOFLAGS := -mod=mod
 export GOPROXY := https://proxy.golang.org,direct
 export GOSUMDB := sum.golang.org

@@ -29,7 +29,7 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   status, HTTP status, and MCP error envelopes. Only invalid-argument and
   unauthenticated errors forward their message; everything else surfaces a
   registry-safe message, and internal causes never leak.
-- **AI-skills layer** — `ai/v1` annotations → provider-neutral IR →
+- **AI-skills layer** — `gortexa.ai.v1` annotations → provider-neutral IR →
   MCP / OpenAI-strict / Gemini tool schemas (golden-locked). The MCP bridge
   dispatches `tools/call` back through the **full interceptor chain** via an
   in-process loopback, so AI calls inherit auth/validation.
@@ -139,7 +139,7 @@ From there, add what you need — both the AI and the non-AI path are first-clas
   for the governed chain, `httpcompat` for the grpc-gateway mux, `apperr` for
   the three-transport error model, and `mq` / `cache` / `storage` / `client`
   as batteries. See `cmd/server/main.go` for the full wiring.
-- **AI service**: annotate your protos with the ai.v1 annotations (their Go
+- **AI service**: annotate your protos with the gortexa.ai.v1 annotations (their Go
   bindings ship in this module) and wire `mcp.NewBridge` to expose the
   annotated RPCs as MCP tools behind the same interceptor chain.
 
@@ -147,7 +147,7 @@ Notes:
 
 - A project created by `gortexa create` already contains the framework source
   under its own module path — never also `go get` the framework there, or both
-  copies register the ai.v1 annotations proto and the binary panics at init.
+  copies register the gortexa.ai.v1 annotations proto and the binary panics at init.
 - Pair versions: a `gortexa` CLI ≥ v0.27 generates code for projects
   scaffolded from ≥ v0.27 (and vice versa) — the framework package layout
   changed in v0.27.
@@ -162,7 +162,7 @@ Notes:
 | `gortexa gen <domain>/<v> [Entity]` | Generate a CRUD API end-to-end: proto + logic stub + server wiring, then regenerate. |
 | `gortexa regen` | Regenerate from proto (buf lint → breaking → generate). |
 | `gortexa run` | Build and run the dev server. |
-| `gortexa export --format=mcp\|openai\|gemini` | Export the project's `ai/v1` tool schemas as provider-ready JSON. |
+| `gortexa export --format=mcp\|openai\|gemini` | Export the project's `gortexa.ai.v1` tool schemas as provider-ready JSON. |
 | `gortexa tools install` / `sync` | Install / re-pin the dev toolchain (`tools/go.mod` directives). |
 | `gortexa skills install` / `list` | Wire the AI-assist skills into Claude/Codex/Copilot/Antigravity. |
 | `gortexa doctor` | Check the Go toolchain and proto tools. |
@@ -171,7 +171,7 @@ Notes:
 
 | Path | What |
 |---|---|
-| `proto/` | Proto SSOT (`resource/v1`, `ai/v1`). Edit here, then `make gen`. |
+| `proto/` | Proto SSOT (`resource/v1`, `gortexa/ai/v1`). Edit here, then `make gen`. |
 | `gen/` | Generated code — **never hand-edit**, produced by `make gen`. Committed so the published module is self-contained for consumers; CI guards drift. |
 | `apperr/ auth/ cache/ client/ config/ health/ httpcompat/ interceptor/ kernel/ mcp/ mq/ observability/ storage/ testutil/` | Importable framework packages (`go get github.com/yshengliao/gortexa`). |
 | `internal/` | Non-API internals: `logic` (sample business logic, `gortexa gen` writes here), `resp` (RESP client backing the redis cache), `storage/db` (sqlc output). |

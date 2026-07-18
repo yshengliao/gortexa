@@ -30,7 +30,7 @@ import (
 )
 
 func main() {
-	exportFormat := flag.String("export-ai-schemas", "", "print the ai.v1 tool schemas (mcp|openai|gemini) to stdout and exit")
+	exportFormat := flag.String("export-ai-schemas", "", "print the gortexa.ai.v1 tool schemas (mcp|openai|gemini) to stdout and exit")
 	flag.Parse()
 	if *exportFormat != "" {
 		if err := exportSchemas(*exportFormat); err != nil {
@@ -59,7 +59,7 @@ func authSkip(reflection bool) func(method string) bool {
 	}
 }
 
-// mcpServices lists every service exposed over the MCP bridge and the ai.v1
+// mcpServices lists every service exposed over the MCP bridge and the gortexa.ai.v1
 // schema export.
 func mcpServices() []protoreflect.FullName {
 	return []protoreflect.FullName{
@@ -68,7 +68,7 @@ func mcpServices() []protoreflect.FullName {
 	}
 }
 
-// exportSchemas renders the project's ai.v1 tool schemas without starting the
+// exportSchemas renders the project's gortexa.ai.v1 tool schemas without starting the
 // server: the contract is compiled into this binary, so no config, storage or
 // listener is needed.
 func exportSchemas(format string) error {

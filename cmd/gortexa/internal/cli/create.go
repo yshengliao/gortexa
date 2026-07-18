@@ -93,7 +93,10 @@ func createProject(dest, module, repo, ref string) error {
 	if err := os.WriteFile(filepath.Join(dest, "README.md"), []byte(projectReadme(module)), 0o644); err != nil {
 		return cleanup(fmt.Errorf("write project README: %w", err))
 	}
-	if err := runCmd(dest, "git", "init", "-q"); err != nil {
+	// -b main: the copied CI workflow triggers on (and fetches) main; without
+	// pinning, a machine whose git still defaults to master gets a scaffold
+	// whose CI never runs on push and fails the origin/main fetch on PRs.
+	if err := runCmd(dest, "git", "init", "-q", "-b", "main"); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: git init failed:", err)
 	}
 	fmt.Printf("\n==> created %s\n", dest)
@@ -143,7 +146,7 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 	})
 }
 
-// devPlaceholderSecret mirrors internal/config: the value the server refuses to
+// devPlaceholderSecret mirrors config: the value the server refuses to
 // boot with. `create` swaps it for a fresh random secret in the new project.
 const devPlaceholderSecret = "dev-only-insecure-secret-change-me-please"
 

@@ -55,8 +55,10 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
             | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
 
+      # Tolerant: a repo without a main branch (e.g. a scaffold pushed with a
+      # different default) skips the fetch and the Makefile gate falls back.
       - name: Fetch origin/main for the buf breaking gate
-        run: git fetch --no-tags --depth=1 origin main
+        run: git fetch --no-tags --depth=1 origin main || echo "no origin/main — buf breaking gate will be skipped"
 
       - name: Generate (buf lint + generate)
         run: make gen

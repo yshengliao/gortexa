@@ -7,7 +7,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// ExportSchemas renders the ai.v1 tool schemas of svcs in the given provider
+// ExportSchemas renders the gortexa.ai.v1 tool schemas of svcs in the given provider
 // format ("mcp", "openai" or "gemini") as indented JSON. Each envelope matches
 // the provider's registration payload — an MCP tools/list result, an OpenAI
 // tools array, and a Gemini tools entry with function_declarations — so the
