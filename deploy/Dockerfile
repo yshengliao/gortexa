@@ -16,8 +16,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-# gen/ is gitignored; regenerate inside the image using the pinned tool
-# directives (tools/go.mod) rather than ad-hoc `go install @latest`.
+# gen/ is committed, but regenerate inside the image anyway using the pinned
+# tool directives (tools/go.mod) so the build never trusts stale artifacts.
 RUN go -C tools install tool \
  && PATH="$(go env GOPATH)/bin:$PATH" buf generate
 RUN CGO_ENABLED=0 go build -o /out/gortexa ./cmd/server

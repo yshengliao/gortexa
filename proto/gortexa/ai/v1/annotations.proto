@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+// Package gortexa.ai.v1 defines annotations that expose gRPC methods and request
+// fields to AI/LLM agents. They are opt-in: a method is only surfaced as a
+// tool when ai_tool.expose is true.
+package gortexa.ai.v1;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/yshengliao/gortexa/gen/gortexa/ai/v1;aiv1";
+
+// AIToolOptions marks an RPC as an AI tool and carries its metadata.
+message AIToolOptions {
+  // expose surfaces the RPC as an AI tool. Defaults to false (opt-in).
+  // Unary RPCs only: tools/call dispatches over a unary loopback, so exposing
+  // a streaming RPC fails loudly at IR build/export time.
+  bool expose = 1;
+  // name overrides the tool name. Must be <= 64 chars. Defaults to the RPC name.
+  string name = 2;
+  // description tells the agent what the tool does and when to use it.
+  string description = 3;
+  // read_only declares the tool has no side effects. Mutually exclusive with
+  // destructive (the IR builder rejects a method that sets both).
+  bool read_only = 4;
+  // destructive declares the tool performs an irreversible mutation.
+  bool destructive = 5;
+}
+
+// AIFieldOptions annotates a request field for AI tool input schemas.
+message AIFieldOptions {
+  // description documents the field for the agent.
+  string description = 1;
+  // required marks the field as required in the generated schema.
+  bool required = 2;
+}
+
+extend google.protobuf.MethodOptions {
+  AIToolOptions ai_tool = 50001;
+}
+
+extend google.protobuf.FieldOptions {
+  AIFieldOptions ai_field = 50002;
+}

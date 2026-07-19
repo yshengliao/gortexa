@@ -72,9 +72,11 @@ func createProject(dest, module, repo, ref string) error {
 	// Prune repo meta that must not ship inside a generated project: the CLI's
 	// own source tree and the bootstrap installer belong to the framework repo,
 	// and the module rewrite below would corrupt the install instructions they
-	// contain. The framework README is replaced with a project README after the
-	// rewrite.
-	for _, p := range []string{"cmd/gortexa", "install.sh"} {
+	// contain. gen/ is pruned because the framework commits it — a naive string
+	// rewrite inside a .pb.go length-prefixed rawDesc would corrupt the proto
+	// descriptor; the project regenerates all of gen/ via `make gen`. The
+	// framework README is replaced with a project README after the rewrite.
+	for _, p := range []string{"cmd/gortexa", "install.sh", "gen"} {
 		if err := os.RemoveAll(filepath.Join(dest, p)); err != nil {
 			return cleanup(fmt.Errorf("prune %s: %w", p, err))
 		}
@@ -91,7 +93,10 @@ func createProject(dest, module, repo, ref string) error {
 	if err := os.WriteFile(filepath.Join(dest, "README.md"), []byte(projectReadme(module)), 0o644); err != nil {
 		return cleanup(fmt.Errorf("write project README: %w", err))
 	}
-	if err := runCmd(dest, "git", "init", "-q"); err != nil {
+	// -b main: the copied CI workflow triggers on (and fetches) main; without
+	// pinning, a machine whose git still defaults to master gets a scaffold
+	// whose CI never runs on push and fails the origin/main fetch on PRs.
+	if err := runCmd(dest, "git", "init", "-q", "-b", "main"); err != nil {
 		fmt.Fprintln(os.Stderr, "warning: git init failed:", err)
 	}
 	fmt.Printf("\n==> created %s\n", dest)
@@ -101,7 +106,7 @@ func createProject(dest, module, repo, ref string) error {
 
 // rewriteModulePath replaces every occurrence of oldMod with newMod across the
 // project's text files (go.mod, tools/go.mod, *.go, *.proto, docs). gen/ is
-// gitignored and absent from a fresh clone, so generated code is later produced
+// pruned from the clone before this runs, so generated code is later produced
 // against newMod by `make gen`.
 func rewriteModulePath(root, oldMod, newMod string) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -141,7 +146,7 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 	})
 }
 
-// devPlaceholderSecret mirrors internal/config: the value the server refuses to
+// devPlaceholderSecret mirrors config: the value the server refuses to
 // boot with. `create` swaps it for a fresh random secret in the new project.
 const devPlaceholderSecret = "dev-only-insecure-secret-change-me-please"
 
@@ -246,7 +251,7 @@ make test
 - `+"`internal/logic/`"+` — your business logic
 - `+"`cmd/server/`"+` — server wiring
 - `+"`etc/config.yaml`"+` — configuration
-- `+"`gen/`"+` — generated code: never edit, never commit
+- `+"`gen/`"+` — generated code: never hand-edit; regenerate with `+"`make gen`"+` (committed — the copied CI guards drift)
 
 Docs: https://gortexa.sheng.page
 `, module)

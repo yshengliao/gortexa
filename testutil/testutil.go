@@ -6,10 +6,10 @@ package testutil
 import (
 	"bytes"
 	"context"
-	"flag"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.uber.org/goleak"
@@ -17,9 +17,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
-	"github.com/yshengliao/gortexa/internal/auth"
-	"github.com/yshengliao/gortexa/internal/interceptor"
-	"github.com/yshengliao/gortexa/internal/observability"
+	"github.com/yshengliao/gortexa/auth"
+	"github.com/yshengliao/gortexa/interceptor"
+	"github.com/yshengliao/gortexa/observability"
 )
 
 const bufSize = 1024 * 1024
@@ -27,7 +27,15 @@ const bufSize = 1024 * 1024
 // DefaultSecret is the 32-byte HS256 secret used by NewTestServer.
 var DefaultSecret = []byte("0123456789abcdef0123456789abcdef")
 
-var update = flag.Bool("update", false, "update golden files")
+// updateGolden reports whether Golden should rewrite files instead of
+// comparing. Controlled by the GORTEXA_UPDATE_GOLDEN env var rather than a
+// -update flag: registering a global flag at init would panic any consumer
+// test binary that defines its own "update" flag (a common golden-file
+// convention), and testutil is part of the public module surface.
+func updateGolden() bool {
+	v := os.Getenv("GORTEXA_UPDATE_GOLDEN")
+	return v != "" && v != "0" && !strings.EqualFold(v, "false")
+}
 
 type tsConfig struct {
 	secret []byte
@@ -97,11 +105,12 @@ func NewTestServer(t *testing.T, register func(*grpc.Server), opts ...TestServer
 	return conn
 }
 
-// Golden compares got against testdata/<name>.golden, or rewrites it under -update.
+// Golden compares got against testdata/<name>.golden, or rewrites it when the
+// GORTEXA_UPDATE_GOLDEN env var is set.
 func Golden(t *testing.T, name string, got []byte) {
 	t.Helper()
 	path := filepath.Join("testdata", name+".golden")
-	if *update {
+	if updateGolden() {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -112,7 +121,7 @@ func Golden(t *testing.T, name string, got []byte) {
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read golden %s: %v (run tests with -update to create it)", path, err)
+		t.Fatalf("read golden %s: %v (run tests with GORTEXA_UPDATE_GOLDEN=1 to create it)", path, err)
 	}
 	if !bytes.Equal(want, got) {
 		t.Errorf("golden mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", name, got, want)

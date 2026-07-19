@@ -44,7 +44,7 @@ drops its git history, and rewrites the Go module path, leaving a working projec
 4. **Add your own APIs** with the generating-apis skill (`gortexa gen`).
 
 ## Hard rules
-- Never hand-edit `gen/` — it is gitignored and produced by `make gen`.
+- Never hand-edit `gen/` — it is produced only by `make gen` and committed (the copied CI guards drift).
 - The sample `resource` service is a reference; once you have your own domains,
   remove its proto/logic and the `gortexa:*`-wired lines in `cmd/server/main.go`.
 

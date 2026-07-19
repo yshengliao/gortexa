@@ -13,11 +13,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	[[.GoPkg]] "[[.Module]]/gen/[[.Domain]]/[[.Version]]"
-	apperr "[[.Module]]/internal/errors"
+	apperr "[[.Module]]/apperr"
 )
 
 // [[.Entity]]Service is an in-memory implementation of
-// [[.Domain]].[[.Version]].[[.Entity]]Service. Back it with internal/storage for
+// [[.Domain]].[[.Version]].[[.Entity]]Service. Back it with storage for
 // a real datastore; the in-memory store is enough to exercise gRPC, the gateway
 // and MCP end-to-end.
 type [[.Entity]]Service struct {

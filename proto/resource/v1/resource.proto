@@ -8,7 +8,7 @@ import "google/api/annotations.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "buf/validate/validate.proto";
-import "ai/v1/annotations.proto";
+import "gortexa/ai/v1/annotations.proto";
 
 option go_package = "github.com/yshengliao/gortexa/gen/resource/v1;resourcev1";
 
@@ -24,7 +24,7 @@ enum Status {
 message Resource {
   string id = 1;
   string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 128}];
-  string owner = 3 [(ai.v1.ai_field) = {description: "Owning user id."}];
+  string owner = 3 [(gortexa.ai.v1.ai_field) = {description: "Owning user id."}];
   Status status = 4;
   google.protobuf.Timestamp created_at = 5;
 }
@@ -36,7 +36,7 @@ message CreateResourceRequest {
 message GetResourceRequest {
   string id = 1 [
     (buf.validate.field).string.min_len = 1,
-    (ai.v1.ai_field) = {description: "Resource id (uuid).", required: true}
+    (gortexa.ai.v1.ai_field) = {description: "Resource id (uuid).", required: true}
   ];
 }
 
@@ -59,7 +59,7 @@ message ListResourcesResponse {
 message UpdateResourceRequest {
   string id = 1 [(buf.validate.field).string.min_len = 1];
   optional string name = 2 [(buf.validate.field).string = {min_len: 1, max_len: 128}];
-  optional string owner = 3 [(ai.v1.ai_field) = {description: "Owning user id."}];
+  optional string owner = 3 [(gortexa.ai.v1.ai_field) = {description: "Owning user id."}];
   optional Status status = 4;
 }
 
@@ -76,7 +76,7 @@ service ResourceService {
       post: "/v1/resources"
       body: "resource"
     };
-    option (ai.v1.ai_tool) = {
+    option (gortexa.ai.v1.ai_tool) = {
       expose: true
       name: "create_resource"
       description: "Create a new resource. Use when a resource does not yet exist."
@@ -87,7 +87,7 @@ service ResourceService {
   // GetResource fetches a single resource by id. Read-only tool.
   rpc GetResource(GetResourceRequest) returns (Resource) {
     option (google.api.http) = {get: "/v1/resources/{id}"};
-    option (ai.v1.ai_tool) = {
+    option (gortexa.ai.v1.ai_tool) = {
       expose: true
       name: "get_resource"
       description: "Fetch a single resource by id and return its current state."
@@ -98,7 +98,7 @@ service ResourceService {
   // ListResources lists resources, optionally filtered by owner. Read-only tool.
   rpc ListResources(ListResourcesRequest) returns (ListResourcesResponse) {
     option (google.api.http) = {get: "/v1/resources"};
-    option (ai.v1.ai_tool) = {
+    option (gortexa.ai.v1.ai_tool) = {
       expose: true
       name: "list_resources"
       description: "List resources, optionally filtered by owner, with paging."
@@ -118,7 +118,7 @@ service ResourceService {
   // DeleteResource permanently deletes a resource. Destructive tool.
   rpc DeleteResource(DeleteResourceRequest) returns (google.protobuf.Empty) {
     option (google.api.http) = {delete: "/v1/resources/{id}"};
-    option (ai.v1.ai_tool) = {
+    option (gortexa.ai.v1.ai_tool) = {
       expose: true
       name: "delete_resource"
       description: "Permanently delete a resource by id."
