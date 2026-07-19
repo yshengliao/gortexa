@@ -51,7 +51,7 @@ func TestPgBouncerPoolCRUD(t *testing.T) {
 
 	// Apply the real migration to a clean slate: schema drift between
 	// db/migrations and the sqlc-generated queries fails here.
-	migration, err := os.ReadFile(filepath.Join("..", "..", "db", "migrations", "0001_init.sql"))
+	migration, err := os.ReadFile(filepath.Join("..", "db", "migrations", "0001_init.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
