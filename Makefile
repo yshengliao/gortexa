@@ -11,7 +11,7 @@ export GOPRIVATE :=
 export GOINSECURE :=
 export PATH := $(GOBIN):$(PATH)
 
-.PHONY: bootstrap gen sqlc build test test-integration cover lint vet vuln tidy clean run skills
+.PHONY: bootstrap gen sqlc build test test-integration cover bench lint vet vuln tidy clean run skills
 
 bootstrap:
 	@if [ -f install.sh ]; then \
@@ -53,6 +53,13 @@ cover:
 	$(GO) test -coverprofile=coverage.out -covermode=atomic ./...
 	@grep -vE '/gen/|/cmd/' coverage.out > coverage.filtered.out || true
 	$(GO) tool cover -func=coverage.filtered.out | tail -1
+
+# bench runs every microbenchmark and summarizes with benchstat. allocs/op and
+# B/op are machine-independent; ns/op depends on the host. bench.out is
+# gitignored. `make bootstrap` installs benchstat (tools/go.mod).
+bench:
+	$(GO) test -run='^$$' -bench=. -benchmem -count=8 ./... | tee bench.out
+	benchstat bench.out
 
 lint:
 	golangci-lint run ./...

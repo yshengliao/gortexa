@@ -1,6 +1,7 @@
 # Gortexa
 
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Docs](https://img.shields.io/badge/docs-gortexa.sheng.page-2563EB)](https://gortexa.sheng.page)
 [![Status](https://img.shields.io/badge/status-active-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![AI generated](https://img.shields.io/badge/AI%20generated-Fable%205%20%7C%20Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
@@ -13,6 +14,8 @@ the single source of truth; **one h2c port** multiplexes three protocols:
 - **MCP** (Model Context Protocol, Streamable HTTP) for AI agents
 
 …all sharing one interceptor chain, one error model, and one auth path.
+
+**Documentation: [gortexa.sheng.page](https://gortexa.sheng.page)** — quickstarts, concepts, configuration, and per-component usage after `go get` ([Components](https://gortexa.sheng.page/components/)).
 
 ## Highlights
 
@@ -138,7 +141,9 @@ From there, add what you need — both the AI and the non-AI path are first-clas
 - **Non-AI service**: `config.MustBuild` for layered config, `interceptor.NewSet`
   for the governed chain, `httpcompat` for the grpc-gateway mux, `apperr` for
   the three-transport error model, and `mq` / `cache` / `storage` / `client`
-  as batteries. See `cmd/server/main.go` for the full wiring.
+  as batteries. See `cmd/server/main.go` for the full wiring, and
+  [gortexa.sheng.page/components](https://gortexa.sheng.page/components/) for
+  each package's purpose, import path and a minimal example.
 - **AI service**: annotate your protos with the gortexa.ai.v1 annotations (their Go
   bindings ship in this module) and wire `mcp.NewBridge` to expose the
   annotated RPCs as MCP tools behind the same interceptor chain.
@@ -207,17 +212,39 @@ Notes:
 
 ## Performance
 
-Measured on **Go 1.26** with `go test -benchmem -count=8` (summarized with
-`benchstat`) on a shared Intel Xeon @ 2.1 GHz. `allocs/op` and `B/op` are the machine-independent signals;
-`ns/op` is indicative (shared CI CPU). Reproduce with
-`go test -run='^$' -bench=. -benchmem -count=8 ./...`.
+Freshly measured on an **Apple M1** (`go1.26.5`, `darwin/arm64`) with
+`go test -benchmem -count=8` summarized by `benchstat` — reproduce with
+**`make bench`**. `allocs/op` and `B/op` are the machine-independent signals
+(they match earlier CI-host runs exactly); `ns/op` is host-specific (an M1 runs
+faster than the shared CI Xeon these paths were previously reported on).
 
-**The Go 1.26 win — `errors.AsType` on the error hot path.** The three-transport
-error resolver swapped the reflection-based `errors.As` for the new generic
-`errors.AsType[*Error]`, removing one allocation per resolve. Same-toolchain A/B
-(`go1.26.4`, `BenchmarkErrorResolve`, n=8, on the earlier 2.8 GHz host — the
-durable result is the **allocation** reduction, which the current run above still
-confirms at 104 B / 2 allocs):
+**Framework hot paths** (Apple M1, `go1.26.5`, benchstat median of 8):
+
+| Hot path | benchmark | ns/op | B/op | allocs/op |
+|---|---|--:|--:|--:|
+| Error resolve → gRPC status (3-transport map) | `ErrorResolve` | ~70 | 104 | 2 |
+| Rate-limiter `Allow` (sharded, serial) | `RateLimiterAllow` | ~130 | 0 | 0 |
+| Rate-limiter `Allow` (parallel) | `RateLimiterAllowParallel` | ~38 | 0 | 0 |
+| MCP tool downgrade (per tool) | `DowngradeMCP` | ~10 | 2 | 1 |
+| MCP `tools/list` (memoized) | `ToolsListMemoized` | ~142 | 360 | 3 |
+| Resource clone (proto deep-copy) | `ResourceClone` | ~121 | 176 | 2 |
+| Resource get (in-memory store) | `GetResource` | ~131 | 176 | 2 |
+| Full interceptor chain (8 stages, unary) | `ChainUnary` | ~1,552 | 1,969 | 27 |
+
+The paths that must never allocate (rate-limiter `Allow`) hold at **0 allocs/op**,
+and the full 8-stage interceptor chain stays at **27 allocs/op** — the
+transport-boundary error normalization only runs on the error path, so the
+success path is unchanged. The `B/op` and `allocs/op` columns reproduce the
+earlier CI-host numbers to the byte, which is the point: allocation behaviour is
+a property of the code, not the machine.
+
+**The `errors.AsType` win (historical, same-toolchain A/B).** The three-transport
+error resolver swapped the reflection-based `errors.As` for Go 1.26's generic
+`errors.AsType[*Error]`, removing one allocation per resolve. The `before` row
+needs the pre-swap code, so it is kept as the original measurement (`go1.26.4`,
+`BenchmarkErrorResolve`, n=8, on a 2.8 GHz host); the durable result is the
+**allocation** reduction, which the M1 run above still confirms at **104 B / 2
+allocs**:
 
 | `resolve` via | ns/op | B/op | allocs/op |
 |---|--:|--:|--:|
@@ -225,32 +252,10 @@ confirms at 104 B / 2 allocs):
 | `errors.AsType` (after) | 144.8 | 104 | **2** |
 | **Δ** | **−40%** | **−7%** | **−33%** (p=0.000) |
 
-The toolchain bump itself (Green Tea GC, faster `io.ReadAll`) is
-allocation-neutral on the other hot paths — no regressions, with
-the measurable framework win coming from the `errors.AsType` adoption above.
-
-**Framework hot paths** (`go1.26.4`, `-benchmem -count=8`):
-
-| Hot path | ns/op | B/op | allocs/op |
-|---|--:|--:|--:|
-| Error resolve → gRPC status (3-transport map) | ~105 | 104 | 2 |
-| Rate-limiter `Allow` (sharded, serial) | ~197 | 0 | 0 |
-| Rate-limiter `Allow` (parallel) | ~50 | 0 | 0 |
-| MCP tool downgrade (per tool) | ~14 | 2 | 1 |
-| MCP `tools/list` (memoized) | ~285 | 360 | 3 |
-| Resource clone (proto deep-copy) | ~195 | 176 | 2 |
-| Resource get (in-memory store) | ~214 | 176 | 2 |
-| Full interceptor chain (8 stages, unary) | ~2,383 | 1,968 | 27 |
-
-The paths that must never allocate (rate-limiter `Allow`) hold at **0 allocs/op**.
-The fourth-round hardening is allocation-neutral on these paths (benchstat
-before/after: rate-limiter `Allow` stays 0 allocs/op, the full interceptor chain
-holds at 27 allocs/op — the added transport-boundary error normalization only
-runs on the error path, so the success path is unchanged).
 `BenchmarkBridgeHandlePost` separately drives a **512 KB** MCP request through the
-full HTTP → JSON-RPC → dispatch path to exercise Go 1.26's faster `io.ReadAll`; at
-that body size the read/parse allocation (~1.6 MB) dominates, so it measures
-end-to-end large-body handling rather than `io.ReadAll` in isolation.
+full HTTP → JSON-RPC → dispatch path: on the M1 it runs in ~3.53 ms at 1.55 MiB /
+115 allocs, where the read/parse of the large body dominates — it measures
+end-to-end large-body handling rather than any single hot path.
 
 ## Provenance
 
