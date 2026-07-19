@@ -84,7 +84,7 @@ type Bridge struct {
 	allowedOrigins map[string]struct{}
 }
 
-// NewBridge builds a bridge exposing the gortexa.gortexa.ai.v1-annotated methods of the given
+// NewBridge builds a bridge exposing the gortexa.ai.v1-annotated methods of the given
 // services. tools/call dispatches over conn (which should be the in-process
 // loopback so the full interceptor chain applies).
 func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor, reg *apperr.Registry, observCfg ...config.ObservConfig) (*Bridge, error) {

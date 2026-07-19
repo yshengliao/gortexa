@@ -7,7 +7,7 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
 ## Iron rules
 - **Never hand-edit anything under `gen/`.** It is produced only by `make gen`
   (`buf lint → buf breaking → buf generate`). `gen/` is committed (module
-  consumers need it: the ai.v1 bindings are imported by mcp, and consumer
+  consumers need it: the gortexa.ai.v1 bindings are imported by mcp, and consumer
   `go mod tidy` resolves the gen/resource test dependencies of imported
   packages) — but it is never hand-edited; `make gen` regenerates it
   byte-identically and CI fails on drift. Editing the contract means editing

@@ -1,4 +1,4 @@
-# Annotation 速查（google.api.http + ai/v1）
+# Annotation 速查（google.api.http + gortexa.ai.v1）
 
 載入時機：新增或修改 RPC、需要 HTTP/JSON 存取、或要把 RPC 暴露給 AI agent 時。
 
@@ -41,7 +41,7 @@ service ResourceService {
 - `body: "*"` 整個 request 當 body；`body: "resource"` 只取該欄位；不寫 body 則欄位走 query（適合 GET）。
 - 未出現在 path 的 scalar 欄位在 GET 自動成為 query parameter。
 
-## ai/v1 annotation（AI-skill 暴露）
+## gortexa.ai.v1 annotation（AI-skill 暴露）
 
 ```protobuf
 import "gortexa/ai/v1/annotations.proto";

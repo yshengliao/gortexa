@@ -16,9 +16,11 @@ lint:
 breaking:
   # One-time v0.27 vendor-prefix move: ai/v1 was deleted in favour of
   # gortexa/ai/v1 (wire-compatible: extension numbers unchanged). Ignoring the
-  # OLD path suppresses only the deletion; the new gortexa/ai/v1 file stays
-  # fully gated. Drop the entry once a release containing gortexa/ai is the
-  # comparison base.
+  # OLD path suppresses only the deletion; message-level breaks in the new
+  # gortexa/ai/v1 file are still gated. (buf's FILE rules do not catch an
+  # extension *renumber* — that wire-compat invariant is pinned by a golden
+  # test in mcp instead.) Drop the entry once a release containing gortexa/ai
+  # is the comparison base.
   ignore:
     - proto/ai
   use:

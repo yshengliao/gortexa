@@ -10,7 +10,7 @@ Regenerate all code artifacts from Protobuf definitions in this Gortexa project.
 ## When to use this skill
 - A `.proto` file under `proto/` (including `proto/gortexa/ai/v1/`) was added or changed.
 - The user asks to "regen", "regenerate", "rebuild stubs", "update the gRPC code", "add an RPC", or otherwise change the API contract.
-- After editing `google.api.http` annotations (HTTP/JSON mapping) or `ai/v1` AI-skill annotations.
+- After editing `google.api.http` annotations (HTTP/JSON mapping) or `gortexa.ai.v1` AI-skill annotations.
 
 ## What this skill does NOT do
 - It does not hand-write or hand-edit any file under `gen/`. Generated code is produced only by `buf generate`.
@@ -41,4 +41,4 @@ Regenerate all code artifacts from Protobuf definitions in this Gortexa project.
 - Type alignment: proto `int64` ↔ PostgreSQL `bigint`, `string` ↔ `text`. JSON serialises `int64` as a string. Keep proto field types aligned with the backing column types at design time.
 
 ## Reference
-- `references/annotation-guide.md` — quick reference for `google.api.http` (REST mapping) and `ai/v1` (AI-skill) annotations. Load it when editing or adding annotations.
+- `references/annotation-guide.md` — quick reference for `google.api.http` (REST mapping) and `gortexa.ai.v1` (AI-skill) annotations. Load it when editing or adding annotations.
