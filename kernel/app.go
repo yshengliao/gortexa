@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -43,6 +44,9 @@ type App struct {
 	mcp          http.Handler
 	httpWrap     func(http.Handler) http.Handler
 	httpSrv      *http.Server
+	extraSrvs    []*extraListener
+	adminAddrMu  sync.Mutex
+	adminAddrV   net.Addr
 	shutdownFns  []func(context.Context) error
 	shutdownOnce sync.Once
 	started      atomic.Bool
@@ -68,6 +72,7 @@ type appConfig struct {
 	httpWrap        func(http.Handler) http.Handler
 	shutdownFns     []func(context.Context) error
 	extraServerOpts []grpc.ServerOption
+	extraListeners  []extraListenerSpec
 }
 
 func WithConfig(c *config.Config) Option { return func(a *appConfig) { a.cfg = c } }
@@ -160,6 +165,20 @@ func New(opts ...Option) (*App, error) {
 		WriteTimeout:      ac.cfg.Server.WriteTimeout,
 		IdleTimeout:       ac.cfg.Server.IdleTimeout,
 		ReadHeaderTimeout: ac.cfg.Server.ReadHeaderTimeout,
+	}
+	// Build any secondary listeners (opt-in). Their http.Servers are allocated
+	// here (Handler known); serve() binds and serves them, Shutdown stops them.
+	for _, spec := range ac.extraListeners {
+		h := spec.handler
+		if spec.admin {
+			h = a.adminHealthHandler()
+		}
+		a.extraSrvs = append(a.extraSrvs, &extraListener{
+			lis:   spec.lis,
+			addr:  spec.addr,
+			admin: spec.admin,
+			srv:   &http.Server{Handler: h, ReadHeaderTimeout: adminReadHeaderTimeout},
+		})
 	}
 	a.grpcSrv = grpc.NewServer(serverOpts...)
 	grpc_health_v1.RegisterHealthServer(a.grpcSrv, a.health.GRPCHealthServer())
@@ -291,7 +310,32 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	// interceptor chain.
 	go func() { _ = a.grpcSrv.Serve(a.loopbackLis) }()
 
-	errCh := make(chan error, 1)
+	// errCh absorbs the Serve return of the main server plus every secondary
+	// listener, so on shutdown their goroutines never block on an unread send.
+	errCh := make(chan error, 1+len(a.extraSrvs))
+
+	// Bind and serve any secondary listeners before the main port. A bind
+	// failure here is fail-loud: tear down (which runs the shutdown hooks) and
+	// return, exactly like a main-listener bind failure.
+	for _, es := range a.extraSrvs {
+		lis := es.lis
+		if lis == nil {
+			l, lerr := net.Listen("tcp", es.addr)
+			if lerr != nil {
+				_ = a.Shutdown(context.Background())
+				return fmt.Errorf("kernel: bind extra listener %q: %w", es.addr, lerr)
+			}
+			lis = l
+		}
+		if es.admin {
+			a.adminAddrMu.Lock()
+			a.adminAddrV = lis.Addr()
+			a.adminAddrMu.Unlock()
+		}
+		a.log.Info("gortexa serving extra listener", "addr", lis.Addr().String(), "admin", es.admin)
+		go func(s *http.Server, l net.Listener) { errCh <- s.Serve(l) }(es.srv, lis)
+	}
+
 	go func() { errCh <- a.httpSrv.Serve(ln) }()
 
 	select {
@@ -327,6 +371,16 @@ func (a *App) Shutdown(ctx context.Context) error {
 				// goroutines don't leak — mirrors the grpcSrv.Stop fallback below.
 				_ = a.httpSrv.Close()
 				retErr = err
+			}
+		}
+		// Stop secondary listeners the same way (Shutdown on a never-served
+		// server is a safe no-op, covering a pre-serve exit).
+		for _, es := range a.extraSrvs {
+			if err := es.srv.Shutdown(tctx); err != nil {
+				_ = es.srv.Close()
+				if retErr == nil {
+					retErr = err
+				}
 			}
 		}
 		// Close the loopback under the same lock that guards its creation, and
