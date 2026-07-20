@@ -169,15 +169,31 @@ func New(opts ...Option) (*App, error) {
 	// Build any secondary listeners (opt-in). Their http.Servers are allocated
 	// here (Handler known); serve() binds and serves them, Shutdown stops them.
 	for _, spec := range ac.extraListeners {
+		if !spec.admin && spec.lis == nil {
+			return nil, fmt.Errorf("kernel: WithExtraListener requires a non-nil listener")
+		}
 		h := spec.handler
+		srv := &http.Server{
+			Handler:           h,
+			ReadHeaderTimeout: adminReadHeaderTimeout,
+			IdleTimeout:       adminIdleTimeout, // safe for any handler: only fires on an idle conn
+		}
 		if spec.admin {
+			// The built-in admin health server serves short request/response
+			// bodies, so it takes real read/write deadlines (unlike the main h2c
+			// port, which must not deadline long-lived streams). A consumer's own
+			// WithExtraListener handler may stream, so its read/write deadlines are
+			// left to the caller.
 			h = a.adminHealthHandler()
+			srv.Handler = h
+			srv.ReadTimeout = adminReadWriteTimeout
+			srv.WriteTimeout = adminReadWriteTimeout
 		}
 		a.extraSrvs = append(a.extraSrvs, &extraListener{
 			lis:   spec.lis,
 			addr:  spec.addr,
 			admin: spec.admin,
-			srv:   &http.Server{Handler: h, ReadHeaderTimeout: adminReadHeaderTimeout},
+			srv:   srv,
 		})
 	}
 	a.grpcSrv = grpc.NewServer(serverOpts...)
@@ -322,6 +338,10 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 		if lis == nil {
 			l, lerr := net.Listen("tcp", es.addr)
 			if lerr != nil {
+				// The main listener ln was opened by Run but is not yet handed to
+				// httpSrv.Serve, so Shutdown (which only closes what Serve tracked)
+				// would leak its fd — close it explicitly before bailing.
+				_ = ln.Close()
 				_ = a.Shutdown(context.Background())
 				return fmt.Errorf("kernel: bind extra listener %q: %w", es.addr, lerr)
 			}

@@ -117,9 +117,20 @@ func TestAdminAddrNilWithoutOption(t *testing.T) {
 	}
 }
 
-// A bind failure on the admin listener is fail-loud: Run returns the error.
+// A bind failure on the admin listener is fail-loud (Run returns the error) and
+// must not leak the already-bound main listener — the main port is re-bindable
+// afterwards.
 func TestWithAdminListenerBindFailure(t *testing.T) {
-	cfg := &config.Config{Server: config.ServerConfig{Addr: "127.0.0.1:0", ShutdownTimeout: 2 * time.Second}}
+	// Pick a currently-free fixed port for the main listener so we can prove it
+	// is released after the failed Run.
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mainAddr := probe.Addr().String()
+	_ = probe.Close()
+
+	cfg := &config.Config{Server: config.ServerConfig{Addr: mainAddr, ShutdownTimeout: 2 * time.Second}}
 	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()),
 		kernel.WithAdminListener("127.0.0.1:70000")) // invalid port → bind fails
 	if err != nil {
@@ -127,5 +138,20 @@ func TestWithAdminListenerBindFailure(t *testing.T) {
 	}
 	if err := app.Run(context.Background()); err == nil {
 		t.Fatal("Run must return an error when the admin listener cannot bind")
+	}
+	// The main listener must have been closed, not leaked.
+	l2, err := net.Listen("tcp", mainAddr)
+	if err != nil {
+		t.Fatalf("main listener leaked (cannot re-bind %s): %v", mainAddr, err)
+	}
+	_ = l2.Close()
+}
+
+// WithExtraListener with a nil listener is a programming error caught at New.
+func TestWithExtraListenerNilFailsLoud(t *testing.T) {
+	cfg := &config.Config{Server: config.ServerConfig{Addr: "127.0.0.1:0", ShutdownTimeout: 2 * time.Second}}
+	if _, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()),
+		kernel.WithExtraListener(nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))); err == nil {
+		t.Fatal("New must reject WithExtraListener(nil, ...)")
 	}
 }

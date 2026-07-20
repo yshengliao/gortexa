@@ -31,6 +31,10 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
   cause is never serialized.
 - **OTel is a StatsHandler, not an interceptor.** Do not add the deprecated
   otelgrpc interceptors.
+- **One h2c port stays one port.** The main listener multiplexes gRPC +
+  HTTP/JSON + MCP on a single h2c port — that is not negotiable. A separate
+  ops/admin surface is opt-in via `kernel.WithAdminListener(addr)` (health only)
+  or `WithExtraListener(lis, h)`; it never changes the main port's multiplexing.
 - **Auth is pluggable; the chain order is not.** The fixed eight-stage chain is
   immutable, but its auth stage runs an `auth.Authenticator` — JWT
   (`NewJWTAuthenticator`) is just the default. Set `interceptor.Config.Verifier`

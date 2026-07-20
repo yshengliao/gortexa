@@ -6,9 +6,15 @@ import (
 	"time"
 )
 
-// adminReadHeaderTimeout bounds the header phase on secondary listeners (ops
-// probes are short); the body/idle phases use net/http defaults.
-const adminReadHeaderTimeout = 5 * time.Second
+// Timeouts for secondary listeners. ReadHeaderTimeout (slow-loris guard) and
+// IdleTimeout apply to every secondary server, including a consumer's own
+// WithExtraListener handler. The built-in admin health server additionally
+// takes full read/write deadlines because it only serves short bodies.
+const (
+	adminReadHeaderTimeout = 5 * time.Second
+	adminIdleTimeout       = 60 * time.Second
+	adminReadWriteTimeout  = 10 * time.Second
+)
 
 // extraListenerSpec is a secondary listener requested via an Option, resolved
 // into an extraListener in New. Exactly one of lis (caller-owned) or addr
