@@ -7,7 +7,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/metadata"
 
 	apperr "github.com/yshengliao/gortexa/apperr"
 	authpkg "github.com/yshengliao/gortexa/auth"
@@ -17,28 +16,11 @@ import (
 // SkipFunc decides whether a method bypasses authentication.
 type SkipFunc func(fullMethod string) bool
 
-func authenticate(ctx context.Context, v *authpkg.Verifier) (context.Context, error) {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return ctx, apperr.New(apperr.CatUnauthenticated, "missing authorization")
-	}
-	vals := md.Get(authpkg.MetadataKey)
-	if len(vals) == 0 {
-		return ctx, apperr.New(apperr.CatUnauthenticated, "missing authorization")
-	}
-	tok, ok := authpkg.BearerToken(vals[0])
-	if !ok {
-		return ctx, apperr.New(apperr.CatUnauthenticated, "malformed authorization")
-	}
-	claims, err := v.Verify(tok)
-	if err != nil {
-		return ctx, err
-	}
-	return authpkg.WithClaims(ctx, claims), nil
-}
-
-// Auth verifies the bearer token and injects claims, unless skip says otherwise.
-func Auth(v *authpkg.Verifier, skip SkipFunc, metrics ...*observability.GovernanceMetrics) grpc.UnaryServerInterceptor {
+// AuthWith authenticates via a pluggable authpkg.Authenticator, injecting the
+// returned context into the handler unless skip says otherwise. It is the core
+// of the auth stage; Auth is the JWT convenience wrapper. This is what lets a
+// non-JWT consumer (static bearer, mTLS, API key) run the stock chain.
+func AuthWith(authr authpkg.Authenticator, skip SkipFunc, metrics ...*observability.GovernanceMetrics) grpc.UnaryServerInterceptor {
 	var gm *observability.GovernanceMetrics
 	if len(metrics) > 0 {
 		gm = metrics[0]
@@ -47,7 +29,7 @@ func Auth(v *authpkg.Verifier, skip SkipFunc, metrics ...*observability.Governan
 		if skip != nil && skip(info.FullMethod) {
 			return handler(ctx, req)
 		}
-		ctx, err := authenticate(ctx, v)
+		ctx, err := authr.Authenticate(ctx)
 		if err != nil {
 			if gm != nil {
 				gm.AuthDenied.Add(ctx, 1, metric.WithAttributes(attribute.String("method", info.FullMethod), attribute.String("reason", authReason(err))))
@@ -58,8 +40,8 @@ func Auth(v *authpkg.Verifier, skip SkipFunc, metrics ...*observability.Governan
 	}
 }
 
-// AuthStream is the streaming counterpart of Auth.
-func AuthStream(v *authpkg.Verifier, skip SkipFunc, metrics ...*observability.GovernanceMetrics) grpc.StreamServerInterceptor {
+// AuthStreamWith is the streaming counterpart of AuthWith.
+func AuthStreamWith(authr authpkg.Authenticator, skip SkipFunc, metrics ...*observability.GovernanceMetrics) grpc.StreamServerInterceptor {
 	var gm *observability.GovernanceMetrics
 	if len(metrics) > 0 {
 		gm = metrics[0]
@@ -68,7 +50,7 @@ func AuthStream(v *authpkg.Verifier, skip SkipFunc, metrics ...*observability.Go
 		if skip != nil && skip(info.FullMethod) {
 			return handler(srv, ss)
 		}
-		ctx, err := authenticate(ss.Context(), v)
+		ctx, err := authr.Authenticate(ss.Context())
 		if err != nil {
 			if gm != nil {
 				gm.AuthDenied.Add(ss.Context(), 1, metric.WithAttributes(attribute.String("method", info.FullMethod), attribute.String("reason", authReason(err))))
@@ -77,6 +59,18 @@ func AuthStream(v *authpkg.Verifier, skip SkipFunc, metrics ...*observability.Go
 		}
 		return handler(srv, wrapStream(ss, ctx))
 	}
+}
+
+// Auth verifies an HS256 JWT bearer token and injects claims, unless skip says
+// otherwise. It is a thin wrapper over AuthWith with a JWT authenticator, kept
+// for backward compatibility — its signature is unchanged.
+func Auth(v *authpkg.Verifier, skip SkipFunc, metrics ...*observability.GovernanceMetrics) grpc.UnaryServerInterceptor {
+	return AuthWith(authpkg.NewJWTAuthenticator(v), skip, metrics...)
+}
+
+// AuthStream is the streaming counterpart of Auth.
+func AuthStream(v *authpkg.Verifier, skip SkipFunc, metrics ...*observability.GovernanceMetrics) grpc.StreamServerInterceptor {
+	return AuthStreamWith(authpkg.NewJWTAuthenticator(v), skip, metrics...)
 }
 
 func authReason(err error) string {

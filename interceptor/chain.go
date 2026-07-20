@@ -13,7 +13,13 @@ import (
 
 // Config builds a Set.
 type Config struct {
-	Logger         *slog.Logger
+	Logger *slog.Logger
+	// Authenticator, when set, drives the auth stage — use it for any non-JWT
+	// scheme (static bearer, mTLS, API key). When nil, a JWT authenticator is
+	// built from Verifier, so existing Verifier-only configs are unchanged.
+	Authenticator authpkg.Authenticator
+	// Verifier configures the built-in HS256 JWT authenticator. Ignored when
+	// Authenticator is set.
 	Verifier       *authpkg.Verifier
 	AuthSkip       SkipFunc
 	RateLimit      RateLimitConfig
@@ -47,6 +53,18 @@ type Set struct {
 // NewSet constructs every interceptor from config, sharing stateful objects
 // (limiter, breaker, shedder, validator) between the unary and stream forms.
 func NewSet(cfg Config) (Set, error) {
+	// Resolve the auth stage: an explicit Authenticator wins; otherwise build
+	// the JWT authenticator from Verifier (so Verifier-only configs are
+	// unchanged). Neither set is a startup error rather than a request-time nil
+	// panic — the fixed chain always includes auth.
+	authr := cfg.Authenticator
+	if authr == nil && cfg.Verifier != nil {
+		authr = authpkg.NewJWTAuthenticator(cfg.Verifier)
+	}
+	if authr == nil {
+		return Set{}, fmt.Errorf("interceptor: Config needs an Authenticator or a Verifier for the auth stage")
+	}
+
 	validator, err := NewValidator()
 	if err != nil {
 		return Set{}, fmt.Errorf("interceptor: build validator: %w", err)
@@ -62,7 +80,7 @@ func NewSet(cfg Config) (Set, error) {
 		LoadShedding:   shedder.Unary(),
 		RateLimit:      limiter.Unary(),
 		CircuitBreaker: breaker.Unary(),
-		Auth:           Auth(cfg.Verifier, cfg.AuthSkip, cfg.Metrics),
+		Auth:           AuthWith(authr, cfg.AuthSkip, cfg.Metrics),
 		Validation:     Validation(validator, cfg.Metrics),
 
 		RecoveryStream:       RecoveryStream(cfg.Logger),
@@ -71,7 +89,7 @@ func NewSet(cfg Config) (Set, error) {
 		LoadSheddingStream:   shedder.Stream(),
 		RateLimitStream:      limiter.Stream(),
 		CircuitBreakerStream: breaker.Stream(),
-		AuthStream:           AuthStream(cfg.Verifier, cfg.AuthSkip, cfg.Metrics),
+		AuthStream:           AuthStreamWith(authr, cfg.AuthSkip, cfg.Metrics),
 		ValidationStream:     ValidationStream(validator, cfg.Metrics),
 	}, nil
 }
