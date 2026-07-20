@@ -208,6 +208,11 @@ Notes:
   no role/permission policy — add your own checks in your handlers.
 - Register real dependency checks with `app.Health().Register(...)` so `/readyz`
   reflects DB/cache/MQ reachability; the sample only registers a static `self`.
+- **Probes can target a private port.** `kernel.WithAdminListener(addr)` serves
+  `/healthz` and `/readyz` on a separate plain-HTTP port, so an orchestrator can
+  probe health without reaching the public h2c port; `WithExtraListener(lis, h)`
+  serves any handler (pprof, custom metrics) on a caller-owned listener. Both
+  are opt-in; the main single-port multiplexing is unchanged.
 - **Per-peer rate limiting keys on the direct peer IP.** Behind a TLS-terminating
   proxy or load balancer, all clients share the proxy's IP — and therefore one
   200 RPS bucket — and one abusive client can exhaust it for everyone. Tune or
