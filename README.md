@@ -27,7 +27,11 @@ the single source of truth; **one h2c port** multiplexes three protocols:
   transport semantics on the external surface.
 - **Fixed-order interceptor chain** (recover → request-id → logger → load-shed →
   rate-limit → circuit-breaker → auth → validation), fail-loud if incomplete.
-  OTel is a `StatsHandler`, covering unary **and** streaming.
+  OTel is a `StatsHandler`, covering unary **and** streaming. The order is fixed,
+  but the auth stage is pluggable: set `interceptor.Config.Verifier` for the
+  built-in HS256 JWT, or `Config.Authenticator` (an `auth.Authenticator`) for
+  static bearer / mTLS / API-key. Add your own interceptors with
+  `kernel.WithServerOptions(...)`.
 - **One error model, three transports** — a single mapping table drives gRPC
   status, HTTP status, and MCP error envelopes. Only invalid-argument and
   unauthenticated errors forward their message; everything else surfaces a

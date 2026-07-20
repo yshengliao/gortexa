@@ -31,6 +31,13 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
   cause is never serialized.
 - **OTel is a StatsHandler, not an interceptor.** Do not add the deprecated
   otelgrpc interceptors.
+- **Auth is pluggable; the chain order is not.** The fixed eight-stage chain is
+  immutable, but its auth stage runs an `auth.Authenticator` — JWT
+  (`NewJWTAuthenticator`) is just the default. Set `interceptor.Config.Verifier`
+  for JWT (unchanged) or `Config.Authenticator` for any other scheme (static
+  bearer, mTLS, API key); Authenticator wins when both are set. A consumer adds
+  its own interceptors via `kernel.WithServerOptions(...)` (gRPC chains them
+  after the stock chain, inside recover), never by editing the eight stages.
 - **Tests:** TDD where practical. Use `synctest.Test` (not `synctest.Run`) for
   time-dependent logic, `goleak` for goroutine hygiene, golden files for schema
   output. Docker-dependent integration tests live behind `//go:build integration`.

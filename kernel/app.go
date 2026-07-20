@@ -59,14 +59,15 @@ type App struct {
 type Option func(*appConfig)
 
 type appConfig struct {
-	cfg          *config.Config
-	log          *slog.Logger
-	interceptors *interceptor.Set
-	statsHandler stats.Handler
-	gateway      http.Handler
-	mcp          http.Handler
-	httpWrap     func(http.Handler) http.Handler
-	shutdownFns  []func(context.Context) error
+	cfg             *config.Config
+	log             *slog.Logger
+	interceptors    *interceptor.Set
+	statsHandler    stats.Handler
+	gateway         http.Handler
+	mcp             http.Handler
+	httpWrap        func(http.Handler) http.Handler
+	shutdownFns     []func(context.Context) error
+	extraServerOpts []grpc.ServerOption
 }
 
 func WithConfig(c *config.Config) Option { return func(a *appConfig) { a.cfg = c } }
@@ -82,6 +83,17 @@ func WithHTTPWrap(mw func(http.Handler) http.Handler) Option {
 }
 func WithShutdownHook(fn func(context.Context) error) Option {
 	return func(a *appConfig) { a.shutdownFns = append(a.shutdownFns, fn) }
+}
+
+// WithServerOptions appends gRPC ServerOptions after the framework's own, so a
+// consumer can add their own unary/stream interceptors (via
+// grpc.ChainUnaryInterceptor / grpc.ChainStreamInterceptor), a StatsHandler,
+// keepalive params, etc. Because gRPC chains interceptors in the order the
+// options are applied, consumer interceptors run inside the fixed framework
+// chain — after validation, before the handler, still within recover — leaving
+// the eight-stage order untouched.
+func WithServerOptions(opts ...grpc.ServerOption) Option {
+	return func(a *appConfig) { a.extraServerOpts = append(a.extraServerOpts, opts...) }
 }
 
 // New builds an App. If an interceptor Set is provided, its chains are applied
@@ -123,6 +135,9 @@ func New(opts ...Option) (*App, error) {
 			grpc.ChainStreamInterceptor(ac.interceptors.StreamChain()...),
 		)
 	}
+	// Consumer ServerOptions come last: gRPC chains interceptors in option
+	// order, so any consumer interceptor runs inside the framework chain.
+	serverOpts = append(serverOpts, ac.extraServerOpts...)
 
 	a := &App{
 		cfg:         ac.cfg,
