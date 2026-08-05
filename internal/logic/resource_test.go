@@ -97,9 +97,9 @@ func TestResourceService_GetResource(t *testing.T) {
 
 func TestResourceService_ListResources(t *testing.T) {
 	s, ctx, _ := setupTestService()
-	s.CreateResource(ctx, &resourcev1.CreateResourceRequest{Resource: &resourcev1.Resource{Name: "R0", Owner: "user1"}})
+	_, _ = s.CreateResource(ctx, &resourcev1.CreateResourceRequest{Resource: &resourcev1.Resource{Name: "R0", Owner: "user1"}})
 	res1, _ := s.CreateResource(ctx, &resourcev1.CreateResourceRequest{Resource: &resourcev1.Resource{Name: "R1", Owner: "owner1"}})
-	s.CreateResource(ctx, &resourcev1.CreateResourceRequest{Resource: &resourcev1.Resource{Name: "R2", Owner: "owner2"}})
+	_, _ = s.CreateResource(ctx, &resourcev1.CreateResourceRequest{Resource: &resourcev1.Resource{Name: "R2", Owner: "owner2"}})
 
 	// All
 	res, err := s.ListResources(ctx, &resourcev1.ListResourcesRequest{})

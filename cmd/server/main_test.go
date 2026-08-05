@@ -43,7 +43,7 @@ func TestExportSchemas(t *testing.T) {
 
 	err := exportSchemas("openai")
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	if err != nil {
