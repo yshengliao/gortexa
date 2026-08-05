@@ -139,7 +139,9 @@ func streamName(topic string) string {
 // subjectCovered reports whether any of the stream's subjects matches topic,
 // honouring NATS wildcards ("*" one token, ">" the remainder).
 func subjectCovered(subjects []string, topic string) bool {
+
 	tt := strings.Split(topic, ".")
+
 	for _, s := range subjects {
 		if subjectMatches(strings.Split(s, "."), tt) {
 			return true

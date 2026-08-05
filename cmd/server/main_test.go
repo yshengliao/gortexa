@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"io"
+	"os"
+	"testing"
+)
 
 // TestAuthSkip pins the auth-exemption surface: health is always exempt,
 // reflection only under the flag, and nothing else — a widened prefix (e.g.
@@ -27,5 +32,29 @@ func TestAuthSkip(t *testing.T) {
 				t.Errorf("authSkip(%v)(%q) = %v, want %v", tc.reflection, tc.method, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestExportSchemas(t *testing.T) {
+	// The function writes to os.Stdout, so we need to intercept it.
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := exportSchemas("openai")
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("exportSchemas failed: %v", err)
+	}
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	output := buf.String()
+
+	if output == "" {
+		t.Error("expected non-empty output from exportSchemas")
 	}
 }

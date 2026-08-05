@@ -103,11 +103,7 @@ func WithServerOptions(opts ...grpc.ServerOption) Option {
 
 // New builds an App. If an interceptor Set is provided, its chains are applied
 // to the gRPC server (and a missing required interceptor panics — fail-loud).
-func New(opts ...Option) (*App, error) {
-	ac := &appConfig{}
-	for _, o := range opts {
-		o(ac)
-	}
+func applyAppDefaults(ac *appConfig) {
 	if ac.cfg == nil {
 		ac.cfg = &config.Config{Server: config.ServerConfig{
 			Addr:            ":8080",
@@ -129,7 +125,9 @@ func New(opts ...Option) (*App, error) {
 	if ac.log == nil {
 		ac.log = slog.Default()
 	}
+}
 
+func buildServerOptions(ac *appConfig) []grpc.ServerOption {
 	serverOpts := []grpc.ServerOption{}
 	if ac.statsHandler != nil {
 		serverOpts = append(serverOpts, grpc.StatsHandler(ac.statsHandler))
@@ -143,34 +141,15 @@ func New(opts ...Option) (*App, error) {
 	// Consumer ServerOptions come last: gRPC chains interceptors in option
 	// order, so any consumer interceptor runs inside the framework chain.
 	serverOpts = append(serverOpts, ac.extraServerOpts...)
+	return serverOpts
+}
 
-	a := &App{
-		cfg:         ac.cfg,
-		log:         ac.log,
-		health:      health.NewRegistry(),
-		gateway:     ac.gateway,
-		mcp:         ac.mcp,
-		httpWrap:    ac.httpWrap,
-		shutdownFns: ac.shutdownFns,
-		loopbackLis: bufconn.Listen(loopbackBufSize),
-	}
-	// Construct httpSrv here (its config is already known) so the field is
-	// written once, before any goroutine. serve() only fills in the Handler.
-	// This closes the data race with a concurrent, exported Shutdown and means a
-	// Shutdown that wins the race still stops the server: http.Server.Shutdown
-	// makes a later Serve return ErrServerClosed instead of serving forever.
-	a.httpSrv = &http.Server{
-		Protocols:         h2cProtocols(),
-		ReadTimeout:       ac.cfg.Server.ReadTimeout,
-		WriteTimeout:      ac.cfg.Server.WriteTimeout,
-		IdleTimeout:       ac.cfg.Server.IdleTimeout,
-		ReadHeaderTimeout: ac.cfg.Server.ReadHeaderTimeout,
-	}
+func (a *App) buildExtraListeners(ac *appConfig) error {
 	// Build any secondary listeners (opt-in). Their http.Servers are allocated
 	// here (Handler known); serve() binds and serves them, Shutdown stops them.
 	for _, spec := range ac.extraListeners {
 		if !spec.admin && spec.lis == nil {
-			return nil, fmt.Errorf("kernel: WithExtraListener requires a non-nil listener")
+			return fmt.Errorf("kernel: WithExtraListener requires a non-nil listener")
 		}
 		h := spec.handler
 		srv := &http.Server{
@@ -196,7 +175,47 @@ func New(opts ...Option) (*App, error) {
 			srv:   srv,
 		})
 	}
-	a.grpcSrv = grpc.NewServer(serverOpts...)
+	return nil
+}
+
+// New builds an App. If an interceptor Set is provided, its chains are applied
+// to the gRPC server (and a missing required interceptor panics — fail-loud).
+func New(opts ...Option) (*App, error) {
+	ac := &appConfig{}
+	for _, o := range opts {
+		o(ac)
+	}
+	applyAppDefaults(ac)
+
+	a := &App{
+		cfg:         ac.cfg,
+		log:         ac.log,
+		health:      health.NewRegistry(),
+		gateway:     ac.gateway,
+		mcp:         ac.mcp,
+		httpWrap:    ac.httpWrap,
+		shutdownFns: ac.shutdownFns,
+		loopbackLis: bufconn.Listen(loopbackBufSize),
+	}
+
+	// Construct httpSrv here (its config is already known) so the field is
+	// written once, before any goroutine. serve() only fills in the Handler.
+	// This closes the data race with a concurrent, exported Shutdown and means a
+	// Shutdown that wins the race still stops the server: http.Server.Shutdown
+	// makes a later Serve return ErrServerClosed instead of serving forever.
+	a.httpSrv = &http.Server{
+		Protocols:         h2cProtocols(),
+		ReadTimeout:       ac.cfg.Server.ReadTimeout,
+		WriteTimeout:      ac.cfg.Server.WriteTimeout,
+		IdleTimeout:       ac.cfg.Server.IdleTimeout,
+		ReadHeaderTimeout: ac.cfg.Server.ReadHeaderTimeout,
+	}
+
+	if err := a.buildExtraListeners(ac); err != nil {
+		return nil, err
+	}
+
+	a.grpcSrv = grpc.NewServer(buildServerOptions(ac)...)
 	grpc_health_v1.RegisterHealthServer(a.grpcSrv, a.health.GRPCHealthServer())
 	if ac.cfg.Server.Reflection {
 		// Reflection v1 serves live server state, so registering before domain

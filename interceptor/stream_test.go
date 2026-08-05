@@ -1,9 +1,11 @@
 package interceptor_test
 
 import (
+	"bytes"
 	"context"
 	stderrors "errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -163,6 +165,8 @@ func TestValidationStreamRecvMsg(t *testing.T) {
 
 func TestRequestIDStream(t *testing.T) {
 	ic := interceptor.RequestIDStream()
+
+	// Test without incoming Request ID
 	var seen string
 	err := ic(nil, &fakeStream{ctx: context.Background()}, streamInfo(), func(_ any, ss grpc.ServerStream) error {
 		if id, ok := interceptor.RequestIDFrom(ss.Context()); ok {
@@ -173,11 +177,40 @@ func TestRequestIDStream(t *testing.T) {
 	if err != nil || seen == "" {
 		t.Fatalf("stream request id not propagated: %q %v", seen, err)
 	}
+
+	// Test with incoming valid Request ID
+	ctxWithMD := metadata.NewIncomingContext(context.Background(), metadata.Pairs(interceptor.RequestIDMetadataKey, "valid-stream-id"))
+	var seenValid string
+	err = ic(nil, &fakeStream{ctx: ctxWithMD}, streamInfo(), func(_ any, ss grpc.ServerStream) error {
+		if id, ok := interceptor.RequestIDFrom(ss.Context()); ok {
+			seenValid = id
+		}
+		return nil
+	})
+	if err != nil || seenValid != "valid-stream-id" {
+		t.Fatalf("stream request id not reused: %q", seenValid)
+	}
 }
 
 func TestLoggerStream(t *testing.T) {
 	if err := interceptor.LoggerStream(nil)(nil, &fakeStream{ctx: context.Background()}, streamInfo(), okStream); err != nil {
 		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	ic := interceptor.LoggerStream(logger)
+
+	err := ic(nil, &fakeStream{ctx: context.Background()}, streamInfo(), okStream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := buf.String()
+	if !strings.Contains(output, `"method":"/svc/Stream"`) {
+		t.Errorf("missing method in log: %s", output)
+	}
+	if !strings.Contains(output, `"code":"OK"`) {
+		t.Errorf("missing code in log: %s", output)
 	}
 }
 

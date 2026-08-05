@@ -94,13 +94,16 @@ func (s *ResourceService) GetResource(_ context.Context, req *resourcev1.GetReso
 // previous page (results resume strictly after it).
 func (s *ResourceService) ListResources(_ context.Context, req *resourcev1.ListResourcesRequest) (*resourcev1.ListResourcesResponse, error) {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
+
 	all := make([]*resourcev1.Resource, 0, len(s.store))
 	for _, r := range s.store {
 		if req.GetOwner() == "" || r.GetOwner() == req.GetOwner() {
-			all = append(all, clone(r))
+			all = append(all, r)
 		}
 	}
-	s.mu.RUnlock()
+
+	// Sort by ID (which is immutable, so it is safe to read under RLock without cloning).
 	slices.SortFunc(all, func(a, b *resourcev1.Resource) int { return cmp.Compare(a.GetId(), b.GetId()) })
 
 	// Seek past the page token (the last id returned on the previous page).
@@ -121,7 +124,13 @@ func (s *ResourceService) ListResources(_ context.Context, req *resourcev1.ListR
 	end := min(start+size, len(all))
 	page := all[start:end]
 
-	resp := &resourcev1.ListResourcesResponse{Resources: page}
+	// Clone only the resources that will be returned to avoid unnecessary allocations.
+	clonedPage := make([]*resourcev1.Resource, len(page))
+	for i, r := range page {
+		clonedPage[i] = clone(r)
+	}
+
+	resp := &resourcev1.ListResourcesResponse{Resources: clonedPage}
 	if end < len(all) && len(page) > 0 {
 		resp.NextPageToken = page[len(page)-1].GetId()
 	}
