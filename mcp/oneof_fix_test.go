@@ -23,38 +23,38 @@ func oneofToolService(t *testing.T) protoreflect.ServiceDescriptor {
 
 	strField := func(name string, number int32, oneof *int32) *descriptorpb.FieldDescriptorProto {
 		f := &descriptorpb.FieldDescriptorProto{
-			Name:     str(name),
-			JsonName: str(name),
-			Number:   i32(number),
-			Label:    label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL),
-			Type:     fieldType(descriptorpb.FieldDescriptorProto_TYPE_STRING),
+			Name:     new(name),
+			JsonName: new(name),
+			Number:   new(number),
+			Label:    new(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL),
+			Type:     new(descriptorpb.FieldDescriptorProto_TYPE_STRING),
 		}
 		f.OneofIndex = oneof
 		return f
 	}
 
 	fd := &descriptorpb.FileDescriptorProto{
-		Syntax:  str("proto3"),
-		Name:    str("mcp/oneoftest.proto"),
-		Package: str("mcp.oneoftest"),
+		Syntax:  new("proto3"),
+		Name:    new("mcp/oneoftest.proto"),
+		Package: new("mcp.oneoftest"),
 		MessageType: []*descriptorpb.DescriptorProto{
 			{
-				Name: str("Request"),
+				Name: new("Request"),
 				Field: []*descriptorpb.FieldDescriptorProto{
 					strField("id", 1, nil),
-					strField("a", 2, i32(0)),
-					strField("b", 3, i32(0)),
+					strField("a", 2, new(int32(0))),
+					strField("b", 3, new(int32(0))),
 				},
-				OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: str("choice")}},
+				OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: new("choice")}},
 			},
-			{Name: str("Response")},
+			{Name: new("Response")},
 		},
 		Service: []*descriptorpb.ServiceDescriptorProto{{
-			Name: str("Tools"),
+			Name: new("Tools"),
 			Method: []*descriptorpb.MethodDescriptorProto{{
-				Name:       str("Call"),
-				InputType:  str(".mcp.oneoftest.Request"),
-				OutputType: str(".mcp.oneoftest.Response"),
+				Name:       new("Call"),
+				InputType:  new(".mcp.oneoftest.Request"),
+				OutputType: new(".mcp.oneoftest.Response"),
 				Options:    methodOpts,
 			}},
 		}},

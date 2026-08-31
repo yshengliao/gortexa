@@ -107,7 +107,7 @@ func validateJSTopic(topic string) error {
 	if strings.ContainsAny(topic, " \t\r\n") {
 		return apperr.New(apperr.CatInvalidArgument, "mq: topic contains whitespace")
 	}
-	for _, tok := range strings.Split(topic, ".") {
+	for tok := range strings.SplitSeq(topic, ".") {
 		switch tok {
 		case "*", ">":
 			return apperr.New(apperr.CatInvalidArgument, "mq: wildcard topics are not supported by the jetstream driver (core nats only)")

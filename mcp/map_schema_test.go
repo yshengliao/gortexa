@@ -118,18 +118,18 @@ func TestDowngradeGeminiPreservesMapAdditionalProperties(t *testing.T) {
 func mapTestMessage(t *testing.T) protoreflect.MessageDescriptor {
 	t.Helper()
 	file, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
-		Syntax:  str("proto3"),
-		Name:    str("test/map.proto"),
-		Package: str("test"),
+		Syntax:  new("proto3"),
+		Name:    new("test/map.proto"),
+		Package: new("test"),
 		EnumType: []*descriptorpb.EnumDescriptorProto{{
-			Name: str("Status"),
+			Name: new("Status"),
 			Value: []*descriptorpb.EnumValueDescriptorProto{
-				{Name: str("STATUS_UNSPECIFIED"), Number: i32(0)},
-				{Name: str("STATUS_ACTIVE"), Number: i32(1)},
+				{Name: new("STATUS_UNSPECIFIED"), Number: new(int32(0))},
+				{Name: new("STATUS_ACTIVE"), Number: new(int32(1))},
 			},
 		}},
 		MessageType: []*descriptorpb.DescriptorProto{{
-			Name: str("MapInput"),
+			Name: new("MapInput"),
 			Field: []*descriptorpb.FieldDescriptorProto{
 				mapField("labels", 1, ".test.MapInput.LabelsEntry"),
 				mapField("counts", 2, ".test.MapInput.CountsEntry"),
@@ -149,30 +149,20 @@ func mapTestMessage(t *testing.T) protoreflect.MessageDescriptor {
 }
 
 func mapField(name string, number int32, typeName string) *descriptorpb.FieldDescriptorProto {
-	return &descriptorpb.FieldDescriptorProto{Name: str(name), Number: i32(number), Label: label(descriptorpb.FieldDescriptorProto_LABEL_REPEATED), Type: fieldType(descriptorpb.FieldDescriptorProto_TYPE_MESSAGE), TypeName: str(typeName), JsonName: str(name)}
+	return &descriptorpb.FieldDescriptorProto{Name: new(name), Number: new(number), Label: new(descriptorpb.FieldDescriptorProto_LABEL_REPEATED), Type: new(descriptorpb.FieldDescriptorProto_TYPE_MESSAGE), TypeName: new(typeName), JsonName: new(name)}
 }
 
 func mapEntry(name string, valueType descriptorpb.FieldDescriptorProto_Type, valueTypeName string) *descriptorpb.DescriptorProto {
-	value := &descriptorpb.FieldDescriptorProto{Name: str("value"), Number: i32(2), Label: label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL), Type: fieldType(valueType)}
+	value := &descriptorpb.FieldDescriptorProto{Name: new("value"), Number: new(int32(2)), Label: new(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL), Type: new(valueType)}
 	if valueTypeName != "" {
-		value.TypeName = str(valueTypeName)
+		value.TypeName = new(valueTypeName)
 	}
 	return &descriptorpb.DescriptorProto{
-		Name: str(name),
+		Name: new(name),
 		Field: []*descriptorpb.FieldDescriptorProto{
-			{Name: str("key"), Number: i32(1), Label: label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL), Type: fieldType(descriptorpb.FieldDescriptorProto_TYPE_STRING)},
+			{Name: new("key"), Number: new(int32(1)), Label: new(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL), Type: new(descriptorpb.FieldDescriptorProto_TYPE_STRING)},
 			value,
 		},
-		Options: &descriptorpb.MessageOptions{MapEntry: boolp(true)},
+		Options: &descriptorpb.MessageOptions{MapEntry: new(true)},
 	}
-}
-
-func str(s string) *string { return &s }
-func i32(i int32) *int32   { return &i }
-func boolp(b bool) *bool   { return &b }
-func label(l descriptorpb.FieldDescriptorProto_Label) *descriptorpb.FieldDescriptorProto_Label {
-	return &l
-}
-func fieldType(ft descriptorpb.FieldDescriptorProto_Type) *descriptorpb.FieldDescriptorProto_Type {
-	return &ft
 }

@@ -19,7 +19,6 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/encoding/protojson"
 
 	apperr "github.com/yshengliao/gortexa/apperr"
 	"github.com/yshengliao/gortexa/auth"
@@ -60,8 +59,7 @@ func MaxBodyBytes(h http.Handler) http.Handler {
 		// keep-alive connection.
 		_ = rc.SetReadDeadline(time.Time{})
 		if err != nil {
-			var tooLarge *http.MaxBytesError
-			if errors.As(err, &tooLarge) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				writeStatusJSON(w, http.StatusRequestEntityTooLarge, "invalid_argument", "request body too large")
 				return
 			}
@@ -118,8 +116,8 @@ func clientIPMetadata(_ context.Context, r *http.Request) metadata.MD {
 
 func jsonMarshaler() *runtime.JSONPb {
 	return &runtime.JSONPb{
-		MarshalOptions:   protojson.MarshalOptions{EmitUnpopulated: false, UseProtoNames: false},
-		UnmarshalOptions: protojson.UnmarshalOptions{DiscardUnknown: true},
+		EmitUnpopulated: false, UseProtoNames: false,
+		DiscardUnknown: true,
 	}
 }
 

@@ -6,8 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"google.golang.org/protobuf/proto"
-
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 )
 
@@ -25,7 +23,7 @@ func TestUpdateResourcePartial(t *testing.T) {
 
 	// Update only Name; Owner and Status must be preserved.
 	got, err := s.UpdateResource(ctx, &resourcev1.UpdateResourceRequest{
-		Id: created.Id, Name: proto.String("renamed"),
+		Id: created.Id, Name: new("renamed"),
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -48,7 +46,7 @@ func TestListResourcesPaging(t *testing.T) {
 	s := NewResourceService()
 	ctx := context.Background()
 	const total = 5
-	for i := 0; i < total; i++ {
+	for i := range total {
 		if _, err := s.CreateResource(ctx, &resourcev1.CreateResourceRequest{
 			Resource: &resourcev1.Resource{Name: fmt.Sprintf("r%d", i), Owner: "o"},
 		}); err != nil {
@@ -100,13 +98,13 @@ func TestConcurrentGetUpdateNoRace(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(2)
 		go func() { defer wg.Done(); _, _ = s.GetResource(ctx, &resourcev1.GetResourceRequest{Id: created.Id}) }()
 		go func(n int) {
 			defer wg.Done()
 			_, _ = s.UpdateResource(ctx, &resourcev1.UpdateResourceRequest{
-				Id: created.Id, Name: proto.String(fmt.Sprintf("n%d", n)), Owner: proto.String(fmt.Sprintf("o%d", n)),
+				Id: created.Id, Name: new(fmt.Sprintf("n%d", n)), Owner: new(fmt.Sprintf("o%d", n)),
 			})
 		}(i)
 	}

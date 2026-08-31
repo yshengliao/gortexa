@@ -239,7 +239,7 @@ func BuildUnvalidated(opts ...Option) (*Config, error) {
 // typing would otherwise silently read as 30 nanoseconds. Durations must be
 // strings like "30s".
 func rejectBareNumericDuration() mapstructure.DecodeHookFuncType {
-	durationType := reflect.TypeOf(time.Duration(0))
+	durationType := reflect.TypeFor[time.Duration]()
 	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
 		// Skip when the target isn't a Duration, or when the value is already a
 		// Duration (e.g. the prior string→Duration hook already converted "30s";

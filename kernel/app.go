@@ -165,6 +165,9 @@ func New(opts ...Option) (*App, error) {
 		WriteTimeout:      ac.cfg.Server.WriteTimeout,
 		IdleTimeout:       ac.cfg.Server.IdleTimeout,
 		ReadHeaderTimeout: ac.cfg.Server.ReadHeaderTimeout,
+		// Pinned rather than left at zero so a future stdlib default change
+		// cannot silently raise the header-count budget on the public port.
+		MaxHeaderValueCount: http.DefaultMaxHeaderValueCount,
 	}
 	// Build any secondary listeners (opt-in). Their http.Servers are allocated
 	// here (Handler known); serve() binds and serves them, Shutdown stops them.
@@ -174,9 +177,10 @@ func New(opts ...Option) (*App, error) {
 		}
 		h := spec.handler
 		srv := &http.Server{
-			Handler:           h,
-			ReadHeaderTimeout: adminReadHeaderTimeout,
-			IdleTimeout:       adminIdleTimeout, // safe for any handler: only fires on an idle conn
+			Handler:             h,
+			ReadHeaderTimeout:   adminReadHeaderTimeout,
+			IdleTimeout:         adminIdleTimeout, // safe for any handler: only fires on an idle conn
+			MaxHeaderValueCount: http.DefaultMaxHeaderValueCount,
 		}
 		if spec.admin {
 			// The built-in admin health server serves short request/response

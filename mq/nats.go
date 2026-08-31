@@ -18,8 +18,7 @@ import (
 // logs. Parse errors are replaced wholesale; other dial errors carry no
 // userinfo and pass through untouched.
 func sanitizeConnectErr(err error) error {
-	var uerr *url.Error
-	if errors.As(err, &uerr) {
+	if _, ok := errors.AsType[*url.Error](err); ok {
 		return errors.New("invalid server url (details redacted: the url may embed credentials)")
 	}
 	return err

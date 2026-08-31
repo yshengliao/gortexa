@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -218,12 +219,7 @@ func isBinary(b []byte) bool {
 	if len(b) > 512 {
 		b = b[:512]
 	}
-	for _, c := range b {
-		if c == 0 {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(b, 0)
 }
 
 // projectReadme is the README written into a freshly created project, replacing

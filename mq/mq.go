@@ -109,7 +109,7 @@ func validateServerList(url string) error {
 	if url == "" {
 		return apperr.New(apperr.CatInvalidArgument, "mq.url required")
 	}
-	for _, p := range strings.Split(url, ",") {
+	for p := range strings.SplitSeq(url, ",") {
 		if strings.TrimSpace(p) == "" {
 			return apperr.New(apperr.CatInvalidArgument, "mq.url: empty server entry in list")
 		}

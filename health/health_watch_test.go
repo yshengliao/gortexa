@@ -133,8 +133,7 @@ func TestGRPCHealthWatchTickSendError(t *testing.T) {
 		mu.Lock()
 		state = health.Unhealthy
 		mu.Unlock()
-		time.Sleep(watchInterval + 100*time.Millisecond)
-		synctest.Wait()
+		synctest.Sleep(watchInterval + 100*time.Millisecond)
 
 		if err := <-errCh; err != context.Canceled {
 			t.Fatalf("Watch = %v, want context.Canceled", err)
@@ -159,8 +158,7 @@ func TestGRPCHealthWatchDedupsUnchanged(t *testing.T) {
 
 		synctest.Wait()
 		// Let several ticks fire without any state change.
-		time.Sleep(3 * watchInterval)
-		synctest.Wait()
+		synctest.Sleep(3 * watchInterval)
 		if got := fw.statuses(); len(got) != 1 {
 			t.Fatalf("statuses = %v, want a single SERVING (no duplicates)", got)
 		}
@@ -209,8 +207,7 @@ func TestGRPCHealthWatchStreamsStateChange(t *testing.T) {
 		mu.Lock()
 		state = health.Unhealthy
 		mu.Unlock()
-		time.Sleep(watchInterval + 100*time.Millisecond)
-		synctest.Wait()
+		synctest.Sleep(watchInterval + 100*time.Millisecond)
 
 		got := fw.statuses()
 		if len(got) != 2 || got[1] != grpc_health_v1.HealthCheckResponse_NOT_SERVING {
