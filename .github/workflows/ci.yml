@@ -53,7 +53,7 @@ jobs:
         run: |
           make bootstrap
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-            | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.13.0
 
       # Tolerant: a repo without a main branch (e.g. a scaffold pushed with a
       # different default) skips the fetch and the Makefile gate falls back.

@@ -12,6 +12,7 @@ import (
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"go.uber.org/goleak"
 
+	apperr "github.com/yshengliao/gortexa/apperr"
 	"github.com/yshengliao/gortexa/config"
 	"github.com/yshengliao/gortexa/mq"
 )
@@ -196,6 +197,61 @@ func TestNATSCloseWaitsForInflightHandler(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close never returned after the handler finished")
 	}
+}
+
+// TestNATSCloseEdgeCases pins the Close contract at its edges against a live
+// client: a Close whose ctx is already cancelled returns the wrapped ctx error
+// promptly (the parked teardown is abandoned to the background, not waited
+// for), and a second Close is a nil no-op.
+func TestNATSCloseEdgeCases(t *testing.T) {
+	pub, sub, err := mq.NewNATS(config.MQConfig{URL: config.Secret(natsURL(t))})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	if err := sub.Subscribe(ctx, "events", func(context.Context, mq.Message) error {
+		close(entered)
+		<-release
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pub.Publish(ctx, "events", mq.Message{Value: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("handler never invoked")
+	}
+
+	// The blocked handler parks the teardown (Close waits on in-flight
+	// handlers), so an already-cancelled ctx must take the escape hatch.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan error, 1)
+	go func() { done <- pub.Close(cancelled) }()
+	select {
+	case err := <-done:
+		if !apperr.Is(err, apperr.CatCanceled) {
+			t.Fatalf("Close with cancelled ctx = %v, want CatCanceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not honour the cancelled ctx as an escape hatch")
+	}
+
+	// The client is now marked closed: a second Close is nil, immediately —
+	// even while the abandoned teardown is still parked in the background.
+	if err := pub.Close(context.Background()); err != nil {
+		t.Fatalf("second Close = %v, want nil", err)
+	}
+
+	// Unblock the handler so the background teardown can drain before the
+	// embedded server shuts down.
+	close(release)
 }
 
 // TestNATSSubscribeNoGoroutineLeakAfterClose pins the fix for the per-Subscribe

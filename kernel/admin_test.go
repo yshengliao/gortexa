@@ -61,7 +61,7 @@ func TestWithExtraListener(t *testing.T) {
 	url := "http://" + lis.Addr().String() + "/anything"
 	// The listener is served from a goroutine; retry briefly until it's up.
 	var code int
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		if req, e := http.NewRequest(http.MethodGet, url, nil); e == nil {
 			if resp, e2 := http.DefaultClient.Do(req); e2 == nil {
 				code = resp.StatusCode
@@ -90,7 +90,7 @@ func TestWithAdminListenerHealth(t *testing.T) {
 	runApp(t, app)
 
 	var addr net.Addr
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		if addr = app.AdminAddr(); addr != nil {
 			break
 		}

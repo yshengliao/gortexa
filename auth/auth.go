@@ -83,13 +83,11 @@ func MustNewVerifier(secret []byte, issuer string, audience ...string) *Verifier
 func (v *Verifier) Sign(subject string, roles []string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		Roles: roles,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   subject,
-			Issuer:    v.issuer,
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
-		},
+		Roles:     roles,
+		Subject:   subject,
+		Issuer:    v.issuer,
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 	}
 	if v.audience != "" {
 		claims.Audience = jwt.ClaimStrings{v.audience}

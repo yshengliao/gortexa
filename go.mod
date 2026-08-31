@@ -1,11 +1,11 @@
 module github.com/yshengliao/gortexa
 
-go 1.26.0
-
-// Build with the latest 1.26 patch toolchain so the stdlib is security-patched
-// (go1.26.0 has CVEs fixed in 1.26.1–1.26.5, incl. GO-2026-5856 in crypto/tls);
-// the go directive stays at the 1.26.0 language floor.
-toolchain go1.26.5
+// go1.27.0 (2026-08-19) is the only 1.27 release so far, so the go directive
+// and the effective toolchain coincide and no separate toolchain line is
+// needed. Once 1.27 patch releases exist, restore the usual split: keep the
+// language floor here and pin the latest security-patched toolchain via a
+// `toolchain goX.Y.Z` directive.
+go 1.27.0
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.11-20260415201107-50325440f8f2.1
@@ -41,7 +41,7 @@ require (
 	go.uber.org/goleak v1.3.0
 	golang.org/x/time v0.15.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260622175928-b703f567277d
-	google.golang.org/grpc v1.81.1
+	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -82,6 +82,6 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260618152121-87f3d3e198d3 // indirect
 )

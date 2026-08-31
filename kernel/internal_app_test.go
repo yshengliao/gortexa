@@ -122,8 +122,7 @@ func TestReflectionGatedByConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go func() { _ = app.serve(ctx, ln) }()
 
 	list, err := listServices(t, app)
@@ -151,8 +150,7 @@ func TestReflectionOffByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go func() { _ = app.serve(ctx, ln) }()
 
 	if _, err := listServices(t, app); status.Code(err) != codes.Unimplemented {

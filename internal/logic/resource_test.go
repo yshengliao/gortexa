@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -136,8 +135,8 @@ func TestResourceService(t *testing.T) {
 	t.Run("UpdateResource", func(t *testing.T) {
 		req := &resourcev1.UpdateResourceRequest{
 			Id:     res1.Id,
-			Name:   proto.String("R1 Updated"),
-			Owner:  proto.String("owner1"),
+			Name:   new("R1 Updated"),
+			Owner:  new("owner1"),
 			Status: resourcev1.Status_STATUS_ARCHIVED.Enum(),
 		}
 		updated, err := s.UpdateResource(ctx, req)

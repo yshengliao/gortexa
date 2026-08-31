@@ -140,11 +140,11 @@ func TestFreshenJWTSecret(t *testing.T) {
 			t.Errorf("placeholder secret still present:\n%s", got)
 		}
 		// Extract the value after "secret: " and check it's a 48-hex string.
-		idx := strings.Index(got, "secret: ")
-		if idx < 0 {
+		_, after, ok := strings.Cut(got, "secret: ")
+		if !ok {
 			t.Fatalf("no secret line:\n%s", got)
 		}
-		val := strings.TrimSpace(got[idx+len("secret: "):])
+		val := strings.TrimSpace(after)
 		if len(val) != 48 {
 			t.Errorf("secret length = %d, want 48 hex chars: %q", len(val), val)
 		}
@@ -182,11 +182,11 @@ func TestFreshenJWTSecret(t *testing.T) {
 // no buf.gen.yaml. Running from the sub-dir must resolve to the ROOT.
 func TestFindModuleRootPrefersRootWithBufGen(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 	writeFixture(t, filepath.Join(root, "buf.gen.yaml"), "version: v2\n")
 
 	sub := filepath.Join(root, "tools")
-	writeFixture(t, filepath.Join(sub, "go.mod"), "module example.com/demo/tools\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(sub, "go.mod"), "module example.com/demo/tools\n\ngo 1.27.0\n")
 
 	gotRoot, gotMod, err := findModuleRoot(sub)
 	if err != nil {

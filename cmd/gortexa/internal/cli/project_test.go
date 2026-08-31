@@ -20,7 +20,7 @@ func gitRun(t *testing.T, dir string, args ...string) {
 
 func TestFindModuleRoot(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 	nested := filepath.Join(root, "internal", "logic")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
@@ -58,9 +58,9 @@ func TestFindModuleRoot(t *testing.T) {
 func TestReadModulePath(t *testing.T) {
 	dir := t.TempDir()
 	valid := filepath.Join(dir, "valid.mod")
-	writeFixture(t, valid, "// comment\nmodule   example.com/spaced  \n\ngo 1.26.0\n")
+	writeFixture(t, valid, "// comment\nmodule   example.com/spaced  \n\ngo 1.27.0\n")
 	noModule := filepath.Join(dir, "nomodule.mod")
-	writeFixture(t, noModule, "go 1.26.0\n")
+	writeFixture(t, noModule, "go 1.27.0\n")
 
 	tests := []struct {
 		name string

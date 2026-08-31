@@ -59,6 +59,17 @@ func TestCloseWithin(t *testing.T) {
 	})
 }
 
+// TestNATSCloseAlreadyClosedIsIdempotent pins the double-Close contract: once
+// closed, Close returns nil immediately without touching the connection (the
+// receiver here has none, so any teardown attempt would panic). This lets
+// callers close the Publisher and Subscriber handles of a shared client.
+func TestNATSCloseAlreadyClosedIsIdempotent(t *testing.T) {
+	c := &natsClient{closed: true}
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close on an already-closed client = %v, want nil", err)
+	}
+}
+
 func TestValidateServerList(t *testing.T) {
 	cases := []struct {
 		name    string

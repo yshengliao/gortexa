@@ -61,10 +61,10 @@ func insertBeforeMarker(src, marker, line string) (string, error) {
 	if strings.Contains(src, line) {
 		return src, nil
 	}
-	idx := strings.Index(src, marker)
-	if idx < 0 {
+	before, _, ok := strings.Cut(src, marker)
+	if !ok {
 		return "", fmt.Errorf("marker %q not found — is this a gortexa project's cmd/server/main.go?", marker)
 	}
-	lineStart := strings.LastIndex(src[:idx], "\n") + 1
+	lineStart := strings.LastIndex(before, "\n") + 1
 	return src[:lineStart] + line + "\n" + src[lineStart:], nil
 }

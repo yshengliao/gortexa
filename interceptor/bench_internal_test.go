@@ -36,11 +36,11 @@ func BenchmarkRateLimiterAllow(b *testing.B) {
 // spread the lock across shards instead of one global mutex.
 func BenchmarkRateLimiterAllowParallel(b *testing.B) {
 	l := NewRateLimiter(RateLimitConfig{RPS: 1e9, Burst: 1e9, TTL: time.Hour})
-	var ctr int64
+	var ctr atomic.Int64
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
-		id := atomic.AddInt64(&ctr, 1)
+		id := ctr.Add(1)
 		ctx := benchPeer(fmt.Sprintf("10.%d.%d.%d", id/65536, (id/256)%256, id%256))
 		for pb.Next() {
 			l.allow(ctx)

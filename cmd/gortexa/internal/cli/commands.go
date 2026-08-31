@@ -126,17 +126,17 @@ func doctor() error {
 	if out, err := exec.Command("go", "env", "GOVERSION").Output(); err == nil {
 		ver := strings.TrimSpace(string(out))
 		switch {
-		case goMinorAtLeast(ver, 26):
+		case goMinorAtLeast(ver, 27):
 			fmt.Printf("  [ok]      go: %s\n", ver)
 		case goMinorAtLeast(ver, 21):
-			fmt.Printf("  [ok]      go: %s (Go 1.26 is auto-downloaded via GOTOOLCHAIN)\n", ver)
+			fmt.Printf("  [ok]      go: %s (Go 1.27 is auto-downloaded via GOTOOLCHAIN)\n", ver)
 		default:
 			ok = false
-			fmt.Printf("  [OLD]     go: %s — too old to auto-download Go 1.26; install Go >= 1.21 from https://go.dev/dl/\n", ver)
+			fmt.Printf("  [OLD]     go: %s — too old to auto-download Go 1.27; install Go >= 1.21 from https://go.dev/dl/\n", ver)
 		}
 	} else {
 		ok = false
-		fmt.Println("  [MISSING] go (install Go >= 1.26 from https://go.dev/dl/)")
+		fmt.Println("  [MISSING] go (install Go >= 1.27 from https://go.dev/dl/)")
 	}
 	for _, t := range []string{"buf", "protoc-gen-go", "protoc-gen-go-grpc", "protoc-gen-grpc-gateway", "protoc-gen-openapiv2", "sqlc", "govulncheck", "benchstat"} {
 		if _, err := exec.LookPath(t); err == nil {
@@ -153,7 +153,7 @@ func doctor() error {
 	return nil
 }
 
-// goMinorAtLeast reports whether a GOVERSION string like "go1.26.4" is at
+// goMinorAtLeast reports whether a GOVERSION string like "go1.27.0" is at
 // least go1.<minor>. Strings it cannot parse (devel builds, a future go2)
 // return true: doctor must not block on version formats it cannot read.
 func goMinorAtLeast(ver string, minor int) bool {

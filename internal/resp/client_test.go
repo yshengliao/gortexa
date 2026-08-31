@@ -79,7 +79,7 @@ func TestClientConcurrent(t *testing.T) {
 	ctx := context.Background()
 	const n = 50
 	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			key := "k" + string(rune('a'+i%26))
 			if err := c.Set(ctx, key, "v", 0); err != nil {
@@ -90,7 +90,7 @@ func TestClientConcurrent(t *testing.T) {
 			errs <- err
 		}(i)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if err := <-errs; err != nil {
 			t.Fatalf("concurrent op %d: %v", i, err)
 		}
