@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
@@ -160,6 +161,69 @@ func TestDBTracerNilReceiverWithServerAddress(t *testing.T) {
 	var tr *storage.DBTracer
 	if got := tr.WithServerAddress("db.example.com"); got != nil {
 		t.Errorf("nil receiver WithServerAddress = %v, want nil", got)
+	}
+}
+
+// spanAttr returns the string value of key on s, or "" when absent.
+func spanAttr(s sdktrace.ReadOnlySpan, key string) string {
+	for _, a := range s.Attributes() {
+		if string(a.Key) == key {
+			return a.Value.AsString()
+		}
+	}
+	return ""
+}
+
+// TestDBTracerWithServerAddressReturnsCopy pins the documented non-mutation
+// guarantee: WithServerAddress specializes a copy while the receiver stays
+// address-free, so one tracer can back several pools (read vs write) without
+// cross-contamination.
+func TestDBTracerWithServerAddressReturnsCopy(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	orig := storage.NewDBTracer(tp)
+
+	spec := orig.WithServerAddress("db.example.com")
+	if spec == orig {
+		t.Fatal("WithServerAddress returned the receiver, want a distinct copy")
+	}
+
+	ctx := orig.TraceQueryStart(context.Background(), nil, pgx.TraceQueryStartData{SQL: "SELECT 1"})
+	orig.TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{})
+	ctx = spec.TraceQueryStart(context.Background(), nil, pgx.TraceQueryStartData{SQL: "SELECT 1"})
+	spec.TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{})
+
+	spans := sr.Ended()
+	if len(spans) != 2 {
+		t.Fatalf("spans = %d, want 2", len(spans))
+	}
+	if addr := spanAttr(spans[0], "server.address"); addr != "" {
+		t.Errorf("original tracer emitted server.address = %q, want unset (receiver was mutated)", addr)
+	}
+	if addr := spanAttr(spans[1], "server.address"); addr != "db.example.com" {
+		t.Errorf("specialized tracer server.address = %q, want db.example.com", addr)
+	}
+}
+
+// TestDBTracerSpanAttributes covers the remaining span metadata: db.system on
+// query start and the command tag recorded at query end.
+func TestDBTracerSpanAttributes(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	tr := storage.NewDBTracer(tp)
+
+	ctx := tr.TraceQueryStart(context.Background(), nil, pgx.TraceQueryStartData{SQL: "SELECT 1"})
+	tr.TraceQueryEnd(ctx, nil, pgx.TraceQueryEndData{CommandTag: pgconn.NewCommandTag("SELECT 1")})
+
+	spans := sr.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("spans = %d, want 1", len(spans))
+	}
+	if got := spanAttr(spans[0], "db.system"); got != "postgresql" {
+		t.Errorf("db.system = %q, want postgresql", got)
+	}
+	if got := spanAttr(spans[0], "db.command_tag"); got != "SELECT 1" {
+		t.Errorf("db.command_tag = %q, want SELECT 1", got)
 	}
 }
 
