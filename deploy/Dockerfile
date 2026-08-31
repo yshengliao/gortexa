@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Build stage — generates proto and compiles a static binary.
-FROM golang:1.26 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 
 # Module proxy settings (mirror install.sh). Override at build time if your

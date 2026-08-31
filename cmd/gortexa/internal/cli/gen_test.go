@@ -40,7 +40,7 @@ func run() error {
 func setupFixtureProject(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 	writeFixture(t, filepath.Join(root, "cmd", "server", "main.go"), fixtureMain)
 	return root
 }
@@ -172,7 +172,7 @@ func TestGenerateAPIPreflightsExistingFilesBeforeWriting(t *testing.T) {
 
 func TestGenerateAPIPreflightsWireMarkersBeforeWriting(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 	writeFixture(t, filepath.Join(root, "cmd", "server", "main.go"), "package main\nfunc main() {}\n")
 	data, _ := parseTarget("billing/v1", "Invoice")
 	data.Module = "example.com/demo"

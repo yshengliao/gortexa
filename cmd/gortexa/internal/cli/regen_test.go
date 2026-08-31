@@ -12,7 +12,7 @@ import (
 func setupRegenRoot(t *testing.T, bufBody string, gitToo bool) string {
 	t.Helper()
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 	bin := t.TempDir()
 	writeScript(t, bin, "buf", bufBody)
 	path := bin

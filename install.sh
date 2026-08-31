@@ -20,14 +20,14 @@ set -euo pipefail
 
 # --- Preconditions ----------------------------------------------------------
 if ! command -v go >/dev/null 2>&1; then
-  echo "ERROR: Go is not installed. Install Go >= 1.26 from https://go.dev/dl/ then re-run." >&2
+  echo "ERROR: Go is not installed. Install Go >= 1.27 from https://go.dev/dl/ then re-run." >&2
   exit 1
 fi
-# GOTOOLCHAIN auto-download (which fetches Go 1.26 for this repo) needs Go >= 1.21;
+# GOTOOLCHAIN auto-download (which fetches Go 1.27 for this repo) needs Go >= 1.21;
 # older toolchains fail later with unrelated flag-parse errors, so gate here.
 GO_MINOR="$(go env GOVERSION 2>/dev/null | sed -n 's/^go1\.\([0-9]*\).*/\1/p')"
 if [ -z "${GO_MINOR}" ] || [ "${GO_MINOR}" -lt 21 ]; then
-  echo "ERROR: your Go ($(go version 2>/dev/null || echo unknown)) is too old to auto-download Go 1.26 via GOTOOLCHAIN." >&2
+  echo "ERROR: your Go ($(go version 2>/dev/null || echo unknown)) is too old to auto-download Go 1.27 via GOTOOLCHAIN." >&2
   echo "       Install Go >= 1.21 from https://go.dev/dl/ then re-run." >&2
   exit 1
 fi

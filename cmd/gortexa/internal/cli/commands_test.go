@@ -67,7 +67,7 @@ func TestDoctor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			bin := t.TempDir()
 			if tt.goToo {
-				writeScript(t, bin, "go", `echo "go version go1.26 fake"`)
+				writeScript(t, bin, "go", `echo "go version go1.27 fake"`)
 			}
 			for _, tool := range tt.tools {
 				writeScript(t, bin, tool, "exit 0")
@@ -132,7 +132,7 @@ func TestModuleCommandsSucceedWithFakeGo(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			root := t.TempDir()
-			writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+			writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 			bin := t.TempDir()
 			writeScript(t, bin, "go", "exit 0")
 			t.Setenv("PATH", bin)
@@ -150,7 +150,7 @@ func TestModuleCommandsSucceedWithFakeGo(t *testing.T) {
 
 func TestToolsSyncStopsOnFirstFailure(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 	bin := t.TempDir()
 	writeScript(t, bin, "go", "exit 1")
 	t.Setenv("PATH", bin)
@@ -166,7 +166,7 @@ func TestToolsSyncStopsOnFirstFailure(t *testing.T) {
 
 func TestSkillsList(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 	for _, s := range []string{"proto-regen", "generating-apis"} {
 		if err := os.MkdirAll(filepath.Join(root, ".skills", s), 0o755); err != nil {
 			t.Fatal(err)
@@ -195,7 +195,7 @@ func TestSkillsList(t *testing.T) {
 
 func TestSkillsListMissingDir(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(root, "go.mod"), "module example.com/demo\n\ngo 1.27.0\n")
 	t.Chdir(root)
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{"skills", "list"})
@@ -225,16 +225,17 @@ func TestGoMinorAtLeast(t *testing.T) {
 		minor int
 		want  bool
 	}{
+		{"go1.27.0", 27, true},
+		{"go1.27", 27, true},
+		{"go1.26.4", 27, false},
 		{"go1.26.4", 26, true},
-		{"go1.26", 26, true},
-		{"go1.25.1", 26, false},
 		{"go1.21.0", 21, true},
 		{"go1.18", 21, false},
-		{"go1.18.10", 26, false},
+		{"go1.18.10", 27, false},
 		// Unparseable formats must not block doctor.
-		{"devel +abc123", 26, true},
-		{"go2.0.0", 26, true},
-		{"", 26, true},
+		{"devel +abc123", 27, true},
+		{"go2.0.0", 27, true},
+		{"", 27, true},
 	}
 	for _, c := range cases {
 		if got := goMinorAtLeast(c.ver, c.minor); got != c.want {

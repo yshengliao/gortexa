@@ -14,7 +14,7 @@ func setupLayoutRepo(t *testing.T) string {
 	t.Helper()
 	layout := t.TempDir()
 	gitRun(t, layout, "-c", "init.defaultBranch=main", "init", "-q")
-	writeFixture(t, filepath.Join(layout, "go.mod"), "module "+layoutModule+"\n\ngo 1.26.0\n")
+	writeFixture(t, filepath.Join(layout, "go.mod"), "module "+layoutModule+"\n\ngo 1.27.0\n")
 	writeFixture(t, filepath.Join(layout, "main.go"),
 		"package main\n\nimport _ \""+layoutModule+"/internal/logic\"\n\n// docs: https://"+layoutModule+"\n")
 	// Repo meta that createProject must prune or replace.

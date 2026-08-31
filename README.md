@@ -1,12 +1,12 @@
 # Gortexa
 
-[![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Docs](https://img.shields.io/badge/docs-gortexa.sheng.page-2563EB)](https://gortexa.sheng.page)
 [![Status](https://img.shields.io/badge/status-active-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![AI generated](https://img.shields.io/badge/AI%20generated-Fable%205%20%7C%20Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
 
-A contract-first, batteries-included **gRPC framework** for Go 1.26. Protobuf is
+A contract-first, batteries-included **gRPC framework** for Go 1.27. Protobuf is
 the single source of truth; **one h2c port** multiplexes three protocols:
 
 - **gRPC** (native, over cleartext HTTP/2)
@@ -191,7 +191,7 @@ Notes:
 
 ## Notes
 
-- Requires Go 1.26 (auto-downloaded via `GOTOOLCHAIN`, which itself needs an
+- Requires Go 1.27 (auto-downloaded via `GOTOOLCHAIN`, which itself needs an
   installed Go >= 1.21). `make` exports the corrected module proxy env; run
   `install.sh` once if building outside `make`.
 - Integration tests needing real NATS/Redis/Postgres+PgBouncer are behind

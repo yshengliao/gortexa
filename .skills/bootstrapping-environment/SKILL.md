@@ -30,7 +30,7 @@ versions are reproducible across machines.
    ```bash
    gortexa doctor
    ```
-   Confirms Go ≥ 1.26 and that buf + the proto plugins + sqlc are on PATH. Ensure
+   Confirms Go ≥ 1.27 and that buf + the proto plugins + sqlc are on PATH. Ensure
    `$(go env GOPATH)/bin` is on PATH (the Makefile adds it automatically).
 
 3. **Upgrade or re-pin a tool** when needed (full module path required — bare

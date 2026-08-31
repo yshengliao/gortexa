@@ -2,7 +2,7 @@
 
 Gortexa is a contract-first, batteries-included gRPC framework. Protobuf is the
 single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
-+ MCP. Target **Go 1.26**, buf v2.
++ MCP. Target **Go 1.27**, buf v2.
 
 ## Iron rules
 - **Never hand-edit anything under `gen/`.** It is produced only by `make gen`
