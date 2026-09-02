@@ -66,7 +66,7 @@ func NewJetStream(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	} else if err := validateServerList(url); err != nil {
 		return nil, nil, err
 	}
-	conn, err := nats.Connect(url)
+	conn, err := nats.Connect(url, natsConnectOptions()...)
 	if err != nil {
 		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "jetstream connect", sanitizeConnectErr(err))
 	}

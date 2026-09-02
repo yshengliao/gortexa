@@ -44,9 +44,10 @@ import (
 type Message struct {
 	Key   []byte
 	Value []byte
-	// Headers are caller-defined. The name in reservedKeyHeader is reserved by the
-	// framework (the NATS backend uses it on the wire to carry Key), so publishing
-	// a header by that name is rejected on every backend — see checkReservedHeaders.
+	// Headers are caller-defined except for two reserved names: the one in
+	// reservedKeyHeader (the NATS backend uses it on the wire to carry Key) and
+	// anything in the broker's natsReservedHeaderPrefix namespace. Publishing
+	// either is rejected on every backend — see checkReservedHeaders.
 	Headers map[string]string
 }
 
@@ -59,12 +60,29 @@ type Handler func(ctx context.Context, m Message) error
 // checkReservedHeaders.
 const reservedKeyHeader = "gortexa-key"
 
+// natsReservedHeaderPrefix is the namespace the broker itself interprets.
+// These headers are not inert metadata: Nats-Msg-Id drives JetStream's
+// server-side de-duplication (a message inside the stream's duplicate window
+// is discarded while Publish still reports success), and
+// Nats-Expected-Stream / Nats-Expected-Last-Sequence / Nats-Rollup likewise
+// change what the server does with the message. The comparison is
+// case-insensitive because nats.Header.Set does not canonicalise, so a caller
+// picks the exact wire spelling.
+const natsReservedHeaderPrefix = "nats-"
+
 // checkReservedHeaders rejects a caller header that collides with a framework
-// reserved name. Called by every backend's Publish so a message never behaves
-// differently when the backend changes.
+// or broker reserved name. Called by every backend's Publish so a message never
+// behaves differently when the backend changes — the same header that is inert
+// on core NATS silently drops the message on JetStream.
 func checkReservedHeaders(h map[string]string) error {
 	if _, ok := h[reservedKeyHeader]; ok {
 		return apperr.New(apperr.CatInvalidArgument, "mq: header "+reservedKeyHeader+" is reserved")
+	}
+	for k := range h {
+		if len(k) >= len(natsReservedHeaderPrefix) &&
+			strings.EqualFold(k[:len(natsReservedHeaderPrefix)], natsReservedHeaderPrefix) {
+			return apperr.New(apperr.CatInvalidArgument, "mq: headers in the "+natsReservedHeaderPrefix+"* namespace are reserved by the broker")
+		}
 	}
 	return nil
 }

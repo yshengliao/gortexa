@@ -3,6 +3,7 @@ package mq
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/url"
 	"sync"
 
@@ -11,6 +12,48 @@ import (
 	apperr "github.com/yshengliao/gortexa/apperr"
 	"github.com/yshengliao/gortexa/config"
 )
+
+// natsConnectOptions are the connection options both NATS-family drivers pass
+// to nats.Connect. The SDK defaults give up after 60 reconnect attempts
+// (~120s) and then close the connection permanently, so a broker outage that
+// outlasts a rolling upgrade or a node drain leaves the process alive but
+// deaf: every Publish returns ErrConnectionClosed and every subscription is
+// dead until a restart. Nothing in health/ probes mq, so that state is
+// invisible — hence retry forever, and route the connection's lifecycle
+// events (and the slow-consumer drops AsyncErrorCB carries, which the SDK
+// default prints to stderr outside slog) through the process logger.
+func natsConnectOptions() []nats.Option {
+	return []nats.Option{
+		nats.MaxReconnects(-1),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			// A deliberate Close disconnects with a nil error; only an
+			// unexpected drop is worth a warning.
+			if err != nil {
+				slog.Default().Warn("mq: nats disconnected", "error", err)
+			}
+		}),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			// Redacted: MQConfig.URL may embed credentials.
+			slog.Default().Info("mq: nats reconnected", "url", nc.ConnectedUrlRedacted())
+		}),
+		nats.ClosedHandler(func(nc *nats.Conn) {
+			// With MaxReconnects(-1) the connection only closes on a deliberate
+			// Close or on a fatal error the SDK records as LastError.
+			if err := nc.LastError(); err != nil {
+				slog.Default().Warn("mq: nats connection closed", "error", err)
+				return
+			}
+			slog.Default().Debug("mq: nats connection closed")
+		}),
+		nats.ErrorHandler(func(_ *nats.Conn, sub *nats.Subscription, err error) {
+			subject := ""
+			if sub != nil {
+				subject = sub.Subject
+			}
+			slog.Default().Error("mq: nats async error", "subject", subject, "error", err)
+		}),
+	}
+}
 
 // sanitizeConnectErr keeps nats.Connect failures safe to log: a URL parse
 // error embeds the raw URL — credentials included — verbatim in its message,
@@ -57,7 +100,7 @@ func NewNATS(cfg config.MQConfig) (Publisher, Subscriber, error) {
 		// its own server list.
 		return nil, nil, err
 	}
-	conn, err := nats.Connect(url)
+	conn, err := nats.Connect(url, natsConnectOptions()...)
 	if err != nil {
 		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "nats connect", sanitizeConnectErr(err))
 	}
@@ -199,9 +242,15 @@ func (c *natsClient) Close(ctx context.Context) error {
 	c.subs = nil
 	c.mu.Unlock()
 	return closeWithin(ctx, func() error {
-		c.conn.Close()
 		c.wg.Wait()  // no watcher goroutine outlives the teardown
 		c.hwg.Wait() // nor does an in-flight handler invocation
+		// The connection closes last, matching the jetstream driver: hwg exists
+		// so shutdown never abandons a running handler, and yanking the
+		// connection out from under that handler abandons it just as surely —
+		// its follow-up Publish would fail with ErrConnectionClosed, and on
+		// this at-most-once driver the emission is simply lost. A handler
+		// blocked in a NATS call is then bounded by closeWithin's ctx budget.
+		c.conn.Close()
 		return nil
 	})
 }

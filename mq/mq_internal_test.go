@@ -113,11 +113,30 @@ func TestCheckReservedHeaders(t *testing.T) {
 		t.Fatalf("ordinary header = %v, want nil", err)
 	}
 
-	err := checkReservedHeaders(map[string]string{reservedKeyHeader: "x"})
-	if err == nil {
-		t.Fatalf("reserved header %q must be rejected", reservedKeyHeader)
+	// "nats" without the separator is an ordinary caller header: the broker
+	// only acts on the "nats-" prefixed namespace.
+	if err := checkReservedHeaders(map[string]string{"natsy": "abc"}); err != nil {
+		t.Fatalf("nats-prefixed-but-not-namespaced header = %v, want nil", err)
 	}
-	if !apperr.Is(err, apperr.CatInvalidArgument) {
-		t.Fatalf("reserved header error = %v, want InvalidArgument", err)
+
+	for _, k := range []string{
+		reservedKeyHeader,
+		// The broker interprets these itself: Nats-Msg-Id de-duplicates the
+		// message server-side (silently discarding it while Publish reports
+		// success), and the Expected-* / Rollup headers likewise change what
+		// the server does with it. Case-insensitive because nats.Header.Set
+		// does not canonicalise, so a caller picks the wire spelling.
+		"Nats-Msg-Id",
+		"nats-msg-id",
+		"Nats-Expected-Last-Sequence",
+		"NATS-ROLLUP",
+	} {
+		err := checkReservedHeaders(map[string]string{k: "x"})
+		if err == nil {
+			t.Fatalf("reserved header %q must be rejected", k)
+		}
+		if !apperr.Is(err, apperr.CatInvalidArgument) {
+			t.Fatalf("reserved header %q error = %v, want InvalidArgument", k, err)
+		}
 	}
 }
