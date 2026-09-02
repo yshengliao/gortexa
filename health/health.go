@@ -223,7 +223,12 @@ func (r *Registry) StartMetricsExport(ctx context.Context, metrics *observabilit
 				snapshot := r.Snapshot(evalCtx)
 				cancel()
 				for component, state := range snapshot {
-					metrics.HealthStateGauge.Record(ctx, int64(state), metric.WithAttributes(attribute.String("component", component), attribute.Int("state", int(state))))
+					// The state belongs in the value, never in an attribute: under
+					// cumulative temporality the SDK re-exports every attribute set it
+					// has ever seen, so a "state" label would leave one frozen series
+					// per state a component ever reached and latch alerts forever.
+					// One series per component keeps the last value current.
+					metrics.HealthStateGauge.Record(ctx, int64(state), metric.WithAttributes(attribute.String("component", component)))
 				}
 			}
 		}
