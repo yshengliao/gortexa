@@ -393,8 +393,14 @@ func (a *App) Shutdown(ctx context.Context) error {
 				// Graceful shutdown timed out (e.g. a hung MCP SSE stream that
 				// never goes idle). Force-close so connections and their
 				// goroutines don't leak — mirrors the grpcSrv.Stop fallback below.
+				// Hitting the drain deadline is an outcome of a *bounded*
+				// shutdown, not a failure of it, so it is logged rather than
+				// returned: Run's documented caller treats any error as fatal and
+				// exits non-zero, which would turn every rolling deploy that still
+				// has a stream open into an apparent crash. retErr stays reserved
+				// for shutdown-hook (telemetry flush) failures.
 				_ = a.httpSrv.Close()
-				retErr = err
+				a.log.Warn("gortexa: drain deadline exceeded, force-closing", "error", err)
 			}
 		}
 		// Stop secondary listeners the same way (Shutdown on a never-served
@@ -402,9 +408,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 		for _, es := range a.extraSrvs {
 			if err := es.srv.Shutdown(tctx); err != nil {
 				_ = es.srv.Close()
-				if retErr == nil {
-					retErr = err
-				}
+				a.log.Warn("gortexa: extra listener drain deadline exceeded, force-closing", "error", err)
 			}
 		}
 		// Close the loopback under the same lock that guards its creation, and
@@ -427,7 +431,12 @@ func (a *App) Shutdown(ctx context.Context) error {
 			select {
 			case <-stopped:
 			case <-tctx.Done():
-				a.grpcSrv.Stop()
+				// Hard-stop off this goroutine: grpc's Stop and GracefulStop share
+				// one mutex that the abandoned GracefulStop holds while it waits on
+				// still-running handlers, so calling Stop inline would block here
+				// until those handlers return — turning the bounded shutdown into
+				// an unbounded one and skipping the telemetry-flush hooks below.
+				go a.grpcSrv.Stop()
 			}
 		}
 		if a.loopbackLis != nil {
