@@ -125,6 +125,33 @@ func TestClientIPMetadata(t *testing.T) {
 	}
 }
 
+// TestServeMuxInstallsClientIPMetadata pins the wiring, not just the helper:
+// TestClientIPMetadata above calls clientIPMetadata directly, so dropping
+// runtime.WithMetadata(clientIPMetadata) from NewServeMux would leave it green
+// while every gateway RPC arrived with no peer-IP key — collapsing the whole
+// HTTP/JSON surface into the one shared "bufconn" rate-limit bucket that key
+// exists to split. runtime.AnnotateContext is the call the generated handlers
+// make, so this exercises the real annotation path.
+func TestServeMuxInstallsClientIPMetadata(t *testing.T) {
+	mux := NewServeMux(apperr.Default)
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.RemoteAddr = "203.0.113.7:41234"
+
+	ctx, err := runtime.AnnotateContext(req.Context(), mux, req, "/x", runtime.WithHTTPPathPattern("/x"))
+	if err != nil {
+		t.Fatalf("AnnotateContext: %v", err)
+	}
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		t.Fatal("no outgoing metadata produced")
+	}
+	if got := md.Get(interceptor.PeerIPMetaKey); len(got) != 1 || got[0] != "203.0.113.7" {
+		t.Fatalf("%s = %v, want [203.0.113.7]; the mux is not annotating the gateway's observed client IP",
+			interceptor.PeerIPMetaKey, got)
+	}
+}
+
 // failMarshaler is a runtime.Marshaler whose Marshal always fails, to drive the
 // errorHandler's marshal-error fallback (a hard 500 with a static body).
 type failMarshaler struct{}
@@ -180,6 +207,72 @@ func TestIncomingHeaderMatcherBlocksPeerIP(t *testing.T) {
 	// The Grpc-Metadata-* passthrough still works for non-trusted keys.
 	if got, ok := incomingHeaderMatcher("Grpc-Metadata-X-Tenant"); !ok || !strings.EqualFold(got, "x-tenant") {
 		t.Errorf("Grpc-Metadata-X-Tenant → %q,%v; want x-tenant,true", got, ok)
+	}
+}
+
+// TestIncomingHeaderMatcherBlocksTrustedKeyCollisions is the same guard for the
+// other two trusted keys: the interceptors read only the first value of
+// auth.MetadataKey / interceptor.RequestIDMetadataKey, and grpc-gateway builds
+// metadata by ranging over the request header map, so a "Grpc-Metadata-*"
+// spelling landing on either key lets a client race the canonical header's
+// value. The mux-level half below is the oracle that matters; this pins the
+// matcher itself.
+func TestIncomingHeaderMatcherBlocksTrustedKeyCollisions(t *testing.T) {
+	for _, h := range []string{
+		"Grpc-Metadata-Authorization",
+		"grpc-metadata-authorization",
+		"Grpc-Metadata-X-Request-Id",
+		"grpc-metadata-x-request-id",
+	} {
+		if got, ok := incomingHeaderMatcher(h); ok {
+			t.Errorf("header %q must not be forwarded, got key %q", h, got)
+		}
+	}
+}
+
+// TestServeMuxRejectsSmuggledTrustedHeaders drives the real gateway annotation
+// path the generated handlers use (runtime.AnnotateContext over NewServeMux) and
+// asserts a client cannot smuggle a second value onto a trusted key.
+//
+// Oracle note: grpc-gateway unconditionally appends the canonical Authorization
+// header's value under "authorization" in addition to whatever the matcher
+// returns, so the key legitimately carries two identical copies even when
+// correct. The invariant is therefore "no value other than the canonical one",
+// not "exactly one value" — x-request-id has no such duplication and is pinned
+// to exactly one.
+func TestServeMuxRejectsSmuggledTrustedHeaders(t *testing.T) {
+	mux := NewServeMux(apperr.Default)
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("Authorization", "Bearer PROXY-MINTED")
+	req.Header.Set("Grpc-Metadata-Authorization", "Bearer CLIENT-FORGED")
+	req.Header.Set("X-Request-Id", "proxy-id")
+	req.Header.Set("Grpc-Metadata-X-Request-Id", "client-id")
+
+	ctx, err := runtime.AnnotateContext(req.Context(), mux, req, "/x", runtime.WithHTTPPathPattern("/x"))
+	if err != nil {
+		t.Fatalf("AnnotateContext: %v", err)
+	}
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		t.Fatal("no outgoing metadata produced")
+	}
+
+	authVals := md.Get(auth.MetadataKey)
+	if len(authVals) == 0 {
+		t.Fatalf("%s carries no value, want the canonical Authorization header's", auth.MetadataKey)
+	}
+	for _, v := range authVals {
+		if v != "Bearer PROXY-MINTED" {
+			t.Fatalf("%s = %v; %q is not the canonical header's value (Grpc-Metadata-Authorization collided onto the trusted key)",
+				auth.MetadataKey, authVals, v)
+		}
+	}
+
+	ridVals := md.Get(interceptor.RequestIDMetadataKey)
+	if len(ridVals) != 1 || ridVals[0] != "proxy-id" {
+		t.Fatalf("%s = %v, want exactly [proxy-id] (only the canonical X-Request-Id header's value)",
+			interceptor.RequestIDMetadataKey, ridVals)
 	}
 }
 
