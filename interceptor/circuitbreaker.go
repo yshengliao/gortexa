@@ -39,7 +39,10 @@ type breaker struct {
 	state    cbState
 	failures int
 	openedAt time.Time
-	probes   int
+	// halfOpenedAt stamps when the current half-open episode began, so allow can
+	// abandon an episode whose probes never come back (see the cbHalfOpen branch).
+	halfOpenedAt time.Time
+	probes       int
 	// gen identifies the current state episode; it is bumped on every transition
 	// so a probe's outcome only resolves the half-open episode it was actually
 	// admitted into (see record).
@@ -69,12 +72,26 @@ func (b *breaker) allow() admission {
 			b.state = cbHalfOpen
 			b.gen++
 			b.probes = 1
+			b.halfOpenedAt = time.Now()
 			return admission{ok: true, probe: true, gen: b.gen, from: prev, to: b.state, changed: true}
 		}
 		return admission{ok: false, from: prev, to: b.state}
 	case cbHalfOpen:
 		if b.probes < b.halfOpenMax {
 			b.probes++
+			return admission{ok: true, probe: true, gen: b.gen, from: prev, to: b.state}
+		}
+		// Probe slots are released only by record, which never runs for a handler
+		// that never returns — a long-lived server stream, or a call blocked on a
+		// dependency with no deadline (the h2c server sets no read/write timeout).
+		// Unlike cbOpen, half-open had no elapsed-time escape, so such probes wedged
+		// the method shut for every other caller. Bound the episode by openFor:
+		// abandon it and start a fresh one with this caller as its first probe. The
+		// stuck probes' eventual results are dropped by record's generation guard.
+		if time.Since(b.halfOpenedAt) >= b.openFor {
+			b.gen++
+			b.probes = 1
+			b.halfOpenedAt = time.Now()
 			return admission{ok: true, probe: true, gen: b.gen, from: prev, to: b.state}
 		}
 		return admission{ok: false, from: prev, to: b.state}
@@ -87,7 +104,7 @@ func (b *breaker) allow() admission {
 // admission allow returned for this same call, so a stale request admitted in an
 // earlier episode can't steal a probe slot or flip state on the genuine probe's
 // behalf when it completes during a later half-open episode.
-func (b *breaker) record(ctx context.Context, method string, success bool, adm admission, c *CircuitBreaker) {
+func (b *breaker) record(ctx context.Context, method string, out outcome, adm admission, c *CircuitBreaker) {
 	b.mu.Lock()
 	old := b.state
 	switch b.state {
@@ -99,7 +116,13 @@ func (b *breaker) record(ctx context.Context, method string, success bool, adm a
 		if b.probes > 0 {
 			b.probes--
 		}
-		if success {
+		// A neutral outcome still frees the slot — the probe is over — but it is no
+		// evidence either way, so the episode stays open for a real probe instead of
+		// being healed (or re-opened) by a client-caused rejection.
+		if out == outcomeNeutral {
+			break
+		}
+		if out == outcomeSuccess {
 			b.state = cbClosed
 			b.failures = 0
 		} else {
@@ -113,7 +136,13 @@ func (b *breaker) record(ctx context.Context, method string, success bool, adm a
 		if adm.probe {
 			break
 		}
-		if success {
+		// Neutral outcomes neither trip nor reset: otherwise a trickle of auth or
+		// validation rejections interleaved into a real outage would keep clearing
+		// the consecutive-failure counter and the breaker would never open.
+		if out == outcomeNeutral {
+			break
+		}
+		if out == outcomeSuccess {
 			b.failures = 0
 			break
 		}
@@ -187,16 +216,44 @@ func (c *CircuitBreaker) get(method string) *breaker {
 	return b
 }
 
-// isFailure counts only server-side failures toward tripping the breaker.
-func isFailure(err error) bool {
+// outcome is a call's verdict for the breaker. It is three-valued because the
+// breaker sits outside auth and validation in the fixed chain and therefore sees
+// outcomes the server is not responsible for: those must be neutral, counting
+// neither as a failure (which would trip a healthy method) nor as a success
+// (which would reset the failure counter or heal a half-open episode over an
+// ongoing outage). The zero value is outcomeFailure so a panicking handler,
+// which unwinds before the verdict is assigned, still counts against the method.
+type outcome int
+
+const (
+	outcomeFailure outcome = iota
+	outcomeSuccess
+	outcomeNeutral
+)
+
+// classify decides what a completed call says about server health. Only genuine
+// server-side failures trip the breaker; client-caused outcomes are neutral.
+func classify(ctx context.Context, err error) outcome {
+	// The caller walked away (cancelled, or its deadline expired) — whatever the
+	// handler returned is about the client, not this method's health. This also
+	// covers a bare context.Canceled, which apperr launders into Internal (a
+	// tripping category) because status.FromError does not recognise it.
+	if ctx.Err() != nil {
+		return outcomeNeutral
+	}
 	if err == nil {
-		return false
+		return outcomeSuccess
 	}
 	switch apperr.ToGRPCStatus(err).Code() {
 	case codes.Unavailable, codes.Internal, codes.DeadlineExceeded:
-		return true
+		return outcomeFailure
+	case codes.Canceled, codes.InvalidArgument, codes.Unauthenticated, codes.PermissionDenied:
+		// Client fault — and the two stages inside the breaker (auth, validation)
+		// reject here without ever reaching the handler, so there is nothing to
+		// learn about the downstream from them.
+		return outcomeNeutral
 	default:
-		return false
+		return outcomeSuccess
 	}
 }
 
@@ -221,12 +278,12 @@ func (c *CircuitBreaker) Unary() grpc.UnaryServerInterceptor {
 		// and a half-open probe would never release its slot — permanently wedging
 		// the method open. Treat a panic as a failure; the panic keeps propagating
 		// after the defer runs, so Recovery still converts it to an Internal error.
-		success := false
+		out := outcomeFailure
 		defer func() {
-			b.record(ctx, info.FullMethod, success, adm, c)
+			b.record(ctx, info.FullMethod, out, adm, c)
 		}()
 		resp, err := handler(ctx, req)
-		success = !isFailure(err)
+		out = classify(ctx, err)
 		return resp, err
 	}
 }
@@ -247,12 +304,12 @@ func (c *CircuitBreaker) Stream() grpc.StreamServerInterceptor {
 		}
 		// See Unary: record in a defer so a panicking handler still counts and a
 		// half-open probe slot is always released.
-		success := false
+		out := outcomeFailure
 		defer func() {
-			b.record(ss.Context(), info.FullMethod, success, adm, c)
+			b.record(ss.Context(), info.FullMethod, out, adm, c)
 		}()
 		err := handler(srv, ss)
-		success = !isFailure(err)
+		out = classify(ss.Context(), err)
 		return err
 	}
 }

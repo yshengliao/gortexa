@@ -33,7 +33,7 @@ func TestBreakerStaleRequestGuard(t *testing.T) {
 		// Two closed-state failures trip the breaker.
 		for range 2 {
 			a := b.allow()
-			b.record(ctx, "/svc/M", false, a, c)
+			b.record(ctx, "/svc/M", outcomeFailure, a, c)
 		}
 		if b.state != cbOpen {
 			t.Fatalf("state = %v, want open after MaxFailures", b.state)
@@ -62,7 +62,7 @@ func TestBreakerStaleRequestGuard(t *testing.T) {
 		// The stale closed-episode call now completes SUCCESS during half-open. It
 		// must not resolve the half-open episode (wrong episode), so state and the
 		// probe slot are untouched.
-		b.record(ctx, "/svc/M", true, stale, c)
+		b.record(ctx, "/svc/M", outcomeSuccess, stale, c)
 		if b.state != cbHalfOpen {
 			t.Fatalf("stale request flipped state to %v", b.state)
 		}
@@ -71,7 +71,7 @@ func TestBreakerStaleRequestGuard(t *testing.T) {
 		}
 
 		// The genuine probe completes success → breaker closes and clears failures.
-		b.record(ctx, "/svc/M", true, probe, c)
+		b.record(ctx, "/svc/M", outcomeSuccess, probe, c)
 		if b.state != cbClosed {
 			t.Fatalf("state = %v, want closed after successful probe", b.state)
 		}
@@ -92,7 +92,7 @@ func TestBreakerStaleProbeIgnoredAcrossEpisodes(t *testing.T) {
 
 		// Trip to open with a single failure.
 		a := b.allow()
-		b.record(ctx, "/svc/M", false, a, c)
+		b.record(ctx, "/svc/M", outcomeFailure, a, c)
 		if b.state != cbOpen {
 			t.Fatalf("state = %v, want open", b.state)
 		}
@@ -106,7 +106,7 @@ func TestBreakerStaleProbeIgnoredAcrossEpisodes(t *testing.T) {
 		}
 
 		// p1 fails → breaker re-opens and bumps generation; p2 is now stale.
-		b.record(ctx, "/svc/M", false, p1, c)
+		b.record(ctx, "/svc/M", outcomeFailure, p1, c)
 		if b.state != cbOpen {
 			t.Fatalf("state = %v, want open after probe failure", b.state)
 		}
@@ -120,7 +120,7 @@ func TestBreakerStaleProbeIgnoredAcrossEpisodes(t *testing.T) {
 
 		// p2 (episode A) completes SUCCESS during episode B: gen mismatch → ignored,
 		// so it neither closes the breaker nor releases episode B's probe slot.
-		b.record(ctx, "/svc/M", true, p2, c)
+		b.record(ctx, "/svc/M", outcomeSuccess, p2, c)
 		if b.state != cbHalfOpen {
 			t.Fatalf("stale probe flipped state to %v", b.state)
 		}
@@ -129,7 +129,7 @@ func TestBreakerStaleProbeIgnoredAcrossEpisodes(t *testing.T) {
 		}
 
 		// p3 (current episode) success closes the breaker.
-		b.record(ctx, "/svc/M", true, p3, c)
+		b.record(ctx, "/svc/M", outcomeSuccess, p3, c)
 		if b.state != cbClosed {
 			t.Fatalf("state = %v, want closed", b.state)
 		}
@@ -144,7 +144,7 @@ func TestBreakerClosedIgnoresLateProbe(t *testing.T) {
 	b := c.get("/svc/M")
 
 	// A probe-flagged failure recorded while closed must be dropped, not counted.
-	b.record(context.Background(), "/svc/M", false, admission{ok: true, probe: true}, c)
+	b.record(context.Background(), "/svc/M", outcomeFailure, admission{ok: true, probe: true}, c)
 	if b.failures != 0 {
 		t.Fatalf("late probe counted as closed failure: failures=%d", b.failures)
 	}
@@ -154,7 +154,7 @@ func TestBreakerClosedIgnoresLateProbe(t *testing.T) {
 
 	// A plain closed-state success just resets the failure counter.
 	b.failures = 1
-	b.record(context.Background(), "/svc/M", true, admission{ok: true}, c)
+	b.record(context.Background(), "/svc/M", outcomeSuccess, admission{ok: true}, c)
 	if b.failures != 0 {
 		t.Fatalf("success did not reset failures: %d", b.failures)
 	}
