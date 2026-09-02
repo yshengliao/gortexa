@@ -200,7 +200,21 @@ func (r *Registry) resolve(err error) (Mapping, string) {
 		if found {
 			if m, ok := r.Lookup(cat); ok && m.Category != CatInternal {
 				if m.Category == CatInvalidArgument || m.Category == CatUnauthenticated {
-					return m, s.Message()
+					// status.FromError splices the whole %w chain into the
+					// message when err merely wraps a status, so only the
+					// innermost status's own message may be forwarded: a
+					// handler's wrapper text is never client-facing, the same
+					// rule the *Error branch above applies by emitting e.Msg
+					// alone.
+					if gs, direct := stderrors.AsType[interface {
+						error
+						GRPCStatus() *status.Status
+					}](err); direct {
+						if inner := gs.GRPCStatus(); inner != nil {
+							return m, inner.Message()
+						}
+					}
+					return m, m.SafeMessage
 				}
 				return m, m.SafeMessage
 			}
