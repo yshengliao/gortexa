@@ -21,6 +21,33 @@ func RequestIDFrom(ctx context.Context) (string, bool) {
 	return id, ok && id != ""
 }
 
+// requestIDHolderKey addresses a slot the outermost Recovery stage installs
+// before calling inward. The fixed chain runs recovery outside requestid, so
+// the request-id-bearing context RequestID derives only ever flows *inward* —
+// it never reaches Recovery's own frame. The holder is the return path: an
+// inner stage publishes the id into it, and a panic record (the only record a
+// panicking RPC emits, since Logger's rpc line is unwound past) can still carry
+// request_id. Written and read on the one goroutine that runs the RPC.
+type requestIDHolderKey struct{}
+
+func withRequestIDHolder(ctx context.Context) context.Context {
+	return context.WithValue(ctx, requestIDHolderKey{}, new(string))
+}
+
+func publishRequestID(ctx context.Context, id string) {
+	if h, ok := ctx.Value(requestIDHolderKey{}).(*string); ok {
+		*h = id
+	}
+}
+
+func requestIDFromHolder(ctx context.Context) (string, bool) {
+	h, ok := ctx.Value(requestIDHolderKey{}).(*string)
+	if !ok || *h == "" {
+		return "", false
+	}
+	return *h, true
+}
+
 func newRequestID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
@@ -68,6 +95,7 @@ func RequestID() grpc.UnaryServerInterceptor {
 		if id == "" {
 			id = newRequestID()
 		}
+		publishRequestID(ctx, id)
 		ctx = withRequestIDBaggage(context.WithValue(ctx, requestIDKey{}, id), id)
 		_ = grpc.SetHeader(ctx, metadata.Pairs(RequestIDMetadataKey, id))
 		return handler(ctx, req)
@@ -81,6 +109,7 @@ func RequestIDStream() grpc.StreamServerInterceptor {
 		if id == "" {
 			id = newRequestID()
 		}
+		publishRequestID(ss.Context(), id)
 		ctx := withRequestIDBaggage(context.WithValue(ss.Context(), requestIDKey{}, id), id)
 		_ = ss.SetHeader(metadata.Pairs(RequestIDMetadataKey, id))
 		return handler(srv, wrapStream(ss, ctx))
