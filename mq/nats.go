@@ -138,7 +138,7 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 		c.hwg.Add(1)
 		c.mu.Unlock()
 		defer c.hwg.Done()
-		_ = h(ctx, messageFromWire(m.Data, m.Header))
+		_ = safeInvoke(ctx, h, messageFromWire(m.Data, m.Header))
 	}
 	var sub *nats.Subscription
 	var err error

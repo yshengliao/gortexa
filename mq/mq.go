@@ -33,6 +33,7 @@ package mq
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	apperr "github.com/yshengliao/gortexa/apperr"
@@ -66,6 +67,23 @@ func checkReservedHeaders(h map[string]string) error {
 		return apperr.New(apperr.CatInvalidArgument, "mq: header "+reservedKeyHeader+" is reserved")
 	}
 	return nil
+}
+
+// safeInvoke runs a caller-supplied Handler under panic recovery, turning a
+// panic into a handler error so the driver's normal failure path runs. A panic
+// on a delivery goroutine has no caller frame to unwind into and aborts the
+// whole process: on JetStream that also skips both Ack and Nak, so the poison
+// message stays ack-pending and kills the replacement process on redelivery.
+// Containment keeps the blast radius at one message, mirroring the Recovery
+// interceptor on the gRPC surface and the MCP bridge. The panic value rides
+// along as the wrapped cause, which apperr never serialises to a caller.
+func safeInvoke(ctx context.Context, h Handler, m Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = apperr.Wrap(apperr.CatInternal, "mq: handler panic", fmt.Errorf("%v", r))
+		}
+	}()
+	return h(ctx, m)
 }
 
 // Publisher publishes messages to a topic. Close honours ctx as a shutdown
