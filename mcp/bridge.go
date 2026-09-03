@@ -48,6 +48,14 @@ const (
 	// shared server's disabled ReadTimeout no longer provides; cleared before an
 	// SSE response streams.
 	bodyReadTimeout = 30 * time.Second
+	// maxAuthzBytes bounds the inbound Authorization value the bridge is willing
+	// to replay downstream. Unlike the body, a header is paid for once on the
+	// wire but re-encoded onto one loopback Invoke per batch element (up to
+	// maxBatchElements), so an unauthenticated caller can multiply header bytes
+	// into ~100x the transport work before the auth stage rejects anything. A
+	// real credential is a few KB at most and anything longer is already certain
+	// to fail verification, so dropping it costs nothing legitimate.
+	maxAuthzBytes = 8 << 10
 )
 
 // supportedProtocolVersions are the MCP revisions Gortexa can speak. On
@@ -553,7 +561,7 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 	// fails the call with codes.Internal before it leaves the process — so a stray
 	// byte in either header would mask the answer the chain owes the caller
 	// (Unauthenticated for a bad credential) with an opaque internal error.
-	if authz := r.Header.Get("Authorization"); authz != "" && printableASCII(authz) {
+	if authz := r.Header.Get("Authorization"); authz != "" && len(authz) <= maxAuthzBytes && printableASCII(authz) {
 		md.Set(auth.MetadataKey, authz)
 	}
 	// An invalid id is dropped, not propagated, matching the gateway path and the
