@@ -16,6 +16,22 @@ import (
 )
 
 // CBConfig configures the per-method circuit breaker. MaxFailures <= 0 disables it.
+//
+// A call's outcome is three-valued. Only server-side failures (Unavailable,
+// Internal, and a DeadlineExceeded the handler produced while the request
+// context was still live) count toward MaxFailures. Client-caused outcomes are
+// neutral and move the breaker in neither direction: a request context that was
+// cancelled or expired, and Canceled, InvalidArgument, Unauthenticated and
+// PermissionDenied, which the auth and validation stages inside the breaker
+// return without reaching the handler. For a slow dependency to be visible to
+// the breaker, keep dependency timeouts below the client deadline so the
+// timeout surfaces as the handler's own DeadlineExceeded or Unavailable rather
+// than as the request context expiring.
+//
+// A half-open episode is abandoned once it has lasted OpenInterval without a
+// probe reporting back; the next caller then starts a fresh episode. A method
+// whose handlers are long-lived streams therefore recovers by re-probing at
+// that cadence rather than by closing.
 type CBConfig struct {
 	MaxFailures  int           // consecutive failures before opening
 	OpenInterval time.Duration // how long to stay open before probing
@@ -180,7 +196,8 @@ func (s cbState) String() string {
 	}
 }
 
-// CircuitBreaker trips per method after repeated server-side failures.
+// CircuitBreaker trips per method after repeated server-side failures; see
+// CBConfig for which outcomes count.
 type CircuitBreaker struct {
 	cfg      CBConfig
 	mu       sync.Mutex
