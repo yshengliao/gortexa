@@ -66,7 +66,7 @@ func NewJetStream(cfg config.MQConfig) (Publisher, Subscriber, error) {
 	} else if err := validateServerList(url); err != nil {
 		return nil, nil, err
 	}
-	conn, err := nats.Connect(url)
+	conn, err := nats.Connect(url, natsConnectOptions()...)
 	if err != nil {
 		return nil, nil, apperr.Wrap(apperr.CatUnavailable, "jetstream connect", sanitizeConnectErr(err))
 	}
@@ -207,6 +207,24 @@ func (c *jsClient) markEnsured(topic string) {
 	c.mu.Unlock()
 }
 
+// forgetStream drops the ensured mark so the next call re-runs ensureStream's
+// lookup-then-create. Without it the cache turns a transient broker event — a
+// stream removed out of band, a restart with non-durable storage under a
+// transparently reconnecting nats.Conn — into a permanent per-topic outage
+// that is still reported to callers as retryable, healed only by a restart.
+func (c *jsClient) forgetStream(topic string) {
+	c.mu.Lock()
+	delete(c.streams, topic)
+	c.mu.Unlock()
+}
+
+// streamGone reports whether err says the stream backing a topic is absent,
+// which is the only case worth re-probing: other transient errors leave the
+// stream in place and re-running the ensure round-trip would not help.
+func streamGone(err error) bool {
+	return errors.Is(err, jetstream.ErrStreamNotFound) || errors.Is(err, jetstream.ErrNoStreamResponse)
+}
+
 func (c *jsClient) Publish(ctx context.Context, topic string, m Message) error {
 	if err := validateJSTopic(topic); err != nil {
 		return err
@@ -221,6 +239,9 @@ func (c *jsClient) Publish(ctx context.Context, topic string, m Message) error {
 	// there is no flush: PublishMsg blocks until the server has stored the
 	// message (or ctx expires).
 	if _, err := c.js.PublishMsg(ctx, natsWireMsg(topic, m)); err != nil {
+		if streamGone(err) {
+			c.forgetStream(topic)
+		}
 		return apperr.Wrap(apperr.CatUnavailable, "jetstream publish", err)
 	}
 	return nil
@@ -254,6 +275,9 @@ func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error
 		if errors.Is(err, jetstream.ErrInvalidConsumerName) {
 			return apperr.Wrap(apperr.CatInvalidArgument, "mq: group_id is not a valid consumer name", err)
 		}
+		if streamGone(err) {
+			c.forgetStream(topic)
+		}
 		return apperr.Wrap(apperr.CatUnavailable, "jetstream consumer", err)
 	}
 	cc, err := cons.Consume(func(msg jetstream.Msg) {
@@ -267,7 +291,7 @@ func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error
 		c.hwg.Add(1)
 		c.mu.Unlock()
 		defer c.hwg.Done()
-		if err := h(ctx, messageFromWire(msg.Data(), msg.Headers())); err != nil {
+		if err := safeInvoke(ctx, h, messageFromWire(msg.Data(), msg.Headers())); err != nil {
 			// Handler failure: negative-ack with a delay so the redelivery
 			// does not hot-loop a poison message.
 			_ = msg.NakWithDelay(jsNakDelay)

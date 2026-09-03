@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -124,6 +125,17 @@ func (c *Client) command(ctx context.Context, cn *conn, args ...any) error {
 }
 
 func (c *Client) roundtrip(ctx context.Context, cn *conn, args ...any) (any, error) {
+	// deadline() only ever consults ctx.Deadline(), so a ctx carrying nothing
+	// but cancellation would never reach the socket: the I/O would run to its
+	// own timeout, or — with that timeout disabled (see Options) — block
+	// forever while holding a pool token that Close cannot reclaim. Tripping
+	// the connection deadline on cancel unblocks whichever direction is in
+	// flight; the resulting error is not a resp.Error, so Do discards the
+	// connection rather than parking one with a poisoned deadline.
+	if ctx.Done() != nil {
+		stop := context.AfterFunc(ctx, func() { _ = cn.nc.SetDeadline(time.Now()) })
+		defer stop()
+	}
 	// Set deadlines unconditionally — a zero time clears any deadline. Setting
 	// them only when non-zero would let a deadline armed by a previous command
 	// (e.g. from that command's ctx) persist on a pooled connection and fire
@@ -140,6 +152,12 @@ func (c *Client) roundtrip(ctx context.Context, cn *conn, args ...any) (any, err
 	if err := cn.nc.SetReadDeadline(deadline(ctx, c.opts.ReadTimeout)); err != nil {
 		return nil, err
 	}
+	// Arming the read deadline can overwrite a cancel that already fired above,
+	// so re-check before blocking: past this point only the deadline can wake
+	// the read, and a cancel from here on is guaranteed to arrive after it.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	reply, err := readReply(cn.br)
 	if err != nil {
 		return nil, err
@@ -150,31 +168,34 @@ func (c *Client) roundtrip(ctx context.Context, cn *conn, args ...any) (any, err
 	return reply, nil
 }
 
-func (c *Client) getConn(ctx context.Context) (*conn, error) {
+// getConn checks out a connection, reporting whether it came back from the idle
+// list (reused) rather than being freshly dialled — the caller needs that to
+// tell a stale parked socket from a genuine peer failure.
+func (c *Client) getConn(ctx context.Context) (cn *conn, reused bool, err error) {
 	select {
 	case c.sem <- struct{}{}:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, false, ctx.Err()
 	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		<-c.sem
-		return nil, errClosed
+		return nil, false, errClosed
 	}
 	if n := len(c.idle); n > 0 {
 		cn := c.idle[n-1]
 		c.idle = c.idle[:n-1]
 		c.mu.Unlock()
-		return cn, nil
+		return cn, true, nil
 	}
 	c.mu.Unlock()
-	cn, err := c.dial(ctx)
+	cn, err = c.dial(ctx)
 	if err != nil {
 		<-c.sem
-		return nil, err
+		return nil, false, err
 	}
-	return cn, nil
+	return cn, false, nil
 }
 
 // putConn returns a connection: parked for reuse when healthy, closed when the
@@ -199,16 +220,49 @@ func (c *Client) putConn(cn *conn, bad bool) {
 
 // Do runs one command and returns its reply.
 func (c *Client) Do(ctx context.Context, args ...any) (any, error) {
-	cn, err := c.getConn(ctx)
+	reply, retry, err := c.attempt(ctx, args...)
+	// A connection parked in the pool can be closed by the peer at any time
+	// (Redis `timeout`, a restart/failover, an LB or NAT reaping idle flows) and
+	// nothing detects that before the write, so the first command after a quiet
+	// period would fail on an already-dead socket. Retry such a failure exactly
+	// once — attempt has discarded the stale connection, so the second try runs
+	// on a healthy one. Never retry a ctx that is already done: the caller has
+	// given up; never retry a fresh connection, whose failure is the peer's; and
+	// never retry a timeout, which attempt excludes: a dead idle socket fails
+	// with EOF or a reset on its first I/O, whereas a timeout means the peer is
+	// alive but slow, and a second command would only add load to a struggling
+	// cache and a second ReadTimeout to the caller's wait.
+	if retry && ctx.Err() == nil {
+		reply, _, err = c.attempt(ctx, args...)
+	}
+	return reply, err
+}
+
+// attempt runs one command on one pooled connection and reports whether the
+// failure is a candidate for a retry: a transport-level error (not a server
+// Error) on a connection that came back from the idle list.
+func (c *Client) attempt(ctx context.Context, args ...any) (any, bool, error) {
+	cn, reused, err := c.getConn(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	reply, err := c.roundtrip(ctx, cn, args...)
 	// A protocol/IO error (not a server Error) leaves the connection in an
 	// unknown state, so discard it; a clean server Error keeps it reusable.
 	var respErr Error
-	c.putConn(cn, err != nil && !errors.As(err, &respErr))
-	return reply, err
+	bad := err != nil && !errors.As(err, &respErr)
+	c.putConn(cn, bad)
+	return reply, bad && reused && !isTimeout(err), err
+}
+
+// isTimeout reports whether err is an I/O deadline expiry rather than a broken
+// connection; the two are told apart because only the latter earns a retry.
+func isTimeout(err error) bool {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // Get returns the value of key, or ErrNil if it does not exist.

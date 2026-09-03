@@ -38,6 +38,12 @@ import (
 const (
 	protocolVersion = "2025-03-26"
 	maxRequestBytes = 1 << 20
+	// maxBatchElements caps a JSON-RPC batch's element count. The body cap alone
+	// is not a bound on work: a 1 MiB body of `{}` entries is ~350k elements, and
+	// every one of them is rejected before dispatch, so no gRPC Invoke happens and
+	// load shedding, rate limiting and auth never see the request — the bridge
+	// would still allocate a response per element and buffer the whole array.
+	maxBatchElements = 100
 	// bodyReadTimeout bounds a POST body read, restoring a slow-drip guard the
 	// shared server's disabled ReadTimeout no longer provides; cleared before an
 	// SSE response streams.
@@ -299,6 +305,12 @@ func (b *Bridge) handleBatchPost(w http.ResponseWriter, r *http.Request, body []
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32600, Message: "invalid request"}})
 		return
 	}
+	// Reject before allocating anything per element.
+	if len(raws) > maxBatchElements {
+		writeRPCStatus(w, r, http.StatusRequestEntityTooLarge,
+			rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32000, Message: "batch too large"}})
+		return
+	}
 
 	responses := make([]rpcResponse, 0, len(raws))
 	for _, raw := range raws {
@@ -536,11 +548,18 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 		span.SetAttributes(attribute.String("gen_ai.tool.call.arguments", MaskSecrets(string(p.Arguments), b.observ.GenAIMaskFields)))
 	}
 	md := metadata.MD{}
-	if authz := r.Header.Get("Authorization"); authz != "" {
+	// Both forwards are filtered: net/http accepts header bytes (HTAB, anything
+	// >0x7E) that gRPC's outgoing-metadata validator rejects, and that rejection
+	// fails the call with codes.Internal before it leaves the process — so a stray
+	// byte in either header would mask the answer the chain owes the caller
+	// (Unauthenticated for a bad credential) with an opaque internal error.
+	if authz := r.Header.Get("Authorization"); authz != "" && printableASCII(authz) {
 		md.Set(auth.MetadataKey, authz)
 	}
-	if rid := r.Header.Get("X-Request-Id"); rid != "" {
-		md.Set("x-request-id", rid) // matches interceptor.RequestIDMetadataKey
+	// An invalid id is dropped, not propagated, matching the gateway path and the
+	// request-id interceptor: a fresh one is minted downstream.
+	if rid := r.Header.Get("X-Request-Id"); interceptor.ValidRequestID(rid) {
+		md.Set(interceptor.RequestIDMetadataKey, rid)
 	}
 	// Carry the real client IP across the loopback so the rate limiter keys on
 	// the caller, not the shared "bufconn" peer. Derived from our own RemoteAddr,
@@ -569,6 +588,17 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 		"content": []map[string]any{{"type": "text", "text": string(js)}},
 		"isError": false,
 	}, nil
+}
+
+// printableASCII reports whether every byte is in [0x20,0x7E], the range gRPC
+// requires of outgoing metadata values.
+func printableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] > 0x7E {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *Bridge) toolError(err error) map[string]any {

@@ -59,6 +59,19 @@ func authSkip(reflection bool) func(method string) bool {
 	}
 }
 
+// loadSheddingConfig builds the inflight-budget exemptions for run(). Health
+// is always exempt, and reflection joins it under the same flag as authSkip:
+// a stream holds its inflight slot for its entire lifetime, so a stream
+// exempted from auth but still counted against the budget would let an
+// unauthenticated client pin it with idle reflection streams — the same
+// hazard class the health exemption above already closes for Health.Watch.
+func loadSheddingConfig(reflection bool) interceptor.LoadSheddingConfig {
+	return interceptor.LoadSheddingConfig{
+		MaxInflight: 1024,
+		Skip:        authSkip(reflection),
+	}
+}
+
 // mcpServices lists every service exposed over the MCP bridge and the gortexa.ai.v1
 // schema export.
 func mcpServices() []protoreflect.FullName {
@@ -149,12 +162,7 @@ func run() error {
 		AuthSkip:       authSkip(cfg.Server.Reflection),
 		RateLimit:      interceptor.RateLimitConfig{RPS: 200, Burst: 100, TTL: 10 * time.Minute},
 		CircuitBreaker: interceptor.CBConfig{MaxFailures: 5, OpenInterval: 10 * time.Second, HalfOpenMax: 2},
-		// Exempt control-plane health checks from the inflight budget so a flood of
-		// long-lived (unauthenticated) Health.Watch streams can't shed real traffic.
-		LoadShedding: interceptor.LoadSheddingConfig{
-			MaxInflight: 1024,
-			Skip:        func(method string) bool { return strings.HasPrefix(method, "/grpc.health.") },
-		},
+		LoadShedding:   loadSheddingConfig(cfg.Server.Reflection),
 	})
 	if err != nil {
 		return fmt.Errorf("build interceptors: %w", err)

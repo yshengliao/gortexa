@@ -123,11 +123,16 @@ func jsonMarshaler() *runtime.JSONPb {
 
 // incomingHeaderMatcher forwards Authorization and X-Request-Id into gRPC
 // metadata under the keys the interceptors expect; other headers use the
-// gateway default — except anything that would land on the trusted peer-IP
-// metadata key. The rate limiter trusts that key on the loopback (see
-// interceptor.PeerIPMetaKey), and the gateway default forwards any
-// "Grpc-Metadata-*" header verbatim, so without this guard an external client
-// could spoof its rate-limit identity via "Grpc-Metadata-X-Gortexa-Peer-Ip".
+// gateway default — except anything that would land on a trusted metadata key.
+// The named cases above must be the only source of those keys: the gateway
+// default forwards any "Grpc-Metadata-*" header verbatim, and the interceptors
+// read only the first value of a key (auth.Authenticate, interceptor.RequestID,
+// interceptor.peerKey), while grpc-gateway builds the metadata by ranging over
+// the request header map — so a second, client-supplied value on the same key
+// wins nondeterministically. Without this guard "Grpc-Metadata-Authorization",
+// "Grpc-Metadata-X-Request-Id" and "Grpc-Metadata-X-Gortexa-Peer-Ip" would let
+// an external client race its own token, request id or rate-limit identity
+// against the trusted one.
 func incomingHeaderMatcher(key string) (string, bool) {
 	switch textproto.CanonicalMIMEHeaderKey(key) {
 	case "Authorization":
@@ -136,7 +141,9 @@ func incomingHeaderMatcher(key string) (string, bool) {
 		return interceptor.RequestIDMetadataKey, true
 	default:
 		k, ok := runtime.DefaultHeaderMatcher(key)
-		if ok && strings.EqualFold(k, interceptor.PeerIPMetaKey) {
+		if ok && (strings.EqualFold(k, interceptor.PeerIPMetaKey) ||
+			strings.EqualFold(k, auth.MetadataKey) ||
+			strings.EqualFold(k, interceptor.RequestIDMetadataKey)) {
 			return "", false
 		}
 		return k, ok

@@ -12,10 +12,17 @@ import (
 	"strconv"
 )
 
-// maxBulkLen guards against a malicious or corrupt length header triggering a
-// huge allocation; it is Redis's proto-max-bulk-len default (512 MiB).
 const (
-	maxBulkLen  = 512 << 20
+	// maxBulkLen guards against a malicious or corrupt length header triggering a
+	// huge allocation; it is Redis's proto-max-bulk-len default (512 MiB).
+	maxBulkLen = 512 << 20
+	// maxLineLen bounds a single CRLF-terminated line. Legitimate RESP2 status,
+	// error and integer lines are a few dozen bytes, and bulk payloads take the
+	// length-prefixed path guarded by maxBulkLen instead of growing a line — so
+	// nothing well-formed comes close. Without it a peer that opens a reply and
+	// never sends CRLF grows the accumulation buffer at link rate for as long as
+	// the read deadline allows, or forever when ReadTimeout is disabled.
+	maxLineLen  = 64 << 10
 	nullBulkLen = -1
 )
 
@@ -116,11 +123,16 @@ func readLine(r *bufio.Reader) ([]byte, error) {
 	if !isPrefix {
 		return line, nil
 	}
-	// Line longer than bufio's buffer: accumulate a copy.
+	// Line longer than bufio's buffer: accumulate a copy, bounded by maxLineLen
+	// so a never-terminated line cannot be grown without limit. The resulting
+	// error is not a resp.Error, so the caller discards the connection.
 	full := append([]byte(nil), line...)
 	for isPrefix && err == nil {
 		line, isPrefix, err = r.ReadLine()
 		full = append(full, line...)
+		if len(full) > maxLineLen {
+			return nil, fmt.Errorf("resp: reply line too long")
+		}
 	}
 	return full, err
 }
