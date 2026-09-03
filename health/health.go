@@ -8,6 +8,7 @@ import (
 	"maps"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -94,15 +95,20 @@ func (r *Registry) Snapshot(ctx context.Context) map[string]State {
 	return out
 }
 
-// Overall returns the worst state across all checks. An empty registry is Healthy.
-func (r *Registry) Overall(ctx context.Context) State {
-	worst := Healthy
-	for _, s := range r.Snapshot(ctx) {
-		if s > worst {
-			worst = s
+// worst folds a snapshot to its worst state. An empty snapshot is Healthy.
+func worst(states map[string]State) State {
+	w := Healthy
+	for _, s := range states {
+		if s > w {
+			w = s
 		}
 	}
-	return worst
+	return w
+}
+
+// Overall returns the worst state across all checks. An empty registry is Healthy.
+func (r *Registry) Overall(ctx context.Context) State {
+	return worst(r.Snapshot(ctx))
 }
 
 // State evaluates a single named check. ok is false when no such check is
@@ -137,6 +143,16 @@ func (r *Registry) GRPCHealthServer() grpc_health_v1.HealthServer {
 type grpcHealth struct {
 	grpc_health_v1.UnimplementedHealthServer
 	reg *Registry
+
+	// watchers counts live Watch streams, bounded by maxWatchers.
+	watchers atomic.Int64
+
+	// evalMu guards the snapshot every Watch stream shares. Holding it across
+	// the evaluation is deliberate: it coalesces all watchers that wake in the
+	// same interval onto a single registry evaluation instead of one each.
+	evalMu   sync.Mutex
+	evalAt   time.Time
+	evalSnap map[string]State
 }
 
 func serving(s State) grpc_health_v1.HealthCheckResponse_ServingStatus {
@@ -171,12 +187,59 @@ func (g *grpcHealth) Check(ctx context.Context, req *grpc_health_v1.HealthCheckR
 // watchInterval is how often Watch re-evaluates health to detect a change.
 const watchInterval = time.Second
 
+// maxWatchers bounds concurrent Watch streams. Watch is deliberately exempt
+// from auth and from load shedding — a probe has to answer while the server is
+// shedding — so the chain's concurrency governor never sees these streams and
+// health has to carry its own ceiling. It sits far above any real prober fleet,
+// so it engages only when an anonymous caller is hoarding streams.
+const maxWatchers = 1024
+
+// watchSnapshot returns the registry snapshot every watcher shares, re-evaluating
+// it at most once per watchInterval. Watch polls, so without sharing N streams
+// would drive N full registry evaluations per interval — unbounded dependency
+// work (a DB/Redis ping, per the checkTimeout note above) driven by callers the
+// chain never admits or counts. The result is never staler than watchInterval,
+// which is already the resolution Watch promises. The evaluation is detached
+// from the calling stream's context so a watcher disconnecting mid-evaluation
+// cannot cancel the checks the other watchers are waiting on; evalCheck still
+// bounds each one.
+func (g *grpcHealth) watchSnapshot(ctx context.Context) map[string]State {
+	g.evalMu.Lock()
+	defer g.evalMu.Unlock()
+	if g.evalSnap != nil && time.Since(g.evalAt) < watchInterval {
+		return g.evalSnap
+	}
+	g.evalSnap = g.reg.Snapshot(context.WithoutCancel(ctx))
+	g.evalAt = time.Now()
+	return g.evalSnap
+}
+
+// watchStatusFor is statusFor over the shared snapshot: an empty service is the
+// overall health, a non-empty one names a check and is SERVICE_UNKNOWN if absent.
+func (g *grpcHealth) watchStatusFor(ctx context.Context, service string) grpc_health_v1.HealthCheckResponse_ServingStatus {
+	snap := g.watchSnapshot(ctx)
+	if service == "" {
+		return serving(worst(snap))
+	}
+	st, ok := snap[service]
+	if !ok {
+		return grpc_health_v1.HealthCheckResponse_SERVICE_UNKNOWN
+	}
+	return serving(st)
+}
+
 func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {
+	if g.watchers.Add(1) > maxWatchers {
+		g.watchers.Add(-1)
+		return status.Error(codes.ResourceExhausted, "too many health watchers")
+	}
+	defer g.watchers.Add(-1)
+
 	service := req.GetService()
 	// -1 is an impossible ServingStatus, so the first evaluation always sends.
 	last := grpc_health_v1.HealthCheckResponse_ServingStatus(-1)
 	send := func() error {
-		st, _ := g.statusFor(stream.Context(), service) // SERVICE_UNKNOWN when absent
+		st := g.watchStatusFor(stream.Context(), service)
 		if st == last {
 			return nil
 		}
