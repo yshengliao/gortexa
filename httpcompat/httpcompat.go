@@ -37,7 +37,10 @@ const MaxRequestBytes = 1 << 20
 // then cleared, so a long server-streaming gateway *response* is unaffected.
 const bodyReadTimeout = 30 * time.Second
 
-// MaxBodyBytes reads and caps the request body of the wrapped gateway handler.
+// MaxBodyBytes is the gateway's inbound request guard: it caps the request body
+// of the wrapped gateway handler and drops header values gRPC would reject as
+// metadata.
+//
 // grpc-gateway decodes straight from r.Body with an unbounded json.Decoder, so
 // without this a client could stream an arbitrarily large JSON body into memory
 // (the MCP bridge already guards its own path). The body is read here — under a
@@ -47,6 +50,7 @@ const bodyReadTimeout = 30 * time.Second
 // body (declared or chunked) yields 413; a too-slow body yields 408.
 func MaxBodyBytes(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sanitizeMetadataHeaders(r.Header)
 		if r.ContentLength > MaxRequestBytes {
 			writeStatusJSON(w, http.StatusRequestEntityTooLarge, "invalid_argument", "request body too large")
 			return
@@ -72,6 +76,54 @@ func MaxBodyBytes(h http.Handler) http.Handler {
 		r.ContentLength = int64(len(buf))
 		h.ServeHTTP(w, r)
 	})
+}
+
+// metadataSplicedHeaders are the three headers grpc-gateway's annotateContext
+// appends to the outgoing loopback metadata *without* passing them through
+// incomingHeaderMatcher — and so without its printable-ASCII check. Every other
+// header takes the matcher branch, where an invalid value is logged and skipped.
+var metadataSplicedHeaders = [...]string{"Authorization", "X-Forwarded-For", "X-Forwarded-Host"}
+
+// sanitizeMetadataHeaders drops values that net/http accepts on the wire but
+// gRPC rejects in outgoing metadata (anything outside printable ASCII). Left in
+// place, one such byte in any of metadataSplicedHeaders makes the loopback
+// client fail the call with codes.Internal *before* the eight-stage chain runs,
+// so the caller gets an opaque 500 with no request id in place of the verdict
+// the chain owes it — and an anonymous caller can drive the server's
+// internal-error rate with a single header byte. Values are filtered
+// individually because X-Forwarded-For is joined from every value present.
+// mcp/bridge.go guards the identical hazard on the other HTTP surface.
+func sanitizeMetadataHeaders(h http.Header) {
+	for _, key := range metadataSplicedHeaders {
+		vals, ok := h[key]
+		if !ok {
+			continue
+		}
+		kept := make([]string, 0, len(vals))
+		for _, v := range vals {
+			if printableASCII(v) {
+				kept = append(kept, v)
+			}
+		}
+		switch {
+		case len(kept) == len(vals):
+		case len(kept) == 0:
+			h.Del(key)
+		default:
+			h[key] = kept
+		}
+	}
+}
+
+// printableASCII reports whether s is entirely 0x20-0x7E, the byte range gRPC
+// permits in a metadata text value.
+func printableASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] < 0x20 || s[i] > 0x7E {
+			return false
+		}
+	}
+	return true
 }
 
 func writeStatusJSON(w http.ResponseWriter, status int, code, message string) {

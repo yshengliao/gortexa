@@ -61,7 +61,9 @@ func newGateway(t *testing.T) *httptest.Server {
 	if err := resourcev1.RegisterResourceServiceHandler(context.Background(), mux, conn); err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(mux)
+	// Mirror the boot path (cmd/server/main.go): the gateway is always served
+	// behind MaxBodyBytes, which is where the inbound request guards live.
+	ts := httptest.NewServer(httpcompat.MaxBodyBytes(mux))
 	t.Cleanup(ts.Close)
 	return ts
 }
