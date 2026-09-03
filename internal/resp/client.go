@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -226,7 +227,11 @@ func (c *Client) Do(ctx context.Context, args ...any) (any, error) {
 	// period would fail on an already-dead socket. Retry such a failure exactly
 	// once — attempt has discarded the stale connection, so the second try runs
 	// on a healthy one. Never retry a ctx that is already done: the caller has
-	// given up, and never retry a fresh connection, whose failure is the peer's.
+	// given up; never retry a fresh connection, whose failure is the peer's; and
+	// never retry a timeout, which attempt excludes: a dead idle socket fails
+	// with EOF or a reset on its first I/O, whereas a timeout means the peer is
+	// alive but slow, and a second command would only add load to a struggling
+	// cache and a second ReadTimeout to the caller's wait.
 	if retry && ctx.Err() == nil {
 		reply, _, err = c.attempt(ctx, args...)
 	}
@@ -247,7 +252,17 @@ func (c *Client) attempt(ctx context.Context, args ...any) (any, bool, error) {
 	var respErr Error
 	bad := err != nil && !errors.As(err, &respErr)
 	c.putConn(cn, bad)
-	return reply, bad && reused, err
+	return reply, bad && reused && !isTimeout(err), err
+}
+
+// isTimeout reports whether err is an I/O deadline expiry rather than a broken
+// connection; the two are told apart because only the latter earns a retry.
+func isTimeout(err error) bool {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // Get returns the value of key, or ErrNil if it does not exist.

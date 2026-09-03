@@ -3,7 +3,9 @@ package resp_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -77,6 +79,69 @@ func TestClientDoesNotRetryFreshConnection(t *testing.T) {
 	if n := dials.Load(); n != 1 {
 		t.Fatalf("connections dialled = %d, want 1 (a freshly dialled connection is not retried)", n)
 	}
+}
+
+// TestClientDoesNotRetryTimedOutCommand pins the third half of the rule: a
+// reused connection whose command times out is not retried either. A dead idle
+// socket fails with EOF or a reset on its first I/O; a timeout means the peer
+// is alive but slow, and re-sending would double the load on a struggling
+// cache and double the caller's wait.
+func TestClientDoesNotRetryTimedOutCommand(t *testing.T) {
+	var dials, commands atomic.Int64
+	addr := serveFirstThenStall(t, &dials, &commands)
+
+	c := resp.NewClient(resp.Options{Addr: addr, PoolSize: 1, ReadTimeout: 200 * time.Millisecond})
+	t.Cleanup(func() { _ = c.Close() })
+
+	ctx := context.Background()
+	if got, err := c.Get(ctx, "k"); err != nil || got != "v" {
+		t.Fatalf("first GET: got=%q err=%v", got, err)
+	}
+	_, err := c.Get(ctx, "k2")
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("second GET on a stalled peer: err=%v, want a read deadline error", err)
+	}
+	if n := commands.Load(); n != 2 {
+		t.Fatalf("commands received by the peer = %d, want 2 (a timed-out command is not re-sent)", n)
+	}
+	if n := dials.Load(); n != 1 {
+		t.Fatalf("connections dialled = %d, want 1 (no retry on a timeout)", n)
+	}
+}
+
+// serveFirstThenStall starts a stub RESP server that answers the first command
+// on each connection with the bulk string "v" and then reads, but never
+// answers, every later command, holding the connection open.
+func serveFirstThenStall(t *testing.T, dials, commands *atomic.Int64) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			nc, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			dials.Add(1)
+			go func() {
+				defer func() { _ = nc.Close() }()
+				br := bufio.NewReader(nc)
+				for first := true; ; first = false {
+					if err := readRESPArray(br); err != nil {
+						return
+					}
+					commands.Add(1)
+					if first {
+						_, _ = nc.Write([]byte("$1\r\nv\r\n"))
+					}
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
 }
 
 // serveOneReplyPerConn starts a stub RESP server that answers one command per
