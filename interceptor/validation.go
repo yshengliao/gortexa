@@ -3,6 +3,7 @@ package interceptor
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 
 	"buf.build/go/protovalidate"
@@ -18,6 +19,18 @@ import (
 // NewValidator builds a shared protovalidate validator (lazy rule compilation).
 func NewValidator() (protovalidate.Validator, error) { return protovalidate.New() }
 
+// Bounds on the client-facing validation message. protovalidate reports one
+// violation per offending element, so the violation count is controlled by the
+// caller: an unbounded join turns a legal request with a large repeated field
+// into a multi-megabyte message that InvalidArgument (one of the two categories
+// apperr forwards verbatim) echoes on all three transports and that Logger
+// copies into the ERROR record. The first few violations tell the caller what to
+// fix; the ValidationFails metric carries the offending field for the rest.
+const (
+	maxViolationsInMessage = 10
+	maxViolationBytes      = 512
+)
+
 // validationDetails extracts the offending field name and a client-safe message
 // from a protovalidate error. Violations describe the caller's own request (field
 // names + rule messages), so they are safe to surface — they are not server
@@ -27,14 +40,51 @@ func validationDetails(err error) (field, message string, ok bool) {
 	if !isVErr || verr == nil {
 		return "unknown", "validation failed", false
 	}
-	field, message = "unknown", strings.Join(strings.Fields(verr.Error()), " ")
+	field = "unknown"
 	for _, v := range verr.Violations {
 		if v.FieldDescriptor != nil {
 			field = string(v.FieldDescriptor.Name())
 			break
 		}
 	}
-	return field, message, true
+	return field, boundedViolations(verr.Violations), true
+}
+
+// boundedViolations renders the violations the way ValidationError.Error() does,
+// but stops after maxViolationsInMessage / maxViolationBytes and reports the
+// remainder as a count, so neither the message nor the transient allocation
+// scales with the caller's element count.
+func boundedViolations(violations []*protovalidate.Violation) string {
+	if len(violations) == 0 {
+		return "validation failed"
+	}
+	var b strings.Builder
+	if len(violations) == 1 {
+		b.WriteString("validation error: ")
+	} else {
+		b.WriteString("validation errors:")
+	}
+	shown := 0
+	for _, v := range violations {
+		if shown == maxViolationsInMessage || b.Len() >= maxViolationBytes {
+			break
+		}
+		if len(violations) > 1 {
+			b.WriteString(" - ")
+		}
+		b.WriteString(strings.Join(strings.Fields(v.String()), " "))
+		shown++
+	}
+	msg := b.String()
+	if len(msg) > maxViolationBytes {
+		// Cut on a rune boundary: a truncated multi-byte rule message must not
+		// put invalid UTF-8 on the wire (gRPC status strings must be valid UTF-8).
+		msg = strings.ToValidUTF8(msg[:maxViolationBytes], "")
+	}
+	if rest := len(violations) - shown; rest > 0 {
+		msg += " (+" + strconv.Itoa(rest) + " more)"
+	}
+	return msg
 }
 
 // failValidation maps a protovalidate error to the right category: a
