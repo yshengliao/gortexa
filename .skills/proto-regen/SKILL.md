@@ -31,7 +31,7 @@ Regenerate all code artifacts from Protobuf definitions in this Gortexa project.
    - `buf breaking` fails → the change breaks the contract. Confirm with the user whether the break is intended. If intended, re-run with `BUF_ALLOW_BREAKING=1 bash .skills/proto-regen/scripts/regen.sh`. If not, revise the proto to be backward-compatible.
    - `buf generate` fails → report the plugin error; likely a missing tool (run `make bootstrap`) or a malformed annotation.
 
-4. **Verify output.** Confirm `gen/` now contains updated `*.pb.go`, `*_grpc.pb.go`, `*.pb.gw.go`, and `apidocs.swagger.json` as expected. Do not edit them. The MCP bridge reflects over the generated descriptors at runtime, so no separate MCP codegen step is needed.
+4. **Verify output.** Confirm `gen/` now contains updated `*.pb.go`, `*_grpc.pb.go`, `*.pb.gw.go`, and the merged OpenAPI document at `gen/openapiv2/gortexa.swagger.json` (`buf.gen.yaml` sets `merge_file_name=gortexa`, so there is one merged file, not one per service). Do not edit them. The MCP bridge reflects over the generated descriptors at runtime, so no separate MCP codegen step is needed.
 
 5. **Next steps for the user.** Generated code is regenerated; business logic in `internal/` is untouched. Remind that `internal/` handlers may need updating to satisfy new/changed service interfaces, and that this should follow the project's TDD loop (write/adjust the failing test first).
 

@@ -244,14 +244,23 @@ faster than the shared CI Xeon these paths were previously reported on).
 | MCP `tools/list` (memoized) | `ToolsListMemoized` | ~142 | 360 | 3 |
 | Resource clone (proto deep-copy) | `ResourceClone` | ~121 | 176 | 2 |
 | Resource get (in-memory store) | `GetResource` | ~131 | 176 | 2 |
-| Full interceptor chain (8 stages, unary) | `ChainUnary` | ~1,552 | 1,969 | 27 |
+| Interceptor chain, auth skipped (health/reflection path) | `ChainUnaryAuthSkipped` | ~1,552 | 1,969 | 27 |
+| Interceptor chain, authenticated (8 stages, unary) | `ChainUnaryJWT` | see below | 5,680 | 80 |
 
-The paths that must never allocate (rate-limiter `Allow`) hold at **0 allocs/op**,
-and the full 8-stage interceptor chain stays at **27 allocs/op** — the
-transport-boundary error normalization only runs on the error path, so the
-success path is unchanged. The `B/op` and `allocs/op` columns reproduce the
-earlier CI-host numbers to the byte, which is the point: allocation behaviour is
-a property of the code, not the machine.
+The paths that must never allocate (rate-limiter `Allow`) hold at **0 allocs/op**.
+
+A correction worth stating plainly: the `~1,552 ns / 27 allocs` row was
+previously labelled "full interceptor chain (8 stages)", but the benchmark
+behind it sets `AuthSkip` to always return true, so the auth stage returns
+before any HS256 verification, metadata lookup or JWT parse. It measures the
+health and reflection path, not a normal request. The authenticated row is the
+one a capacity plan needs: **80 allocs/op**, about 2.9x the figure this table
+used to publish as the eight-stage cost. Both benchmarks now ship, named for
+what they measure.
+
+The `B/op` and `allocs/op` columns are the machine-independent signals and
+reproduce the earlier CI-host numbers for every row except the chain ones,
+which were re-measured when the authenticated variant was added.
 
 **The `errors.AsType` win (historical, same-toolchain A/B).** The three-transport
 error resolver swapped the reflection-based `errors.As` for Go 1.26's generic

@@ -23,19 +23,16 @@ import (
 	apperr "github.com/yshengliao/gortexa/apperr"
 	"github.com/yshengliao/gortexa/auth"
 	"github.com/yshengliao/gortexa/interceptor"
+	"github.com/yshengliao/gortexa/internal/httplimits"
 )
 
-// MaxRequestBytes bounds a gateway JSON request body (1 MiB), matching the MCP
-// bridge's own limit so the two HTTP surfaces cap request size consistently.
-const MaxRequestBytes = 1 << 20
+// MaxRequestBytes bounds a gateway JSON request body. It is an alias for the
+// shared limit so the gateway and the MCP bridge cannot drift apart; the name
+// stays exported because consumers reference it.
+const MaxRequestBytes = httplimits.MaxRequestBytes
 
-// bodyReadTimeout bounds how long reading a (size-capped) gateway body may take.
-// The shared h2c server runs with ReadTimeout disabled so it can't cut off
-// long-lived gRPC/SSE streams, which leaves the short-bodied gateway path
-// without a body-read deadline — a slow-drip client could otherwise hold a
-// connection open indefinitely. This is applied only around the body read and
-// then cleared, so a long server-streaming gateway *response* is unaffected.
-const bodyReadTimeout = 30 * time.Second
+// bodyReadTimeout is the shared body-read deadline; see httplimits.
+const bodyReadTimeout = httplimits.BodyReadTimeout
 
 // MaxBodyBytes is the gateway's inbound request guard: it caps the request body
 // of the wrapped gateway handler and drops header values gRPC would reject as
@@ -101,7 +98,7 @@ func sanitizeMetadataHeaders(h http.Header) {
 		}
 		kept := make([]string, 0, len(vals))
 		for _, v := range vals {
-			if printableASCII(v) {
+			if httplimits.PrintableASCII(v) {
 				kept = append(kept, v)
 			}
 		}
@@ -113,17 +110,6 @@ func sanitizeMetadataHeaders(h http.Header) {
 			h[key] = kept
 		}
 	}
-}
-
-// printableASCII reports whether s is entirely 0x20-0x7E, the byte range gRPC
-// permits in a metadata text value.
-func printableASCII(s string) bool {
-	for i := range len(s) {
-		if s[i] < 0x20 || s[i] > 0x7E {
-			return false
-		}
-	}
-	return true
 }
 
 func writeStatusJSON(w http.ResponseWriter, status int, code, message string) {
