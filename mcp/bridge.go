@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -96,13 +97,19 @@ type Bridge struct {
 	// allowedOrigins gates browser access for DNS-rebinding protection (MCP
 	// Streamable HTTP): a browser request's Origin must be on this list.
 	allowedOrigins map[string]struct{}
+
+	// log records the denials that otherwise leave no trace: a rejected Origin
+	// is an attempted DNS-rebinding, and an over-cap batch is an attempted
+	// amplification, and both used to produce a response and nothing else.
+	// Defaults to slog.Default(), matching mq's convention.
+	log *slog.Logger
 }
 
 // NewBridge builds a bridge exposing the gortexa.ai.v1-annotated methods of the given
 // services. tools/call dispatches over conn (which should be the in-process
 // loopback so the full interceptor chain applies).
 func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor, reg *apperr.Registry, observCfg ...config.ObservConfig) (*Bridge, error) {
-	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}}
+	b := &Bridge{conn: conn, reg: reg, tools: map[string]ToolIR{}, log: slog.Default()}
 	if len(observCfg) > 0 {
 		b.observ = observCfg[0]
 	}
@@ -199,7 +206,10 @@ func (b *Bridge) originAllowed(origin string) bool {
 func (b *Bridge) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// DNS-rebinding protection: validate Origin before touching the body.
-		if !b.originAllowed(r.Header.Get("Origin")) {
+		if origin := r.Header.Get("Origin"); !b.originAllowed(origin) {
+			// A rejected Origin is an attempted DNS rebinding; it left no trace.
+			b.log.WarnContext(r.Context(), "mcp: rejected request from a disallowed origin",
+				"origin", origin, "remote", clientIP(r))
 			http.Error(w, "forbidden origin", http.StatusForbidden)
 			return
 		}
@@ -315,6 +325,10 @@ func (b *Bridge) handleBatchPost(w http.ResponseWriter, r *http.Request, body []
 	}
 	// Reject before allocating anything per element.
 	if len(raws) > maxBatchElements {
+		// An over-cap batch is an attempted amplification: rejected before any
+		// per-element work, but the attempt itself is worth a record.
+		b.log.WarnContext(r.Context(), "mcp: rejected an oversized JSON-RPC batch",
+			"elements", len(raws), "cap", maxBatchElements, "remote", clientIP(r))
 		writeRPCStatus(w, r, http.StatusRequestEntityTooLarge,
 			rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32000, Message: "batch too large"}})
 		return

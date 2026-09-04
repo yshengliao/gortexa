@@ -1,0 +1,30 @@
+# The build context was the whole tree: `COPY . .` shipped .git and every local
+# file into the build stage, which both bloats the context and defeats layer
+# caching on any commit that touches something the build never reads.
+.git
+.github
+.claude
+.agents
+.codex
+.skills
+
+# Build output and local artefacts.
+bin/
+*.out
+coverage.*
+
+# Local env and secret overrides — the runtime image must take its secret from
+# the environment, never from a file that rode in on the context.
+.env
+*.local.yaml
+
+# Docs and dev-only assets the binary does not need.
+README.md
+CLAUDE.md
+AGENTS.md
+deploy/docker-compose.yaml
+deploy/grafana/
+deploy/prometheus*.yaml
+deploy/otelcol.yaml
+deploy/pgbouncer.ini
+deploy/userlist.txt

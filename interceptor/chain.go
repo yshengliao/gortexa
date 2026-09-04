@@ -70,7 +70,14 @@ func NewSet(cfg Config) (Set, error) {
 		return Set{}, fmt.Errorf("interceptor: build validator: %w", err)
 	}
 	limiter := NewRateLimiter(cfg.RateLimit, cfg.Metrics)
-	breaker := NewCircuitBreaker(cfg.CircuitBreaker, cfg.Metrics)
+	// The chain already holds a logger; the breaker never received it, which is
+	// why a state change had no log line. Config.CircuitBreaker.Logger stays
+	// honoured if a caller set it explicitly.
+	cbCfg := cfg.CircuitBreaker
+	if cbCfg.Logger == nil {
+		cbCfg.Logger = cfg.Logger
+	}
+	breaker := NewCircuitBreaker(cbCfg, cfg.Metrics)
 	shedder := NewLoadShedder(cfg.LoadShedding, cfg.Metrics)
 
 	return Set{

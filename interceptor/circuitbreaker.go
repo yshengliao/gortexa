@@ -2,6 +2,7 @@ package interceptor
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -36,6 +37,11 @@ type CBConfig struct {
 	MaxFailures  int           // consecutive failures before opening
 	OpenInterval time.Duration // how long to stay open before probing
 	HalfOpenMax  int           // concurrent probes allowed while half-open
+	// Logger receives one line per state change. Nil keeps the previous
+	// behaviour — metric and span event only — which under the default config
+	// means no operator-visible output at all, since both providers are no-ops
+	// until an OTLP endpoint is set. NewSet wires this from Config.Logger.
+	Logger *slog.Logger
 }
 
 type cbState int
@@ -203,6 +209,7 @@ type CircuitBreaker struct {
 	mu       sync.Mutex
 	breakers map[string]*breaker
 	metrics  *observability.GovernanceMetrics
+	log      *slog.Logger
 }
 
 // NewCircuitBreaker builds a CircuitBreaker from config.
@@ -217,7 +224,7 @@ func NewCircuitBreaker(cfg CBConfig, metrics ...*observability.GovernanceMetrics
 	if len(metrics) > 0 {
 		gm = metrics[0]
 	}
-	return &CircuitBreaker{cfg: cfg, breakers: make(map[string]*breaker), metrics: gm}
+	return &CircuitBreaker{cfg: cfg, breakers: make(map[string]*breaker), metrics: gm, log: cfg.Logger}
 }
 
 func (c *CircuitBreaker) enabled() bool { return c.cfg.MaxFailures > 0 }
@@ -337,4 +344,12 @@ func (c *CircuitBreaker) recordChange(ctx context.Context, method string, from c
 		c.metrics.CBStateChanges.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
 	trace.SpanFromContext(ctx).AddEvent("cb.state_change", trace.WithAttributes(attrs...))
+	// A metric and a span event are both dropped on the floor unless an OTLP
+	// endpoint is configured, so without this line the single most operationally
+	// significant denial in the framework — a method going dark for every caller
+	// — is invisible out of the box.
+	if c.log != nil {
+		c.log.WarnContext(ctx, "gortexa: circuit breaker state change",
+			"method", method, "from", from.String(), "to", to.String())
+	}
 }
