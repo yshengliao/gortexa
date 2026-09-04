@@ -1,0 +1,22 @@
+# Nothing bumped the module graph or the action tags on its own: govulncheck
+# covers known CVEs, but currency and pinning are a separate problem, and a
+# tag like actions/checkout@v4 moves under you.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # The pinned dev toolchain (buf, the protoc plugins, sqlc, govulncheck).
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

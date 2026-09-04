@@ -357,6 +357,11 @@ func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	code := http.StatusOK
 	if !overall.Serving() {
 		code = http.StatusServiceUnavailable
+		// The 503 that takes a pod out of rotation wrote nothing anywhere, so the
+		// operator paged by the load balancer had no server-side record of which
+		// dependency went down or when. This is the one line that answers it.
+		a.log.WarnContext(r.Context(), "gortexa: readiness not serving",
+			"status", overall.String(), "checks", checks)
 	}
 	writeJSON(w, code, map[string]any{"status": overall.String(), "checks": checks})
 }
