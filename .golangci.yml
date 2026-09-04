@@ -5,9 +5,12 @@ linters:
   default: standard
   exclusions:
     generated: lax
+    # Anchored: these are regexes matched as substrings, so a bare `gen` also
+    # excluded cmd/gortexa/internal/cli/gen.go, regen.go and their tests — five
+    # hand-written files that were never linted.
     paths:
-      - gen
-      - third_party
+      - ^gen/
+      - ^third_party/
 formatters:
   enable:
     - gofmt

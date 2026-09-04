@@ -45,6 +45,11 @@ drops its git history, and rewrites the Go module path, leaving a working projec
 
 ## Hard rules
 - Never hand-edit `gen/` — it is produced only by `make gen` and committed (the copied CI guards drift).
+- A fresh scaffold ships with **no** `gen/` at all: `create` prunes it, because a
+  naive module-path rewrite would corrupt the length-prefixed descriptor bytes
+  inside a `.pb.go`. Run `make gen` and then `git add gen` before the first
+  commit, or the copied CI's drift gate fails on a tree that has nothing to
+  compare against.
 - The sample `resource` service is a reference; once you have your own domains,
   remove its proto/logic and the `gortexa:*`-wired lines in `cmd/server/main.go`.
 

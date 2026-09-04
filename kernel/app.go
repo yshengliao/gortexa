@@ -120,11 +120,21 @@ func WithShutdownHook(fn func(context.Context) error) Option {
 
 // WithServerOptions appends gRPC ServerOptions after the framework's own, so a
 // consumer can add their own unary/stream interceptors (via
-// grpc.ChainUnaryInterceptor / grpc.ChainStreamInterceptor), a StatsHandler,
-// keepalive params, etc. Because gRPC chains interceptors in the order the
-// options are applied, consumer interceptors run inside the fixed framework
-// chain — after validation, before the handler, still within recover — leaving
-// the eight-stage order untouched.
+// grpc.ChainUnaryInterceptor / grpc.ChainStreamInterceptor) or a StatsHandler.
+// Because gRPC chains interceptors in the order the options are applied,
+// consumer interceptors run inside the fixed framework chain — after
+// validation, before the handler, still within recover — leaving the
+// eight-stage order untouched.
+//
+// Transport-level options are the exception, and the distinction matters:
+// external gRPC on the shared h2c port rides grpc-go's ServeHTTP handler mode
+// (see mux.go), which builds its transport from the http.Request and never
+// receives s.opts, so KeepaliveParams, KeepaliveEnforcementPolicy, MaxStreams
+// and InitialWindowSize are inert there. They do take effect on the in-process
+// loopback the gateway and MCP bridge dial, which uses grpc-go's own transport
+// — so the same option is live on one surface and silently ignored on the
+// other. A deployment that needs keepalive enforcement on its public gRPC
+// surface has to split gRPC onto its own listener.
 func WithServerOptions(opts ...grpc.ServerOption) Option {
 	return func(a *appConfig) { a.extraServerOpts = append(a.extraServerOpts, opts...) }
 }

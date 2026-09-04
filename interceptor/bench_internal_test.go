@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 
 	"github.com/yshengliao/gortexa/auth"
@@ -48,8 +49,12 @@ func BenchmarkRateLimiterAllowParallel(b *testing.B) {
 	})
 }
 
-// Full fixed-order interceptor chain overhead per unary RPC.
-func BenchmarkChainUnary(b *testing.B) {
+// Chain overhead per unary RPC with the auth stage short-circuited by AuthSkip.
+// This is the reflection and health path, not the cost of a normal request: the
+// stage returns before any HS256 verification, metadata lookup or JWT parse.
+// For the number that describes an authenticated call, see
+// BenchmarkChainUnaryJWT.
+func BenchmarkChainUnaryAuthSkipped(b *testing.B) {
 	set, err := NewSet(Config{
 		Verifier: auth.MustNewVerifier(make([]byte, 32), "bench"),
 		AuthSkip: func(string) bool { return true },
@@ -61,6 +66,32 @@ func BenchmarkChainUnary(b *testing.B) {
 	info := &grpc.UnaryServerInfo{FullMethod: "/svc/M"}
 	handler := func(context.Context, any) (any, error) { return "ok", nil }
 	ctx := context.Background()
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = chain(ctx, nil, info, handler)
+	}
+}
+
+// Chain overhead per unary RPC for an authenticated caller: all eight stages
+// run, including the per-RPC HS256 verification every real request pays. This
+// is the figure a capacity plan needs; the AuthSkipped variant above understates
+// it, and the README used to publish that variant as the eight-stage cost.
+func BenchmarkChainUnaryJWT(b *testing.B) {
+	secret := make([]byte, 32)
+	v := auth.MustNewVerifier(secret, "bench")
+	set, err := NewSet(Config{Verifier: v})
+	if err != nil {
+		b.Fatal(err)
+	}
+	tok, err := v.Sign("bench-subject", nil, time.Hour)
+	if err != nil {
+		b.Fatal(err)
+	}
+	chain := set.ChainUnary()
+	info := &grpc.UnaryServerInfo{FullMethod: "/svc/M"}
+	handler := func(context.Context, any) (any, error) { return "ok", nil }
+	ctx := metadata.NewIncomingContext(context.Background(),
+		metadata.Pairs(auth.MetadataKey, "Bearer "+tok))
 	b.ReportAllocs()
 	for b.Loop() {
 		_, _ = chain(ctx, nil, info, handler)

@@ -3,8 +3,6 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,21 +32,20 @@ import (
 	"github.com/yshengliao/gortexa/auth"
 	"github.com/yshengliao/gortexa/config"
 	"github.com/yshengliao/gortexa/interceptor"
+	"github.com/yshengliao/gortexa/internal/httplimits"
 )
 
 const (
 	protocolVersion = "2025-03-26"
-	maxRequestBytes = 1 << 20
+	maxRequestBytes = httplimits.MaxRequestBytes
 	// maxBatchElements caps a JSON-RPC batch's element count. The body cap alone
 	// is not a bound on work: a 1 MiB body of `{}` entries is ~350k elements, and
 	// every one of them is rejected before dispatch, so no gRPC Invoke happens and
 	// load shedding, rate limiting and auth never see the request — the bridge
 	// would still allocate a response per element and buffer the whole array.
 	maxBatchElements = 100
-	// bodyReadTimeout bounds a POST body read, restoring a slow-drip guard the
-	// shared server's disabled ReadTimeout no longer provides; cleared before an
-	// SSE response streams.
-	bodyReadTimeout = 30 * time.Second
+	// bodyReadTimeout is the shared body-read deadline; see httplimits.
+	bodyReadTimeout = httplimits.BodyReadTimeout
 	// maxAuthzBytes bounds the inbound Authorization value the bridge is willing
 	// to replay downstream. Unlike the body, a header is paid for once on the
 	// wire but re-encoded onto one loopback Invoke per batch element (up to
@@ -297,10 +294,6 @@ func (b *Bridge) handleSinglePost(w http.ResponseWriter, r *http.Request, body [
 		return
 	}
 
-	if req.Method == "initialize" {
-		w.Header().Set("Mcp-Session-Id", newSessionID())
-	}
-
 	// Notifications (no id) get acknowledged with 202 and no body.
 	if len(req.ID) == 0 {
 		w.WriteHeader(http.StatusAccepted)
@@ -346,9 +339,6 @@ func (b *Bridge) handleBatchPost(w http.ResponseWriter, r *http.Request, body []
 		if rerr != nil {
 			responses = append(responses, rpcResponse{JSONRPC: "2.0", ID: id, Error: rerr})
 			continue
-		}
-		if req.Method == "initialize" {
-			w.Header().Set("Mcp-Session-Id", newSessionID())
 		}
 		if len(req.ID) == 0 {
 			continue // notification: no response
@@ -561,9 +551,6 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 
 	ctx := inboundContext(r)
 	attrs := []attribute.KeyValue{attribute.String("gen_ai.tool.name", p.Name), attribute.String("mcp.method.name", "tools/call"), attribute.String("mcp.protocol.version", protocolVersion), attribute.String("jsonrpc.request.id", string(id))}
-	if sid := r.Header.Get("Mcp-Session-Id"); sid != "" {
-		attrs = append(attrs, attribute.String("mcp.session.id", sid))
-	}
 	ctx, span := otel.Tracer("github.com/yshengliao/gortexa/mcp").Start(ctx, "execute_tool "+p.Name, trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attrs...))
 	defer span.End()
 	if b.observ.GenAICaptureContent {
@@ -575,7 +562,7 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 	// fails the call with codes.Internal before it leaves the process — so a stray
 	// byte in either header would mask the answer the chain owes the caller
 	// (Unauthenticated for a bad credential) with an opaque internal error.
-	if authz := r.Header.Get("Authorization"); authz != "" && len(authz) <= maxAuthzBytes && printableASCII(authz) {
+	if authz := r.Header.Get("Authorization"); authz != "" && len(authz) <= maxAuthzBytes && httplimits.PrintableASCII(authz) {
 		md.Set(auth.MetadataKey, authz)
 	}
 	// An invalid id is dropped, not propagated, matching the gateway path and the
@@ -610,17 +597,6 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 		"content": []map[string]any{{"type": "text", "text": string(js)}},
 		"isError": false,
 	}, nil
-}
-
-// printableASCII reports whether every byte is in [0x20,0x7E], the range gRPC
-// requires of outgoing metadata values.
-func printableASCII(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] < 0x20 || s[i] > 0x7E {
-			return false
-		}
-	}
-	return true
 }
 
 func (b *Bridge) toolError(err error) map[string]any {
@@ -729,12 +705,6 @@ func flush(w http.ResponseWriter) {
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-}
-
-func newSessionID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
 }
 
 // clientIP returns the host portion of the request's remote address.
