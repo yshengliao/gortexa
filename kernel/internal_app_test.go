@@ -19,7 +19,7 @@ import (
 )
 
 func TestAppHandlerRoutingAndHealth(t *testing.T) {
-	app, err := New()
+	app, err := New(WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestAppHandlerRoutingAndHealth(t *testing.T) {
 }
 
 func TestReadyzUnhealthy(t *testing.T) {
-	app, _ := New()
+	app, _ := New(WithoutInterceptors())
 	app.health.Register("dep", func(context.Context) health.State { return health.Unhealthy })
 	rec := httptest.NewRecorder()
 	app.handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
@@ -66,7 +66,7 @@ func TestReadyzUnhealthy(t *testing.T) {
 }
 
 func TestLoopbackConn(t *testing.T) {
-	app, _ := New()
+	app, _ := New(WithoutInterceptors())
 	conn, err := app.Loopback()
 	if err != nil || conn == nil {
 		t.Fatalf("loopback = %v, %v", conn, err)
@@ -114,7 +114,7 @@ func listServices(t *testing.T, app *App) (*grpc_reflection_v1.ListServiceRespon
 // it enabled, ServerReflectionInfo lists the health service; with it left off,
 // the RPC fails Unimplemented (no reflection service registered at all).
 func TestReflectionGatedByConfig(t *testing.T) {
-	app, err := New(WithConfig(&config.Config{Server: config.ServerConfig{Reflection: true}}))
+	app, err := New(WithConfig(&config.Config{Server: config.ServerConfig{Reflection: true}}), WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestReflectionGatedByConfig(t *testing.T) {
 }
 
 func TestReflectionOffByDefault(t *testing.T) {
-	app, err := New()
+	app, err := New(WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}

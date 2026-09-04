@@ -50,6 +50,8 @@ func WithExtraListener(lis net.Listener, h http.Handler) Option {
 // port distinct from the public gRPC/HTTP/MCP port. The main h2c port (which
 // also serves these endpoints) is unchanged. Opt-in; if the bind fails, Run
 // returns the error. Use AdminAddr to discover the bound port (e.g. with :0).
+// Repeated use is rejected by New: two admin listeners both write adminAddrV as
+// they bind, so AdminAddr would report whichever won the race.
 func WithAdminListener(addr string) Option {
 	return func(a *appConfig) {
 		a.extraListeners = append(a.extraListeners, extraListenerSpec{addr: addr, admin: true})

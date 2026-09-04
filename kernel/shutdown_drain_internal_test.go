@@ -24,7 +24,7 @@ func TestDrainDeadlineIsNotAServeError(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Server: config.ServerConfig{ShutdownTimeout: 200 * time.Millisecond}}
-	app, err := New(WithConfig(cfg), WithLogger(quiet()))
+	app, err := New(WithConfig(cfg), WithLogger(quiet()), WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}

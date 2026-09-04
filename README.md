@@ -108,7 +108,11 @@ go get github.com/yshengliao/gortexa@latest
 A minimal app — one h2c port with gRPC health, `/healthz`, `/readyz` — needs no
 code generation at all (unlike the scaffold's sample server above, it wires no
 gateway and no MCP bridge, so only the health endpoints respond until you add
-them):
+them). `kernel.New` requires an explicit decision about the governance chain:
+pass `WithInterceptors` to install the eight stages, or `WithoutInterceptors`
+to serve without them. This example takes the second, which is only safe
+because it serves nothing but health on a port you have not exposed — add
+`WithInterceptors` before you register a real service:
 
 ```go
 package main
@@ -127,7 +131,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	app, err := kernel.New() // defaults: h2c on :8080, graceful shutdown
+	// defaults: h2c on :8080, graceful shutdown. WithoutInterceptors is a
+	// deliberate opt-out: no recover, auth, rate limit or validation.
+	app, err := kernel.New(kernel.WithoutInterceptors())
 	if err != nil {
 		log.Fatal(err)
 	}

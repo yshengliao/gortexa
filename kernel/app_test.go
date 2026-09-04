@@ -32,7 +32,7 @@ func newApp(t *testing.T, addr string) *kernel.App {
 		IdleTimeout:       60 * time.Second,
 		ReadHeaderTimeout: 5 * time.Second,
 	}}
-	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()))
+	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()), kernel.WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yshengliao/gortexa/config"
 )
 
 // TestParseTargetRejectsDigitThenLower covers the digit-then-lowercase guard
@@ -126,55 +128,60 @@ func TestCreateProjectInvalidModule(t *testing.T) {
 	}
 }
 
-func TestFreshenJWTSecret(t *testing.T) {
-	t.Run("placeholder replaced", func(t *testing.T) {
-		dir := t.TempDir()
-		cfg := filepath.Join(dir, "config.yaml")
-		writeFixture(t, cfg, "jwt:\n  secret: "+devPlaceholderSecret+"\n")
+// devPlaceholderSecret is the sample secret etc/config.yaml ships and
+// config.Validate rejects. It lives here, in the tests, precisely because
+// production code must no longer have any reason to know it: create used to
+// substitute it away.
+const devPlaceholderSecret = "dev-only-insecure-secret-change-me-please"
 
-		if err := freshenJWTSecret(cfg); err != nil {
-			t.Fatal(err)
-		}
-		got := readFile(t, cfg)
-		if strings.Contains(got, devPlaceholderSecret) {
-			t.Errorf("placeholder secret still present:\n%s", got)
-		}
-		// Extract the value after "secret: " and check it's a 48-hex string.
-		_, after, ok := strings.Cut(got, "secret: ")
-		if !ok {
-			t.Fatalf("no secret line:\n%s", got)
-		}
-		val := strings.TrimSpace(after)
-		if len(val) != 48 {
-			t.Errorf("secret length = %d, want 48 hex chars: %q", len(val), val)
-		}
-		for _, r := range val {
-			if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-				t.Errorf("secret is not lowercase hex: %q", val)
-				break
-			}
-		}
-	})
+// A scaffold must not be born holding a usable signing key. create used to
+// replace the placeholder in the project's etc/config.yaml with 48 hex chars
+// from crypto/rand, which defeated config.Validate's placeholder guard by
+// construction: that guard inspects the secret's *value* and cannot tell a
+// file-resident key from an env-injected one. create then runs `git init`, so
+// the very next `git add -A` committed the key, and deploy/Dockerfile copies
+// the same file into a runtime image layer. The invariant is inverted here —
+// what ships is the placeholder, and the operator injects the real secret.
+func TestCreateLeavesThePlaceholderSecretInPlace(t *testing.T) {
+	layout := setupLayoutRepo(t)
+	dest := filepath.Join(t.TempDir(), "proj")
 
-	t.Run("no placeholder left unchanged", func(t *testing.T) {
-		dir := t.TempDir()
-		cfg := filepath.Join(dir, "config.yaml")
-		orig := "jwt:\n  secret: already-custom-secret\n"
-		writeFixture(t, cfg, orig)
+	if err := createProject(dest, "github.com/me/x", "file://"+layout, "main"); err != nil {
+		t.Fatal(err)
+	}
 
-		if err := freshenJWTSecret(cfg); err != nil {
-			t.Fatal(err)
-		}
-		if got := readFile(t, cfg); got != orig {
-			t.Errorf("config without placeholder should be untouched:\n%s", got)
-		}
-	})
+	got := readFile(t, filepath.Join(dest, "etc", "config.yaml"))
+	if !strings.Contains(got, devPlaceholderSecret) {
+		t.Fatalf("create must leave the placeholder secret in the scaffold; got:\n%s", got)
+	}
 
-	t.Run("missing file not an error", func(t *testing.T) {
-		if err := freshenJWTSecret(filepath.Join(t.TempDir(), "absent.yaml")); err != nil {
-			t.Errorf("missing config = %v, want nil", err)
-		}
-	})
+	// And the config it produced is one config.Validate refuses, so the project
+	// cannot start until a secret is injected from outside the tree.
+	cfg, err := config.BuildUnvalidated(
+		config.WithConfigFile(filepath.Join(dest, "etc", "config.yaml")),
+		config.WithEnviron(func() []string { return nil }),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("a freshly created project must fail validation until a real secret is injected")
+	}
+
+	// The same config validates once the operator supplies one, so the guard
+	// rejects the secret's provenance, not the project.
+	withSecret, err := config.BuildUnvalidated(
+		config.WithConfigFile(filepath.Join(dest, "etc", "config.yaml")),
+		config.WithEnviron(func() []string {
+			return []string{"GORTEXA_AUTH__JWT_SECRET=" + strings.Repeat("k", 32)}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := withSecret.Validate(); err != nil {
+		t.Fatalf("an injected secret must make the scaffold's config valid: %v", err)
+	}
 }
 
 // TestFindModuleRootPrefersRootWithBufGen builds a project root carrying both

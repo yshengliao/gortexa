@@ -25,7 +25,7 @@ func TestSinglePortServesGRPCAndHTTPOverTheWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Server: config.ServerConfig{ShutdownTimeout: time.Second}}
-	app, err := New(WithConfig(cfg), WithLogger(quiet()))
+	app, err := New(WithConfig(cfg), WithLogger(quiet()), WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}
