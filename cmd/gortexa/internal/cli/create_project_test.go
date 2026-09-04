@@ -21,6 +21,10 @@ func setupLayoutRepo(t *testing.T) string {
 	writeFixture(t, filepath.Join(layout, "cmd", "gortexa", "main.go"), "package main\n")
 	writeFixture(t, filepath.Join(layout, "install.sh"), "#!/bin/sh\n")
 	writeFixture(t, filepath.Join(layout, "README.md"), "# gortexa framework readme\n")
+	// The config a scaffold inherits, carrying the placeholder secret the server
+	// refuses to boot with. create must leave it exactly as it is.
+	writeFixture(t, filepath.Join(layout, "etc", "config.yaml"),
+		"auth:\n  jwt_secret: \""+devPlaceholderSecret+"\"\n")
 	gitRun(t, layout, "add", "-A")
 	gitRun(t, layout, "commit", "-q", "-m", "layout")
 	return layout

@@ -24,7 +24,7 @@ func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)
 // not killed mid-flight by a per-HTTP/2-stream write deadline. The httpSrv is
 // constructed eagerly in New(), so the field is observable before serve().
 func TestNewDefaultServerTimeouts(t *testing.T) {
-	app, err := New(WithLogger(quiet()))
+	app, err := New(WithLogger(quiet()), WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestShutdownBeforeServeReturnsPromptly(t *testing.T) {
 	defer testutil.AssertNoLeak(t)
 
 	cfg := &config.Config{Server: config.ServerConfig{ShutdownTimeout: time.Second}}
-	app, err := New(WithConfig(cfg), WithLogger(quiet()))
+	app, err := New(WithConfig(cfg), WithLogger(quiet()), WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestServeErrorPathTearsDown(t *testing.T) {
 
 	cfg := &config.Config{Server: config.ServerConfig{ShutdownTimeout: time.Second}}
 	var hookRan bool
-	app, err := New(WithConfig(cfg), WithLogger(quiet()),
+	app, err := New(WithConfig(cfg), WithLogger(quiet()), WithoutInterceptors(),
 		WithShutdownHook(func(context.Context) error { hookRan = true; return nil }))
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestServeErrorPathTearsDown(t *testing.T) {
 // 'status' can never contradict the per-check states. Feed a degraded and a
 // healthy check and assert the aggregate matches the listed checks.
 func TestReadyzSnapshotConsistent(t *testing.T) {
-	app, err := New(WithLogger(quiet()))
+	app, err := New(WithLogger(quiet()), WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestShutdownBoundedWithHungConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Server: config.ServerConfig{ShutdownTimeout: 200 * time.Millisecond}}
-	app, err := New(WithConfig(cfg), WithLogger(quiet()))
+	app, err := New(WithConfig(cfg), WithLogger(quiet()), WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestShutdownBoundedWithHungConnection(t *testing.T) {
 }
 
 func TestLoopbackRefusedAfterShutdown(t *testing.T) {
-	app, err := New(WithLogger(quiet()))
+	app, err := New(WithLogger(quiet()), WithoutInterceptors())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestRunBindFailureRunsShutdownHooks(t *testing.T) {
 
 	cfg := &config.Config{Server: config.ServerConfig{Addr: busy.Addr().String(), ShutdownTimeout: time.Second}}
 	var hookRan bool
-	app, err := New(WithConfig(cfg), WithLogger(quiet()),
+	app, err := New(WithConfig(cfg), WithLogger(quiet()), WithoutInterceptors(),
 		WithShutdownHook(func(context.Context) error { hookRan = true; return nil }))
 	if err != nil {
 		t.Fatal(err)

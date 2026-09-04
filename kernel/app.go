@@ -66,6 +66,7 @@ type appConfig struct {
 	cfg             *config.Config
 	log             *slog.Logger
 	interceptors    *interceptor.Set
+	noInterceptors  bool
 	statsHandler    stats.Handler
 	gateway         http.Handler
 	mcp             http.Handler
@@ -77,14 +78,41 @@ type appConfig struct {
 
 func WithConfig(c *config.Config) Option { return func(a *appConfig) { a.cfg = c } }
 func WithLogger(l *slog.Logger) Option   { return func(a *appConfig) { a.log = l } }
+
+// WithInterceptors installs the fixed eight-stage governance chain. Supplying
+// it is mandatory: New fails without it, because a server that silently runs
+// with no recover, auth, rate limit or validation is the one mistake this
+// framework must not let a consumer make by omission. Pass WithoutInterceptors
+// to opt out deliberately.
 func WithInterceptors(s interceptor.Set) Option {
 	return func(a *appConfig) { a.interceptors = &s }
+}
+
+// WithoutInterceptors builds a server with no governance chain at all: no
+// recover, request-id, logger, load shedding, rate limiting, circuit breaker,
+// authentication or validation. It exists so that opting out is a decision a
+// reader can see, rather than the accident of leaving WithInterceptors off.
+// Anything served this way must be unreachable from an untrusted network.
+func WithoutInterceptors() Option {
+	return func(a *appConfig) { a.noInterceptors = true }
 }
 func WithStatsHandler(h stats.Handler) Option { return func(a *appConfig) { a.statsHandler = h } }
 func WithGateway(h http.Handler) Option       { return func(a *appConfig) { a.gateway = h } }
 func WithMCPHandler(h http.Handler) Option    { return func(a *appConfig) { a.mcp = h } }
+
+// WithHTTPWrap wraps the main port's handler. Repeated use composes rather than
+// replaces: the middleware from the first call ends up innermost, so wraps nest
+// in the order they were supplied. A silent last-one-wins would drop a security
+// wrap a consumer believed was installed.
 func WithHTTPWrap(mw func(http.Handler) http.Handler) Option {
-	return func(a *appConfig) { a.httpWrap = mw }
+	return func(a *appConfig) {
+		prev := a.httpWrap
+		if prev == nil {
+			a.httpWrap = mw
+			return
+		}
+		a.httpWrap = func(h http.Handler) http.Handler { return mw(prev(h)) }
+	}
 }
 func WithShutdownHook(fn func(context.Context) error) Option {
 	return func(a *appConfig) { a.shutdownFns = append(a.shutdownFns, fn) }
@@ -101,12 +129,24 @@ func WithServerOptions(opts ...grpc.ServerOption) Option {
 	return func(a *appConfig) { a.extraServerOpts = append(a.extraServerOpts, opts...) }
 }
 
-// New builds an App. If an interceptor Set is provided, its chains are applied
-// to the gRPC server (and a missing required interceptor panics — fail-loud).
+// New builds an App. Exactly one of WithInterceptors or WithoutInterceptors is
+// required: the chain is what makes the single port safe to expose, so New
+// refuses to guess. A Set with a missing stage still panics — fail-loud.
 func New(opts ...Option) (*App, error) {
 	ac := &appConfig{}
 	for _, o := range opts {
 		o(ac)
+	}
+	// The governance chain is opt-out, never opt-miss. Omitting WithInterceptors
+	// used to yield a server with no recover, auth, rate limit or validation, and
+	// nothing said so — not a log line, and not the chain's own fail-loud panic,
+	// which is unreachable when the Set is absent rather than incomplete.
+	if ac.interceptors == nil && !ac.noInterceptors {
+		return nil, fmt.Errorf("kernel: no interceptor chain: pass WithInterceptors(...) to install " +
+			"the governance chain, or WithoutInterceptors() to serve without one")
+	}
+	if ac.interceptors != nil && ac.noInterceptors {
+		return nil, fmt.Errorf("kernel: WithInterceptors and WithoutInterceptors are mutually exclusive")
 	}
 	if ac.cfg == nil {
 		ac.cfg = &config.Config{Server: config.ServerConfig{
@@ -171,9 +211,16 @@ func New(opts ...Option) (*App, error) {
 	}
 	// Build any secondary listeners (opt-in). Their http.Servers are allocated
 	// here (Handler known); serve() binds and serves them, Shutdown stops them.
+	adminSeen := false
 	for _, spec := range ac.extraListeners {
 		if !spec.admin && spec.lis == nil {
 			return nil, fmt.Errorf("kernel: WithExtraListener requires a non-nil listener")
+		}
+		if spec.admin {
+			if adminSeen {
+				return nil, fmt.Errorf("kernel: WithAdminListener may be used at most once")
+			}
+			adminSeen = true
 		}
 		h := spec.handler
 		srv := &http.Server{
@@ -212,11 +259,29 @@ func New(opts ...Option) (*App, error) {
 }
 
 // SetGateway installs the HTTP/JSON gateway handler (built after service
-// registration, so it is a setter rather than a New option).
-func (a *App) SetGateway(h http.Handler) { a.gateway = h }
+// registration, so it is a setter rather than a New option). It panics if the
+// app is already serving: serve() reads the handler once, so a later call was
+// silently discarded — and raced that read besides.
+func (a *App) SetGateway(h http.Handler) {
+	a.mustNotBeServing("SetGateway")
+	a.gateway = h
+}
 
-// SetMCPHandler installs the MCP Streamable HTTP handler.
-func (a *App) SetMCPHandler(h http.Handler) { a.mcp = h }
+// SetMCPHandler installs the MCP Streamable HTTP handler. Panics once serving,
+// for the same reason as SetGateway.
+func (a *App) SetMCPHandler(h http.Handler) {
+	a.mustNotBeServing("SetMCPHandler")
+	a.mcp = h
+}
+
+// mustNotBeServing enforces that the handler-shaping setters are called during
+// assembly, matching the fail-loud style the interceptor chain already uses for
+// a mis-assembled Set.
+func (a *App) mustNotBeServing(what string) {
+	if a.started.Load() {
+		panic("kernel: " + what + " called after the app started serving")
+	}
+}
 
 // Loopback returns an in-process client connection to this App's own gRPC
 // server. Calls flow through the full interceptor chain, so the gateway and MCP
@@ -320,6 +385,15 @@ func (a *App) Run(ctx context.Context) error {
 // serve runs against a provided listener (used by Run and by tests).
 func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	a.started.Store(true)
+	// An empty registry makes Overall report Healthy, so /readyz answers 200 with
+	// nothing actually checked. That is the documented default — dependency
+	// probes are the operator's to register — but it is worth one line at boot,
+	// because the operator who never read that page is exactly the one shipping
+	// a service whose readiness means nothing. Only emptiness is detectable: a
+	// check that cannot fail is indistinguishable from one that simply passed.
+	if len(a.health.Names()) == 0 {
+		a.log.Warn("gortexa: no health checks registered; /readyz reports ready without probing anything")
+	}
 	// httpSrv was allocated in New(); only its Handler depends on gateway/mcp
 	// (installed after New via SetGateway/SetMCPHandler), so set it here. Shutdown
 	// never reads Handler, so this is race-free with a concurrent Shutdown.

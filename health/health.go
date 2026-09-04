@@ -74,8 +74,23 @@ type Registry struct {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry { return &Registry{checks: make(map[string]Check)} }
 
-// Register adds or replaces a named check.
+// Register adds a named check. A duplicate name panics: registration is
+// boot-time and single-threaded, so a collision is a wiring mistake the
+// operator should see at startup — silently overwriting leaves the losing
+// dependency unmonitored while /readyz keeps answering 200 for the winner.
+// Use Replace when substituting a check is the actual intent.
 func (r *Registry) Register(name string, c Check) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, dup := r.checks[name]; dup {
+		panic("health: duplicate check registered: " + name)
+	}
+	r.checks[name] = c
+}
+
+// Replace installs a check under a name that may already be taken. It is the
+// explicit form of what Register used to do by accident.
+func (r *Registry) Replace(name string, c Check) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.checks[name] = c

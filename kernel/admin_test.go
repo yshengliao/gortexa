@@ -52,7 +52,7 @@ func TestWithExtraListener(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 	})
 	cfg := &config.Config{Server: config.ServerConfig{Addr: "127.0.0.1:0", ShutdownTimeout: 2 * time.Second}}
-	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()), kernel.WithExtraListener(lis, handler))
+	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()), kernel.WithoutInterceptors(), kernel.WithExtraListener(lis, handler))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWithExtraListener(t *testing.T) {
 // reflecting the health registry. AdminAddr discovers the :0-bound port.
 func TestWithAdminListenerHealth(t *testing.T) {
 	cfg := &config.Config{Server: config.ServerConfig{Addr: "127.0.0.1:0", ShutdownTimeout: 2 * time.Second}}
-	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()), kernel.WithAdminListener("127.0.0.1:0"))
+	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()), kernel.WithoutInterceptors(), kernel.WithAdminListener("127.0.0.1:0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestWithAdminListenerBindFailure(t *testing.T) {
 	_ = probe.Close()
 
 	cfg := &config.Config{Server: config.ServerConfig{Addr: mainAddr, ShutdownTimeout: 2 * time.Second}}
-	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()),
+	app, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()), kernel.WithoutInterceptors(),
 		kernel.WithAdminListener("127.0.0.1:70000")) // invalid port → bind fails
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestWithAdminListenerBindFailure(t *testing.T) {
 // WithExtraListener with a nil listener is a programming error caught at New.
 func TestWithExtraListenerNilFailsLoud(t *testing.T) {
 	cfg := &config.Config{Server: config.ServerConfig{Addr: "127.0.0.1:0", ShutdownTimeout: 2 * time.Second}}
-	if _, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()),
+	if _, err := kernel.New(kernel.WithConfig(cfg), kernel.WithLogger(quietLogger()), kernel.WithoutInterceptors(),
 		kernel.WithExtraListener(nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))); err == nil {
 		t.Fatal("New must reject WithExtraListener(nil, ...)")
 	}

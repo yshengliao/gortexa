@@ -86,11 +86,6 @@ func createProject(dest, module, repo, ref string) error {
 	if err := rewriteModulePath(dest, layoutModule, module); err != nil {
 		return cleanup(fmt.Errorf("rewrite module path: %w", err))
 	}
-	// Replace the placeholder JWT secret so the scaffolded project boots and is
-	// not born using the publicly-known dev key.
-	if err := freshenJWTSecret(filepath.Join(dest, "etc", "config.yaml")); err != nil {
-		fmt.Fprintln(os.Stderr, "warning: could not set a fresh jwt secret:", err)
-	}
 	if err := os.WriteFile(filepath.Join(dest, "README.md"), []byte(projectReadme(module)), 0o644); err != nil {
 		return cleanup(fmt.Errorf("write project README: %w", err))
 	}
@@ -149,34 +144,6 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 
 // devPlaceholderSecret mirrors config: the value the server refuses to
 // boot with. `create` swaps it for a fresh random secret in the new project.
-const devPlaceholderSecret = "dev-only-insecure-secret-change-me-please"
-
-// freshenJWTSecret replaces the committed placeholder secret in a scaffolded
-// project's config with a fresh random 48-byte hex value. A missing config file
-// or an absent placeholder is not an error (nothing to do).
-func freshenJWTSecret(configPath string) error {
-	b, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if !strings.Contains(string(b), devPlaceholderSecret) {
-		return nil
-	}
-	var raw [24]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return err
-	}
-	secret := hex.EncodeToString(raw[:]) // 48 hex chars, well over the 32-byte floor
-	out := strings.ReplaceAll(string(b), devPlaceholderSecret, secret)
-	info, err := os.Stat(configPath)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(configPath, []byte(out), info.Mode().Perm())
-}
 
 // validModulePath does a lightweight check that module looks like a Go module
 // path (a slash-separated set of non-empty segments of safe characters, no
@@ -237,8 +204,19 @@ error model and one auth path.
 `+"```bash"+`
 make bootstrap   # install the pinned toolchain
 make gen         # buf lint -> breaking -> generate
-make run         # dev server on :8080
+make run         # dev server on :8080 (injects a local-only dev secret)
 make test
+`+"```"+`
+
+## Before it will start
+
+`+"`etc/config.yaml`"+` ships a placeholder JWT secret that the server refuses to
+boot with, so the signing key can never arrive by way of a committed file.
+Inject a real one (>= 32 bytes) from your secret manager, a mounted file or the
+environment:
+
+`+"```bash"+`
+export GORTEXA_AUTH__JWT_SECRET="$(openssl rand -hex 32)"
 `+"```"+`
 
 ## Layout

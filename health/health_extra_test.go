@@ -65,3 +65,46 @@ func TestStateString(t *testing.T) {
 		}
 	}
 }
+
+// Register used to be a plain map assignment, so two subsystems claiming the
+// same name — plausible with a primary pool and a read replica, or after
+// `gortexa gen` adds a second domain — left one silently unmonitored while
+// /readyz kept answering for the winner. Boot-time registration is
+// single-threaded and unconditional at every call site, so a collision is a
+// wiring mistake worth failing on immediately.
+func TestRegisterRejectsDuplicateNames(t *testing.T) {
+	r := health.NewRegistry()
+	r.Register("db", static(health.Healthy))
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a duplicate check name must panic")
+		}
+		// The first registration survives, so the panic cannot half-apply.
+		if got, ok := r.State(context.Background(), "db"); !ok || got != health.Healthy {
+			t.Fatalf("original check must be intact after the rejected duplicate; got %v ok=%v", got, ok)
+		}
+	}()
+	r.Register("db", static(health.Unhealthy))
+}
+
+// Replace is the explicit form of what Register used to do by accident, for the
+// cases where substituting a check really is the intent.
+func TestReplaceSubstitutesAnExistingCheck(t *testing.T) {
+	ctx := context.Background()
+	r := health.NewRegistry()
+	r.Register("db", static(health.Healthy))
+	r.Replace("db", static(health.Unhealthy))
+
+	if got, ok := r.State(ctx, "db"); !ok || got != health.Unhealthy {
+		t.Fatalf("Replace must install the new check; got %v ok=%v", got, ok)
+	}
+	if names := r.Names(); len(names) != 1 {
+		t.Fatalf("Replace must not add an entry; got %v", names)
+	}
+	// Replace on an unused name is a plain insert, so callers need not branch.
+	r.Replace("cache", static(health.Degraded))
+	if got, ok := r.State(ctx, "cache"); !ok || got != health.Degraded {
+		t.Fatalf("Replace must insert an absent name; got %v ok=%v", got, ok)
+	}
+}

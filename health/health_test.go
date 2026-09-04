@@ -56,7 +56,9 @@ func TestGRPCHealthBridge(t *testing.T) {
 		t.Fatalf("status = %v, want SERVING", resp.GetStatus())
 	}
 
-	r.Register("svc", static(health.Unhealthy))
+	// Deliberate substitution to flip the reported state: Replace is the explicit
+	// form, since Register now rejects a duplicate name.
+	r.Replace("svc", static(health.Unhealthy))
 	resp, _ = srv.Check(ctx, &grpc_health_v1.HealthCheckRequest{})
 	if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_NOT_SERVING {
 		t.Fatalf("status = %v, want NOT_SERVING", resp.GetStatus())
@@ -85,13 +87,16 @@ func TestGRPCHealthPerService(t *testing.T) {
 	}
 }
 
+// The property under test is that writing the registry never races an
+// evaluation of it. Replace is the repeatable writer — Register rejects a
+// duplicate name, so it cannot express "write the same key 50 times".
 func TestConcurrentRegisterSnapshot(t *testing.T) {
 	ctx := context.Background()
 	r := health.NewRegistry()
 	var wg sync.WaitGroup
 	for range 50 {
 		wg.Add(2)
-		go func() { defer wg.Done(); r.Register("x", static(health.Healthy)) }()
+		go func() { defer wg.Done(); r.Replace("x", static(health.Healthy)) }()
 		go func() { defer wg.Done(); _ = r.Overall(ctx) }()
 	}
 	wg.Wait()
