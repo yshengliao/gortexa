@@ -85,7 +85,14 @@ func createProject(dest, module, repo, ref string) error {
 	// rewrite inside a .pb.go length-prefixed rawDesc would corrupt the proto
 	// descriptor; the project regenerates all of gen/ via `make gen`. The
 	// framework README is replaced with a project README after the rewrite.
-	for _, p := range []string{"cmd/gortexa", "install.sh", "gen"} {
+	// api/ holds the generated gortexa.ai.v1 bindings and its own go.mod. A
+	// project consumes that module from the proxy instead of regenerating the
+	// descriptor — two copies of gortexa/ai/v1/annotations.proto in one binary
+	// panic at init. proto/gortexa/ai/v1/annotations.proto is deliberately NOT
+	// pruned: buf still has to resolve `import "gortexa/ai/v1/annotations.proto"`
+	// for the project's own protos. Dropping api/buf.gen.yaml with it is what
+	// makes regen skip the api generate step in a scaffolded project.
+	for _, p := range []string{"cmd/gortexa", "install.sh", "gen", "api"} {
 		if err := os.RemoveAll(filepath.Join(dest, p)); err != nil {
 			return cleanup(fmt.Errorf("prune %s: %w", p, err))
 		}
@@ -93,6 +100,12 @@ func createProject(dest, module, repo, ref string) error {
 	fmt.Printf("==> rewriting module path %s → %s\n", layoutModule, module)
 	if err := rewriteModulePath(dest, layoutModule, module); err != nil {
 		return cleanup(fmt.Errorf("rewrite module path: %w", err))
+	}
+	// The layout replaces the api module with ./api so the framework repo builds
+	// before that module is tagged. A generated project has no ./api, so it must
+	// resolve the require from the proxy instead.
+	if err := runCmd(dest, "go", "mod", "edit", "-dropreplace="+layoutModule+apiSubmodule); err != nil {
+		return cleanup(fmt.Errorf("drop api replace directive: %w", err))
 	}
 	if err := os.WriteFile(filepath.Join(dest, "README.md"), []byte(projectReadme(module)), 0o644); err != nil {
 		return cleanup(fmt.Errorf("write project README: %w", err))

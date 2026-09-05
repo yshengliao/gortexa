@@ -25,9 +25,66 @@ func setupLayoutRepo(t *testing.T) string {
 	// refuses to boot with. create must leave it exactly as it is.
 	writeFixture(t, filepath.Join(layout, "etc", "config.yaml"),
 		"auth:\n  jwt_secret: \""+devPlaceholderSecret+"\"\n")
+	// The api submodule: a project consumes it from the proxy rather than
+	// regenerating the annotations descriptor, so create must prune the module
+	// itself while leaving the .proto (buf needs it to resolve the import) and
+	// every reference to its import path pointing upstream.
+	writeFixture(t, filepath.Join(layout, "api", "go.mod"), "module "+layoutModule+apiSubmodule+"\n\ngo 1.27.0\n")
+	writeFixture(t, filepath.Join(layout, "api", "buf.gen.yaml"), "version: v2\n")
+	writeFixture(t, filepath.Join(layout, "api", "gen", "gortexa", "ai", "v1", "annotations.pb.go"), "package aiv1\n")
+	writeFixture(t, filepath.Join(layout, "proto", "gortexa", "ai", "v1", "annotations.proto"),
+		"package gortexa.ai.v1;\n\noption go_package = \""+layoutModule+apiSubmodule+"/gen/gortexa/ai/v1;aiv1\";\n")
+	writeFixture(t, filepath.Join(layout, "mcp", "ir.go"),
+		"package mcp\n\nimport aiv1 \""+layoutModule+apiSubmodule+"/gen/gortexa/ai/v1\"\n\nvar _ = aiv1.E_AiTool\n")
 	gitRun(t, layout, "add", "-A")
 	gitRun(t, layout, "commit", "-q", "-m", "layout")
 	return layout
+}
+
+// TestCreateProjectConsumesAPIModule pins the invariant that keeps a generated
+// project able to depend on the framework at all: exactly one copy of
+// gortexa/ai/v1/annotations.proto may reach a binary. The project therefore
+// consumes the api module from the proxy — its go.mod keeps the require but
+// loses the layout's local replace — while every import of that module, and the
+// go_package the descriptor is generated under, must survive the module rewrite
+// pointing upstream. The .proto stays so buf can still resolve the import.
+func TestCreateProjectConsumesAPIModule(t *testing.T) {
+	layout := setupLayoutRepo(t)
+	writeFixture(t, filepath.Join(layout, "go.mod"),
+		"module "+layoutModule+"\n\ngo 1.27.0\n\nrequire "+layoutModule+apiSubmodule+" v0.0.0\n\nreplace "+layoutModule+apiSubmodule+" => ./api\n")
+	gitRun(t, layout, "commit", "-qam", "api require")
+	dest := filepath.Join(t.TempDir(), "app")
+	if err := createProject(dest, "example.com/app", "file://"+layout, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dest, "api")); !os.IsNotExist(err) {
+		t.Error("api/ must be pruned: a project consumes the published module instead of regenerating the descriptor")
+	}
+	upstreamAPI := layoutModule + apiSubmodule
+	for _, tc := range []struct{ file, want string }{
+		{filepath.Join("proto", "gortexa", "ai", "v1", "annotations.proto"), upstreamAPI + "/gen/gortexa/ai/v1;aiv1"},
+		{filepath.Join("mcp", "ir.go"), upstreamAPI + "/gen/gortexa/ai/v1"},
+	} {
+		b, err := os.ReadFile(filepath.Join(dest, tc.file))
+		if err != nil {
+			t.Fatalf("%s must survive create: %v", tc.file, err)
+		}
+		if !strings.Contains(string(b), tc.want) {
+			t.Errorf("%s must still reference %q (rewriting it would compile a second copy of the descriptor), got:\n%s", tc.file, tc.want, b)
+		}
+	}
+
+	b, err := os.ReadFile(filepath.Join(dest, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "require "+upstreamAPI) {
+		t.Errorf("go.mod must keep the api require, got:\n%s", b)
+	}
+	if strings.Contains(string(b), "replace "+upstreamAPI) {
+		t.Errorf("go.mod must drop the layout's local replace (there is no ./api in a project), got:\n%s", b)
+	}
 }
 
 func TestCreateProject(t *testing.T) {
