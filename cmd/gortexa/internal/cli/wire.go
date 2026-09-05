@@ -42,10 +42,10 @@ func validateWireable(mainPath string, d tmplData) error {
 }
 
 func wireInsertions(d tmplData) []struct{ marker, line string } {
-	importLine := fmt.Sprintf("\t%s %q", d.GoPkg, d.Module+"/gen/"+d.Domain+"/"+d.Version)
+	importLine := fmt.Sprintf("\t%s %q", d.GoPkg, d.Module+"/gen/"+d.GenDir())
 	registerLine := fmt.Sprintf("\t%s.Register%sServiceServer(app.GRPCServer(), logic.New%sService())", d.GoPkg, d.Entity, d.Entity)
 	gatewayBlock := fmt.Sprintf("\tif err := %s.Register%sServiceHandler(ctx, gateway, conn); err != nil {\n\t\treturn fmt.Errorf(\"register %s gateway: %%w\", err)\n\t}", d.GoPkg, d.Entity, d.Snake)
-	mcpLine := fmt.Sprintf("\t\t%q,", d.Domain+"."+d.Version+"."+d.Entity+"Service")
+	mcpLine := fmt.Sprintf("\t\t%q,", d.ProtoPackage()+"."+d.Entity+"Service")
 
 	return []struct{ marker, line string }{
 		{"// gortexa:import", importLine},

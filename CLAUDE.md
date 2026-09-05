@@ -5,15 +5,21 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
 + MCP. Target **Go 1.27**, buf v2.
 
 ## Iron rules
-- **Never hand-edit anything under `gen/`.** It is produced only by `make gen`
-  (`buf lint → buf breaking → buf generate`). `gen/` is committed (module
-  consumers need it: the gortexa.ai.v1 bindings are imported by mcp, and consumer
-  `go mod tidy` resolves the gen/resource test dependencies of imported
-  packages) — but it is never hand-edited; `make gen` regenerates it
-  byte-identically and CI fails on drift. Editing the contract means editing
-  `proto/` then regenerating.
+- **Never hand-edit anything under `gen/` or `api/gen/`.** They are produced only
+  by `make gen` (`buf lint → buf breaking → buf generate`). Both are committed
+  (module consumers need them: the gortexa.ai.v1 bindings are imported by mcp, and
+  consumer `go mod tidy` resolves the gen/resource test dependencies of imported
+  packages) — but never hand-edited; `make gen` regenerates them byte-identically
+  and CI fails on drift. Editing the contract means editing `proto/` then
+  regenerating.
 - **The proto SSOT lives in `proto/`** (`proto/resource/v1`, `proto/gortexa/ai/v1`).
   Use the `proto-regen` skill (`.skills/proto-regen/`) when changing it.
+- **`proto/gortexa/ai/v1` generates into the `api/` module, not `gen/`.** It is a
+  separate Go module (`github.com/yshengliao/gortexa/api`) with its own
+  `buf.gen.yaml`, and the root template excludes that path, because protobuf's
+  global registry is keyed on the proto file path: a scaffolded project consumes
+  this module instead of regenerating the descriptor, and a second copy panics at
+  init. Do not fold it back into `gen/`.
 - **Type alignment:** proto `int64` ↔ PostgreSQL `bigint`, `string` ↔ `text`;
   JSON serializes `int64` as a string. Keep proto field types aligned with
   backing columns at design time.

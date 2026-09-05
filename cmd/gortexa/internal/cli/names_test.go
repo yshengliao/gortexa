@@ -45,3 +45,39 @@ func TestCamelToSnake(t *testing.T) {
 		}
 	}
 }
+
+func TestProtoNamespace(t *testing.T) {
+	for _, tc := range []struct{ module, want string }{
+		{"github.com/acme/shop", "shop"},
+		{"example.com/me/my-app", "myapp"},
+		{"example.com/App2", "app2"},
+		{"example.com/2fast", "fast"}, // a proto package component may not start with a digit
+		{"example.com/---", "app"},    // nothing usable left
+		{"shop", "shop"},              // no slash at all
+	} {
+		if got := protoNamespace(tc.module); got != tc.want {
+			t.Errorf("protoNamespace(%q) = %q, want %q", tc.module, got, tc.want)
+		}
+	}
+}
+
+// TestTmplDataNamespaceAccessors pins the flat fallback: a project scaffolded
+// before v0.28 has no manifest, and gen must keep generating the layout its
+// existing services already use rather than splitting the project across two
+// conventions.
+func TestTmplDataNamespaceAccessors(t *testing.T) {
+	flat := tmplData{Domain: "billing", Version: "v1"}
+	if got := flat.ProtoPackage(); got != "billing.v1" {
+		t.Errorf("flat ProtoPackage = %q, want billing.v1", got)
+	}
+	if got := flat.GenDir(); got != "billing/v1" {
+		t.Errorf("flat GenDir = %q, want billing/v1", got)
+	}
+	ns := tmplData{Domain: "billing", Version: "v1", Namespace: "shop"}
+	if got := ns.ProtoPackage(); got != "shop.billing.v1" {
+		t.Errorf("namespaced ProtoPackage = %q, want shop.billing.v1", got)
+	}
+	if got := ns.GenDir(); got != "shop/billing/v1" {
+		t.Errorf("namespaced GenDir = %q, want shop/billing/v1", got)
+	}
+}

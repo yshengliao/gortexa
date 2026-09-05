@@ -32,6 +32,12 @@ func newGenCmd() *cobra.Command {
 				return err
 			}
 			data.Module = module
+			// A project scaffolded before v0.28 has no manifest and no proto
+			// namespace; the zero value keeps generating the flat layout its
+			// existing services already use.
+			if m, ok := readManifest(root); ok {
+				data.Namespace = m.ProtoNamespace
+			}
 			return generateAPI(root, data, genOpts{noWire: noWire, skipGen: skipGen, force: force, allowBreaking: allowBreaking})
 		},
 	}
@@ -55,7 +61,7 @@ func generateAPI(root string, d tmplData, opt genOpts) error {
 			return fmt.Errorf("project layout predates gortexa v0.27 (internal/errors exists, apperr/ does not): regenerate with a gortexa CLI matching the project's framework version, or migrate the project to the v0.27 layout")
 		}
 	}
-	protoPath := filepath.Join(root, "proto", d.Domain, d.Version, d.Snake+".proto")
+	protoPath := filepath.Join(root, "proto", filepath.FromSlash(d.GenDir()), d.Snake+".proto")
 	logicPath := filepath.Join(root, "internal", "logic", d.Snake+".go")
 	mainPath := filepath.Join(root, "cmd", "server", "main.go")
 
@@ -101,7 +107,7 @@ func generateAPI(root string, d tmplData, opt genOpts) error {
 			fmt.Fprintf(os.Stderr, "warning: gofmt failed, format %s and %s manually: %v\n", logicPath, mainPath, err)
 		}
 	}
-	fmt.Printf("\n==> %s.%s.%sService ready — build with `go build ./...`\n", d.Domain, d.Version, d.Entity)
+	fmt.Printf("\n==> %s.%sService ready — build with `go build ./...`\n", d.ProtoPackage(), d.Entity)
 	return nil
 }
 

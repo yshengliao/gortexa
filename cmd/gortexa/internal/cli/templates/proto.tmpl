@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package [[.Domain]].[[.Version]];
+package [[.ProtoPackage]];
 
 import "google/api/annotations.proto";
 import "google/protobuf/empty.proto";
@@ -8,7 +8,7 @@ import "google/protobuf/timestamp.proto";
 import "buf/validate/validate.proto";
 import "gortexa/ai/v1/annotations.proto";
 
-option go_package = "[[.Module]]/gen/[[.Domain]]/[[.Version]];[[.GoPkg]]";
+option go_package = "[[.Module]]/gen/[[.GenDir]];[[.GoPkg]]";
 
 // [[.Entity]] is the entity managed by [[.Entity]]Service.
 message [[.Entity]] {

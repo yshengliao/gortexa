@@ -21,6 +21,28 @@ type tmplData struct {
 	Snake       string // snake_case entity, e.g. invoice
 	Plural      string // CamelCase plural, e.g. Invoices
 	PluralSnake string // snake_case plural, e.g. invoices
+	Namespace   string // project proto namespace, e.g. shop; empty in pre-v0.28 projects
+}
+
+// ProtoPackage is the generated service's proto package. It carries the
+// project's namespace so two projects scaffolded from gortexa can be linked into
+// one binary: protobuf's global registry is keyed on the package's full names.
+// Projects with no manifest predate the namespace and keep the flat form.
+func (d tmplData) ProtoPackage() string {
+	if d.Namespace == "" {
+		return d.Domain + "." + d.Version
+	}
+	return d.Namespace + "." + d.Domain + "." + d.Version
+}
+
+// GenDir is the slash-separated path of the generated package, relative to
+// proto/ and gen/. It mirrors ProtoPackage so buf's PACKAGE_DIRECTORY_MATCH
+// holds, and is the other half of the registry key — the proto file path.
+func (d tmplData) GenDir() string {
+	if d.Namespace == "" {
+		return d.Domain + "/" + d.Version
+	}
+	return d.Namespace + "/" + d.Domain + "/" + d.Version
 }
 
 // renderTemplate executes an embedded template with "[[" "]]" delimiters so the

@@ -36,9 +36,58 @@ func setupLayoutRepo(t *testing.T) string {
 		"package gortexa.ai.v1;\n\noption go_package = \""+layoutModule+apiSubmodule+"/gen/gortexa/ai/v1;aiv1\";\n")
 	writeFixture(t, filepath.Join(layout, "mcp", "ir.go"),
 		"package mcp\n\nimport aiv1 \""+layoutModule+apiSubmodule+"/gen/gortexa/ai/v1\"\n\nvar _ = aiv1.E_AiTool\n")
+	// The sample service, which create must move into the project's own proto
+	// namespace so two scaffolded projects can coexist in one binary.
+	writeFixture(t, filepath.Join(layout, "proto", "resource", "v1", "resource.proto"),
+		"package resource.v1;\n\noption go_package = \""+layoutModule+"/gen/resource/v1;resourcev1\";\n")
+	writeFixture(t, filepath.Join(layout, "internal", "logic", "resource.go"),
+		"package logic\n\nimport resourcev1 \""+layoutModule+"/gen/resource/v1\"\n\nvar _ = resourcev1.File_resource_v1_resource_proto\n")
+	writeFixture(t, filepath.Join(layout, "cmd", "server", "main.go"),
+		"package main\n\nvar services = []string{\"resource.v1.ResourceService\"}\n")
 	gitRun(t, layout, "add", "-A")
 	gitRun(t, layout, "commit", "-q", "-m", "layout")
 	return layout
+}
+
+// TestCreateProjectNamespacesSample pins the second half of the registry fix.
+// Every project scaffolded from gortexa used to declare resource.v1 at
+// resource/v1/resource.proto, so no two of them could be linked into one binary.
+// create moves the sample under the project's namespace — the proto package, the
+// file path, the generated import path and the descriptor variable all have to
+// move together, or the project does not compile.
+func TestCreateProjectNamespacesSample(t *testing.T) {
+	layout := setupLayoutRepo(t)
+	dest := filepath.Join(t.TempDir(), "app")
+	if err := createProject(dest, "example.com/acme/shop", "file://"+layout, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dest, "proto", "resource")); !os.IsNotExist(err) {
+		t.Error("proto/resource must move under the namespace, or buf PACKAGE_DIRECTORY_MATCH and the registry key both stay unchanged")
+	}
+	for _, tc := range []struct{ file, want string }{
+		{filepath.Join("proto", "shop", "resource", "v1", "resource.proto"), "package shop.resource.v1;"},
+		{filepath.Join("proto", "shop", "resource", "v1", "resource.proto"), "example.com/acme/shop/gen/shop/resource/v1;resourcev1"},
+		{filepath.Join("internal", "logic", "resource.go"), "example.com/acme/shop/gen/shop/resource/v1"},
+		{filepath.Join("internal", "logic", "resource.go"), "File_shop_resource_v1_resource_proto"},
+		{filepath.Join("cmd", "server", "main.go"), "shop.resource.v1.ResourceService"},
+	} {
+		b, err := os.ReadFile(filepath.Join(dest, tc.file))
+		if err != nil {
+			t.Fatalf("read %s: %v", tc.file, err)
+		}
+		if !strings.Contains(string(b), tc.want) {
+			t.Errorf("%s must contain %q, got:\n%s", tc.file, tc.want, b)
+		}
+	}
+
+	m, ok := readManifest(dest)
+	if !ok {
+		t.Fatal("create must write the project manifest: without it gen cannot tell a namespaced project from a pre-v0.28 flat one")
+	}
+	if m.ProtoNamespace != "shop" || m.ModulePath != "example.com/acme/shop" {
+		t.Errorf("manifest = %+v, want namespace shop and module example.com/acme/shop", m)
+	}
 }
 
 // TestCreateProjectConsumesAPIModule pins the invariant that keeps a generated
