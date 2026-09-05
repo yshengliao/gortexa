@@ -29,7 +29,7 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/nats-io/nats-server/v2 v2.14.6
-	github.com/nats-io/nats.go v1.52.0
+	github.com/nats-io/nats.go v1.53.1
 	github.com/spf13/cobra v1.10.2
 	github.com/yshengliao/gortexa/api v0.28.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.20.1
