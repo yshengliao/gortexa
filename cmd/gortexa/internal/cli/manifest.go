@@ -55,6 +55,9 @@ func readManifest(root string) (projectManifest, bool) {
 //     project's generate step; a project inside it never gets generated.
 //   - resource — the sample's own directory, which cannot be moved into itself.
 //   - google, buf — the well-known namespaces buf resolves the proto deps from.
+//   - internal, vendor — path elements the Go toolchain gives special meaning:
+//     gen/internal/... could not be imported from internal/logic at all, and a
+//     nested vendor directory is skipped by ./... patterns.
 //
 // A collision is not an error the user can act on (the namespace is derived from
 // their module path), so suffix out of the way instead of failing.
@@ -62,7 +65,9 @@ var reservedNamespaces = map[string]bool{
 	"buf":      true,
 	"google":   true,
 	"gortexa":  true,
+	"internal": true,
 	"resource": true,
+	"vendor":   true,
 }
 
 // protoNamespace derives a proto package prefix from a Go module path, so a

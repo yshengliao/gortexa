@@ -100,6 +100,7 @@ func TestRewriteModulePath_PreservesAPISubmodule(t *testing.T) {
 		"\tlogic \"github.com/yshengliao/gortexa/internal/logic\"\n" +
 		")\n" +
 		"// require github.com/yshengliao/gortexa/api v0.28.0\n" +
+		"// The bindings live in github.com/yshengliao/gortexa/api.\n" +
 		"// docs: https://github.com/yshengliao/gortexa/api\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -118,6 +119,7 @@ func TestRewriteModulePath_PreservesAPISubmodule(t *testing.T) {
 		"\tlogic \"example.com/demo/internal/logic\"\n" +
 		")\n" +
 		"// require github.com/yshengliao/gortexa/api v0.28.0\n" +
+		"// The bindings live in github.com/yshengliao/gortexa/api.\n" +
 		"// docs: https://github.com/yshengliao/gortexa/api\n"
 	if string(b) != want {
 		t.Errorf("api submodule import must survive the rewrite\n got: %q\nwant: %q", string(b), want)

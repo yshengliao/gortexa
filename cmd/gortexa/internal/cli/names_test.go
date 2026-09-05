@@ -62,6 +62,10 @@ func TestProtoNamespace(t *testing.T) {
 		{"github.com/foo/gortex-a", "gortexaapp"},
 		{"github.com/foo/resource", "resourceapp"},
 		{"github.com/foo/google", "googleapp"},
+		// Go gives these path elements special meaning: gen/internal/... would be
+		// unimportable from internal/logic, and a nested vendor/ is skipped by ./...
+		{"github.com/foo/internal", "internalapp"},
+		{"github.com/foo/vendor", "vendorapp"},
 	} {
 		if got := protoNamespace(tc.module); got != tc.want {
 			t.Errorf("protoNamespace(%q) = %q, want %q", tc.module, got, tc.want)

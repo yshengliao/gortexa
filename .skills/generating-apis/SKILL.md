@@ -35,8 +35,12 @@ truth; never hand-edit `gen/`.
    ```
    This writes `proto/<domain>/<version>/<entity>.proto` and
    `internal/logic/<entity>.go`, wires `cmd/server/main.go` at the `// gortexa:*`
-   markers, then runs `buf lint → breaking → generate`. Flags: `--no-wire`
-   (skip main.go), `--skip-gen` (skip buf), `--force` (overwrite).
+   markers, then runs `buf lint → breaking → generate`. In a project with a
+   `.gortexa/project.json` manifest (scaffolded from ≥ v0.28) the proto lands
+   one level deeper, under the project's namespace:
+   `proto/<namespace>/<domain>/<version>/<entity>.proto`, package
+   `<namespace>.<domain>.<version>`. Flags: `--no-wire` (skip main.go),
+   `--skip-gen` (skip buf), `--force` (overwrite).
 
 3. **Verify.**
    ```bash

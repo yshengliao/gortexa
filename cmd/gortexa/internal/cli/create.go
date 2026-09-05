@@ -147,9 +147,11 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 	// separator, by a delimiter such as a quote or space, or by end of input.
 	// Matching it as a bare substring would be the same missing-boundary defect
 	// the mask exists to fix, and would leave a sibling package like
-	// ".../apiutil" pointing upstream after the rewrite. The trailing character
-	// is captured so it survives the substitution.
-	apiRe := regexp.MustCompile(regexp.QuoteMeta(apiMod) + `([^A-Za-z0-9_.-]|$)`)
+	// ".../apiutil" pointing upstream after the rewrite. A "." is treated as a
+	// delimiter: a path element continuing past a dot is rare, while the path
+	// ending a sentence in prose is not. The trailing character is captured so
+	// it survives the substitution.
+	apiRe := regexp.MustCompile(regexp.QuoteMeta(apiMod) + `([^A-Za-z0-9_-]|$)`)
 	return rewriteTextFiles(root, func(s string) string {
 		if !strings.Contains(s, oldMod) {
 			return s

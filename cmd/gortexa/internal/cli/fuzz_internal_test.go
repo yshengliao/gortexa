@@ -7,7 +7,8 @@ import (
 )
 
 // FuzzParseTarget fuzzes the domain/version+entity parser feeding directly
-// into filepath.Join(root, "proto", d.Domain, d.Version, d.Snake+".proto") and
+// into filepath.Join(root, "proto", filepath.FromSlash(d.GenDir()), d.Snake+".proto")
+// (GenDir is "<domain>/<version>" behind the project's namespace) and
 // filepath.Join(root, "internal", "logic", d.Snake+".go") in gen.go with no
 // further sanitization -- a successful parse must never let Domain/Version/
 // Snake/GoPkg carry a path separator or a ".."/"." traversal segment.
