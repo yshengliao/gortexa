@@ -212,7 +212,7 @@ const file_gortexa_ai_v1_annotations_proto_rawDesc = "" +
 	"\vdescription\x18\x01 \x01(\tR\vdescription\x12\x1a\n" +
 	"\brequired\x18\x02 \x01(\bR\brequired:W\n" +
 	"\aai_tool\x12\x1e.google.protobuf.MethodOptions\x18ц\x03 \x01(\v2\x1c.gortexa.ai.v1.AIToolOptionsR\x06aiTool:Y\n" +
-	"\bai_field\x12\x1d.google.protobuf.FieldOptions\x18҆\x03 \x01(\v2\x1d.gortexa.ai.v1.AIFieldOptionsR\aaiFieldB6Z4github.com/yshengliao/gortexa/gen/gortexa/ai/v1;aiv1b\x06proto3"
+	"\bai_field\x12\x1d.google.protobuf.FieldOptions\x18҆\x03 \x01(\v2\x1d.gortexa.ai.v1.AIFieldOptionsR\aaiFieldB:Z8github.com/yshengliao/gortexa/api/gen/gortexa/ai/v1;aiv1b\x06proto3"
 
 var (
 	file_gortexa_ai_v1_annotations_proto_rawDescOnce sync.Once

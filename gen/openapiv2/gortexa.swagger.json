@@ -1,8 +1,8 @@
 {
   "swagger": "2.0",
   "info": {
-    "title": "gortexa/ai/v1/annotations.proto",
-    "description": "Package gortexa.ai.v1 defines annotations that expose gRPC methods and request\nfields to AI/LLM agents. They are opt-in: a method is only surfaced as a\ntool when ai_tool.expose is true.",
+    "title": "resource/v1/resource.proto",
+    "description": "Package resource.v1 is the sample domain that drives Gortexa's HTTP gateway,\nMCP bridge and AI-skill codegen end-to-end.",
     "version": "version not set"
   },
   "tags": [

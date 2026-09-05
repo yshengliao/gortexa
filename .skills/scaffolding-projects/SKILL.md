@@ -52,6 +52,14 @@ drops its git history, and rewrites the Go module path, leaving a working projec
   compare against.
 - The sample `resource` service is a reference; once you have your own domains,
   remove its proto/logic and the `gortexa:*`-wired lines in `cmd/server/main.go`.
+- `create` moves that sample into the project's own proto namespace — package
+  `<project>.resource.v1` under `proto/<project>/resource/v1` — so two scaffolded
+  projects can be linked into one binary. `gortexa gen` follows the same
+  convention, reading the namespace from `.gortexa/project.json`.
+- `create` also prunes `api/`: the gortexa.ai.v1 bindings come from the
+  `github.com/yshengliao/gortexa/api` module the project depends on. The
+  annotations `.proto` stays so buf can resolve the import, but it is never
+  regenerated locally — a second copy of that descriptor panics at init.
 
 ## Related
 - `generating-apis` — add a resource/service to the new project.

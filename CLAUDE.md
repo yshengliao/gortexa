@@ -5,15 +5,21 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
 + MCP. Target **Go 1.27**, buf v2.
 
 ## Iron rules
-- **Never hand-edit anything under `gen/`.** It is produced only by `make gen`
-  (`buf lint → buf breaking → buf generate`). `gen/` is committed (module
-  consumers need it: the gortexa.ai.v1 bindings are imported by mcp, and consumer
-  `go mod tidy` resolves the gen/resource test dependencies of imported
-  packages) — but it is never hand-edited; `make gen` regenerates it
-  byte-identically and CI fails on drift. Editing the contract means editing
-  `proto/` then regenerating.
+- **Never hand-edit anything under `gen/` or `api/gen/`.** They are produced only
+  by `make gen` (`buf lint → buf breaking → buf generate`). Both are committed
+  (module consumers need them: the gortexa.ai.v1 bindings are imported by mcp, and
+  consumer `go mod tidy` resolves the gen/resource test dependencies of imported
+  packages) — but never hand-edited; `make gen` regenerates them byte-identically
+  and CI fails on drift. Editing the contract means editing `proto/` then
+  regenerating.
 - **The proto SSOT lives in `proto/`** (`proto/resource/v1`, `proto/gortexa/ai/v1`).
   Use the `proto-regen` skill (`.skills/proto-regen/`) when changing it.
+- **`proto/gortexa/ai/v1` generates into the `api/` module, not `gen/`.** It is a
+  separate Go module (`github.com/yshengliao/gortexa/api`) with its own
+  `buf.gen.yaml`, and the root template excludes that path, because protobuf's
+  global registry is keyed on the proto file path: a scaffolded project consumes
+  this module instead of regenerating the descriptor, and a second copy panics at
+  init. Do not fold it back into `gen/`.
 - **Type alignment:** proto `int64` ↔ PostgreSQL `bigint`, `string` ↔ `text`;
   JSON serializes `int64` as a string. Keep proto field types aligned with
   backing columns at design time.
@@ -60,3 +66,28 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
 - `.skills/*` — AI-assist skills (proto-regen, generating-apis,
   scaffolding-projects, bootstrapping-environment) wired into Claude/Codex/
   Copilot/Antigravity by `install-skills.sh`. Invoke the matching skill for a task.
+
+## Releasing
+
+`api/` is a nested module, so it carries its own tag (`api/vX.Y.Z`) and that tag
+can only be cut from a commit that already contains `api/`. `replace` is ignored
+by anything depending on gortexa, so a root `go.mod` requiring an untagged api
+version is unbuildable for every consumer and for every `gortexa create` project
+(which drops the replace but keeps the require). Tag in this order, in one
+sitting — main is broken for consumers in between:
+
+1. `git tag api/vX.Y.Z && git push origin api/vX.Y.Z`
+2. `go mod edit -require=github.com/yshengliao/gortexa/api@vX.Y.Z && go mod tidy`,
+   commit and push. Keep the `replace` — local development still needs it.
+3. Only then tag the framework: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+The `replace` also means the framework always compiles against the local
+`./api`, while consumers get the tag. **Any change under `api/`** (a
+`proto/gortexa/ai/v1` edit regenerates it) therefore needs a new `api/vX.Y.Z`
+and a root `require` bump in the same PR. CI's "Build without the api replace"
+step builds the tree the way a consumer resolves it, so that mismatch fails
+there instead of shipping.
+
+One-time for v0.28: once v0.28.0 is the `buf breaking` comparison base, remove
+the `FILE_SAME_GO_PACKAGE` entry from `buf.yaml`'s `breaking.except` — it exists
+only to let the annotations `go_package` move land.

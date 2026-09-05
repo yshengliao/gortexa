@@ -10,6 +10,7 @@ linters:
     # hand-written files that were never linted.
     paths:
       - ^gen/
+      - ^api/gen/
       - ^third_party/
 formatters:
   enable:

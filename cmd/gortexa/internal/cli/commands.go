@@ -146,6 +146,17 @@ func doctor() error {
 			fmt.Printf("  [MISSING] %s\n", t)
 		}
 	}
+	// Report the project the command is standing in, when there is one. A
+	// project scaffolded before v0.28 has no manifest, which is itself the
+	// answer to "why is gen not namespacing my services".
+	if root, _, err := findModuleRoot(mustGetwd()); err == nil {
+		if m, found := readManifest(root); found {
+			fmt.Printf("  [ok]      project: module %s, proto namespace %s, scaffolded by gortexa %s\n",
+				m.ModulePath, m.ProtoNamespace, m.CLIVersion)
+		} else {
+			fmt.Printf("  [info]    project: no %s — scaffolded before v0.28; `gen` keeps using the flat proto layout\n", manifestFile)
+		}
+	}
 	if !ok {
 		return fmt.Errorf("environment incomplete — run `gortexa tools install`")
 	}

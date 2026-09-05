@@ -35,7 +35,8 @@ gen:
 	else \
 		echo "==> skipping buf breaking (no main ref)"; \
 	fi
-	buf generate
+	@if [ -f api/buf.gen.yaml ]; then buf generate --template api/buf.gen.yaml --path proto/gortexa; fi
+	buf generate --exclude-path proto/gortexa
 
 sqlc:
 	sqlc generate

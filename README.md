@@ -155,17 +155,33 @@ From there, add what you need — both the AI and the non-AI path are first-clas
   [gortexa.sheng.page/components](https://gortexa.sheng.page/components/) for
   each package's purpose, import path and a minimal example.
 - **AI service**: annotate your protos with the gortexa.ai.v1 annotations (their Go
-  bindings ship in this module) and wire `mcp.NewBridge` to expose the
-  annotated RPCs as MCP tools behind the same interceptor chain.
+  bindings ship in the companion `github.com/yshengliao/gortexa/api` module) and
+  wire `mcp.NewBridge` to expose the annotated RPCs as MCP tools behind the same
+  interceptor chain.
 
 Notes:
 
-- A project created by `gortexa create` already contains the framework source
-  under its own module path — never also `go get` the framework there, or both
-  copies register the gortexa.ai.v1 annotations proto and the binary panics at init.
-- Pair versions: a `gortexa` CLI ≥ v0.27 generates code for projects
-  scaffolded from ≥ v0.27 (and vice versa) — the framework package layout
-  changed in v0.27.
+- A project created by `gortexa create` contains the framework source under its
+  own module path, but it no longer conflicts with the published one. The
+  gortexa.ai.v1 annotations are not copied: they come from the small
+  `github.com/yshengliao/gortexa/api` module that both the project and the
+  framework depend on, so the descriptor is registered exactly once. The sample
+  service is moved into the project's own proto namespace (`<project>.resource.v1`
+  at `proto/<project>/resource/v1`) rather than the layout's `resource.v1`, so two
+  projects — or a project and the framework's own sample — can be linked into one
+  binary. Both used to panic at init: protobuf's global registry is keyed on the
+  proto file path and package, neither of which the module rewrite changes.
+- Depending on the framework is therefore safe, but remember what the project
+  already has: it carries its own copy of the framework packages, so importing
+  `github.com/yshengliao/gortexa/...` as well gives you two independent copies of
+  that code. Reach for it when you want something your copy does not have.
+- Pair versions: a `gortexa` CLI ≥ v0.28 generates code for projects scaffolded
+  from ≥ v0.28 (and vice versa). The framework package layout changed in v0.27,
+  and v0.28 moved the annotations bindings into the api module and namespaced the
+  sample. A project records what it was scaffolded from in
+  `.gortexa/project.json`; `gortexa doctor` prints it, and `gortexa gen` reads the
+  proto namespace from it — a project without that file predates v0.28 and keeps
+  the flat proto layout its existing services already use.
 
 ## Developer CLI
 
@@ -186,8 +202,9 @@ Notes:
 
 | Path | What |
 |---|---|
-| `proto/` | Proto SSOT (`resource/v1`, `gortexa/ai/v1`). Edit here, then `make gen`. |
+| `proto/` | Proto SSOT (`resource/v1`, `gortexa/ai/v1`). Edit here, then `make gen`. In a scaffolded project the sample lives under the project's namespace instead. |
 | `gen/` | Generated code — **never hand-edit**, produced by `make gen`. Committed so the published module is self-contained for consumers; CI guards drift. |
+| `api/` | The `github.com/yshengliao/gortexa/api` module: the generated gortexa.ai.v1 bindings, and nothing else. Separate so a project and the framework share one copy of the annotations descriptor instead of each registering their own. `gortexa create` prunes it and depends on it. |
 | `apperr/ auth/ cache/ client/ config/ health/ httpcompat/ interceptor/ kernel/ mcp/ mq/ observability/ storage/ testutil/` | Importable framework packages (`go get github.com/yshengliao/gortexa`). |
 | `internal/` | Non-API internals: `logic` (sample business logic, `gortexa gen` writes here), `resp` (RESP client backing the redis cache), `storage/db` (sqlc output). |
 | `cmd/server/` | Sample server wiring everything onto one port. |

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -15,6 +16,14 @@ import (
 // layoutModule is the module path of the gortexa layout that `create` clones and
 // rewrites into the new project's module path.
 const layoutModule = "github.com/yshengliao/gortexa"
+
+// apiSubmodule is the suffix of the standalone module that owns the
+// gortexa.ai.v1 annotations proto and its Go bindings. A generated project
+// depends on that module instead of carrying its own copy, so the module
+// rewrite must leave its import path pointing upstream: protobuf's global
+// registry is keyed on the proto file path, so a second copy of
+// gortexa/ai/v1/annotations.proto panics at init.
+const apiSubmodule = "/api"
 
 func newCreateCmd() *cobra.Command {
 	var module, ref, repo string
@@ -77,7 +86,14 @@ func createProject(dest, module, repo, ref string) error {
 	// rewrite inside a .pb.go length-prefixed rawDesc would corrupt the proto
 	// descriptor; the project regenerates all of gen/ via `make gen`. The
 	// framework README is replaced with a project README after the rewrite.
-	for _, p := range []string{"cmd/gortexa", "install.sh", "gen"} {
+	// api/ holds the generated gortexa.ai.v1 bindings and its own go.mod. A
+	// project consumes that module from the proxy instead of regenerating the
+	// descriptor — two copies of gortexa/ai/v1/annotations.proto in one binary
+	// panic at init. proto/gortexa/ai/v1/annotations.proto is deliberately NOT
+	// pruned: buf still has to resolve `import "gortexa/ai/v1/annotations.proto"`
+	// for the project's own protos. Dropping api/buf.gen.yaml with it is what
+	// makes regen skip the api generate step in a scaffolded project.
+	for _, p := range []string{"cmd/gortexa", "install.sh", "gen", "api"} {
 		if err := os.RemoveAll(filepath.Join(dest, p)); err != nil {
 			return cleanup(fmt.Errorf("prune %s: %w", p, err))
 		}
@@ -85,6 +101,27 @@ func createProject(dest, module, repo, ref string) error {
 	fmt.Printf("==> rewriting module path %s → %s\n", layoutModule, module)
 	if err := rewriteModulePath(dest, layoutModule, module); err != nil {
 		return cleanup(fmt.Errorf("rewrite module path: %w", err))
+	}
+	ns := protoNamespace(module)
+	fmt.Printf("==> namespacing sample service under %s.resource.v1\n", ns)
+	if err := namespaceSample(dest, ns); err != nil {
+		return cleanup(fmt.Errorf("namespace sample service: %w", err))
+	}
+	if err := writeManifest(dest, projectManifest{
+		CLIVersion:     version,
+		ModulePath:     module,
+		ProtoNamespace: ns,
+		SourceRepo:     repo,
+		SourceRef:      ref,
+	}); err != nil {
+		return cleanup(fmt.Errorf("write project manifest: %w", err))
+	}
+
+	// The layout replaces the api module with ./api so the framework repo builds
+	// before that module is tagged. A generated project has no ./api, so it must
+	// resolve the require from the proxy instead.
+	if err := runCmd(dest, "go", "mod", "edit", "-dropreplace="+layoutModule+apiSubmodule); err != nil {
+		return cleanup(fmt.Errorf("drop api replace directive: %w", err))
 	}
 	if err := os.WriteFile(filepath.Join(dest, "README.md"), []byte(projectReadme(module)), 0o644); err != nil {
 		return cleanup(fmt.Errorf("write project README: %w", err))
@@ -105,6 +142,77 @@ func createProject(dest, module, repo, ref string) error {
 // pruned from the clone before this runs, so generated code is later produced
 // against newMod by `make gen`.
 func rewriteModulePath(root, oldMod, newMod string) error {
+	apiMod := oldMod + apiSubmodule
+	// The api module path, but only where it ends a path element: followed by a
+	// separator, by a delimiter such as a quote or space, or by end of input.
+	// Matching it as a bare substring would be the same missing-boundary defect
+	// the mask exists to fix, and would leave a sibling package like
+	// ".../apiutil" pointing upstream after the rewrite. A "." is treated as a
+	// delimiter: a path element continuing past a dot is rare, while the path
+	// ending a sentence in prose is not. The trailing character is captured so
+	// it survives the substitution.
+	apiRe := regexp.MustCompile(regexp.QuoteMeta(apiMod) + `([^A-Za-z0-9_-]|$)`)
+	return rewriteTextFiles(root, func(s string) string {
+		if !strings.Contains(s, oldMod) {
+			return s
+		}
+		// Avoid blindly rewriting HTTPS URLs (like the github repo in README.md)
+		// and the upstream /api submodule import path by temporarily masking
+		// them. The replacement is a plain substring swap with no module-path
+		// boundary, so without the api mask "<oldMod>/api/gen/..." would become
+		// "<newMod>/api/gen/..." and the project would compile its own second
+		// copy of the annotations descriptor. The mask token must be absent from
+		// the file — a fixed literal would itself be rewritten in any file that
+		// contains it (e.g. this very source), so derive a unique one per file;
+		// suffixing one unique token keeps both masks unique.
+		mask := uniqueMask(s)
+		urlMask, apiMask := mask+"A", mask+"B"
+		s = strings.ReplaceAll(s, "https://"+oldMod, urlMask)
+		s = apiRe.ReplaceAllString(s, apiMask+"${1}")
+		s = strings.ReplaceAll(s, oldMod, newMod)
+		s = strings.ReplaceAll(s, apiMask, apiMod)
+		s = strings.ReplaceAll(s, urlMask, "https://"+oldMod)
+		return s
+	})
+}
+
+// namespaceSample moves the layout's sample service into the project's own proto
+// namespace. Every project scaffolded from gortexa used to declare resource.v1 at
+// resource/v1/resource.proto; protobuf's global registry is keyed on exactly that
+// package and that file path, so no two of them could be linked into one binary,
+// and neither could a project and anything else carrying the layout's sample. The
+// physical move keeps buf's PACKAGE_DIRECTORY_MATCH satisfied. This runs after
+// gen/ has been pruned, so there is no length-prefixed descriptor to corrupt —
+// the project regenerates all of gen/ from the moved proto.
+func namespaceSample(root, ns string) error {
+	from := filepath.Join(root, "proto", "resource")
+	if _, err := os.Stat(from); err == nil {
+		to := filepath.Join(root, "proto", ns, "resource")
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			return err
+		}
+		if err := os.Rename(from, to); err != nil {
+			return err
+		}
+	}
+	return rewriteTextFiles(root, func(s string) string {
+		if !strings.Contains(s, "resource") {
+			return s
+		}
+		// Paths first (proto dir, gen dir, Go import paths), then the proto
+		// package and its full names, then the descriptor variable protoc-gen-go
+		// derives from the file path. None of the three overlaps the others.
+		s = strings.ReplaceAll(s, "resource/v1", ns+"/resource/v1")
+		s = strings.ReplaceAll(s, "resource.v1", ns+".resource.v1")
+		s = strings.ReplaceAll(s, "File_resource_v1_resource_proto", "File_"+ns+"_resource_v1_resource_proto")
+		return s
+	})
+}
+
+// rewriteTextFiles applies fn to the contents of every regular text file under
+// root, skipping .git, symlinks (the .claude/.codex/.github/.agents skill links),
+// devices and oversized or binary files.
+func rewriteTextFiles(root string, fn func(string) string) error {
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -116,8 +224,6 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 			return nil
 		}
 		info, err := d.Info()
-		// Skip symlinks (e.g. the .claude/.codex/.github/.agents skill links),
-		// devices and oversized/unreadable files — only rewrite regular text files.
 		if err != nil || !info.Mode().IsRegular() || info.Size() > 4<<20 {
 			return nil //nolint:nilerr // skipping a non-regular/unreadable file is not fatal
 		}
@@ -125,20 +231,14 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 		if err != nil {
 			return err
 		}
-		if isBinary(b) || !strings.Contains(string(b), oldMod) {
+		if isBinary(b) {
 			return nil
 		}
-		s := string(b)
-		// Avoid blindly rewriting HTTPS URLs (like the github repo in README.md)
-		// by temporarily masking them. The mask token must be absent from the file
-		// — a fixed literal would itself be rewritten in any file that contains it
-		// (e.g. this very source), so derive a unique one per file.
-		mask := uniqueMask(s)
-		s = strings.ReplaceAll(s, "https://"+oldMod, mask)
-		s = strings.ReplaceAll(s, oldMod, newMod)
-		s = strings.ReplaceAll(s, mask, "https://"+oldMod)
-
-		return os.WriteFile(path, []byte(s), info.Mode().Perm())
+		out := fn(string(b))
+		if out == string(b) {
+			return nil
+		}
+		return os.WriteFile(path, []byte(out), info.Mode().Perm())
 	})
 }
 
