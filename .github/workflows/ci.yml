@@ -72,10 +72,21 @@ jobs:
       # git diff alone cannot fail on NEW untracked files under gen/, so a
       # forgotten `git add` of a fresh package would ship a tag consumers
       # cannot build. porcelain covers modified, deleted and untracked alike.
-      - name: Committed gen/ tree must not drift from proto
+      # Both trees are checked: the pathspec `gen` matches only the top-level
+      # directory, and api/gen holds the annotations bindings the api module
+      # publishes — drift there ships stale bindings to every scaffolded project.
+      - name: Committed gen/ and api/gen/ trees must not drift from proto
         run: |
-          git status --porcelain -- gen
-          test -z "$(git status --porcelain -- gen)"
+          git status --porcelain -- gen api/gen
+          test -z "$(git status --porcelain -- gen api/gen)"
+
+      # The api module is a separate go.mod, so the root `./...` targets below
+      # never compile or vet it on its own — only as a dependency through the
+      # local replace, which a consumer does not have.
+      - name: Build api module
+        run: |
+          go -C api build ./...
+          go -C api vet ./...
 
       - name: Build
         run: make build

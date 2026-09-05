@@ -14,13 +14,18 @@ lint:
     - RPC_RESPONSE_STANDARD_NAME
     - RPC_REQUEST_RESPONSE_UNIQUE
 breaking:
-  # One-time v0.28 module split: gortexa/ai/v1/annotations.proto moved into the
-  # standalone github.com/yshengliao/gortexa/api module, changing only its
-  # go_package. The proto package, file path, extension numbers and message
-  # shapes are untouched, so this is a Go-source break for importers (documented
-  # in the README) and not a wire break. Drop this entry once a release
-  # containing the api module is the comparison base.
-  ignore:
-    - proto/gortexa/ai
+  except:
+    # One-time v0.28 module split: gortexa/ai/v1/annotations.proto moved into
+    # the standalone github.com/yshengliao/gortexa/api module, changing only its
+    # go_package. The proto package, file path, extension numbers and message
+    # shapes are untouched, so this is a Go-source break for importers
+    # (documented in the README) and not a wire break.
+    #
+    # Suppressing the single rule rather than ignoring proto/gortexa/ai is
+    # deliberate: ignoring the path would un-gate every message- and field-level
+    # break on the one file this release is changing. REMOVE once a release
+    # containing the api module is the comparison base — the release checklist
+    # in CLAUDE.md carries that step.
+    - FILE_SAME_GO_PACKAGE
   use:
     - FILE

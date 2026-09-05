@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -142,6 +143,13 @@ func createProject(dest, module, repo, ref string) error {
 // against newMod by `make gen`.
 func rewriteModulePath(root, oldMod, newMod string) error {
 	apiMod := oldMod + apiSubmodule
+	// The api module path, but only where it ends a path element: followed by a
+	// separator, by a delimiter such as a quote or space, or by end of input.
+	// Matching it as a bare substring would be the same missing-boundary defect
+	// the mask exists to fix, and would leave a sibling package like
+	// ".../apiutil" pointing upstream after the rewrite. The trailing character
+	// is captured so it survives the substitution.
+	apiRe := regexp.MustCompile(regexp.QuoteMeta(apiMod) + `([^A-Za-z0-9_.-]|$)`)
 	return rewriteTextFiles(root, func(s string) string {
 		if !strings.Contains(s, oldMod) {
 			return s
@@ -158,7 +166,7 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 		mask := uniqueMask(s)
 		urlMask, apiMask := mask+"A", mask+"B"
 		s = strings.ReplaceAll(s, "https://"+oldMod, urlMask)
-		s = strings.ReplaceAll(s, apiMod, apiMask)
+		s = apiRe.ReplaceAllString(s, apiMask+"${1}")
 		s = strings.ReplaceAll(s, oldMod, newMod)
 		s = strings.ReplaceAll(s, apiMask, apiMod)
 		s = strings.ReplaceAll(s, urlMask, "https://"+oldMod)

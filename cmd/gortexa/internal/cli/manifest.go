@@ -48,6 +48,23 @@ func readManifest(root string) (projectManifest, bool) {
 	return m, true
 }
 
+// reservedNamespaces are prefixes a project's protos must never land under,
+// because something else already owns that directory or package:
+//
+//   - gortexa — the framework's own namespace, which regen excludes from the
+//     project's generate step; a project inside it never gets generated.
+//   - resource — the sample's own directory, which cannot be moved into itself.
+//   - google, buf — the well-known namespaces buf resolves the proto deps from.
+//
+// A collision is not an error the user can act on (the namespace is derived from
+// their module path), so suffix out of the way instead of failing.
+var reservedNamespaces = map[string]bool{
+	"buf":      true,
+	"google":   true,
+	"gortexa":  true,
+	"resource": true,
+}
+
 // protoNamespace derives a proto package prefix from a Go module path, so a
 // project's API lives in its own namespace instead of the layout's. Two projects
 // scaffolded from gortexa both declared resource.v1 at resource/v1/resource.proto,
@@ -71,5 +88,8 @@ func protoNamespace(module string) string {
 	if b.Len() == 0 {
 		return "app"
 	}
-	return b.String()
+	if ns := b.String(); !reservedNamespaces[ns] {
+		return ns
+	}
+	return b.String() + "app"
 }

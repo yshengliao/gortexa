@@ -85,14 +85,21 @@ func TestRewriteModulePath_RewritesBareModuleButPreservesURL(t *testing.T) {
 // that import at the project's own module would link two copies of the same
 // descriptor and panic at init. The bare module path around it must still be
 // rewritten, and the https:// mask must keep working alongside it.
+//
+// The mask matches on a module-path boundary, not a bare substring: a sibling
+// package whose name merely starts with "api" belongs to the project like any
+// other and must be retargeted, or the project fails to compile against a path
+// its own module does not provide.
 func TestRewriteModulePath_PreservesAPISubmodule(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "mixed.go")
 	content := "module github.com/yshengliao/gortexa\n" +
 		"import (\n" +
 		"\taiv1 \"github.com/yshengliao/gortexa/api/gen/gortexa/ai/v1\"\n" +
+		"\tapiutil \"github.com/yshengliao/gortexa/apiutil\"\n" +
 		"\tlogic \"github.com/yshengliao/gortexa/internal/logic\"\n" +
 		")\n" +
+		"// require github.com/yshengliao/gortexa/api v0.28.0\n" +
 		"// docs: https://github.com/yshengliao/gortexa/api\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -107,8 +114,10 @@ func TestRewriteModulePath_PreservesAPISubmodule(t *testing.T) {
 	want := "module example.com/demo\n" +
 		"import (\n" +
 		"\taiv1 \"github.com/yshengliao/gortexa/api/gen/gortexa/ai/v1\"\n" +
+		"\tapiutil \"example.com/demo/apiutil\"\n" +
 		"\tlogic \"example.com/demo/internal/logic\"\n" +
 		")\n" +
+		"// require github.com/yshengliao/gortexa/api v0.28.0\n" +
 		"// docs: https://github.com/yshengliao/gortexa/api\n"
 	if string(b) != want {
 		t.Errorf("api submodule import must survive the rewrite\n got: %q\nwant: %q", string(b), want)

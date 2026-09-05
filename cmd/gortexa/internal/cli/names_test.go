@@ -54,6 +54,14 @@ func TestProtoNamespace(t *testing.T) {
 		{"example.com/2fast", "fast"}, // a proto package component may not start with a digit
 		{"example.com/---", "app"},    // nothing usable left
 		{"shop", "shop"},              // no slash at all
+		// Reserved prefixes must not be handed back. "gortexa" is the path regen
+		// excludes from a project's generate step, so a project landing inside it
+		// is never generated at all; "resource" is the sample's own directory,
+		// which cannot be moved into itself.
+		{"github.com/foo/gortexa", "gortexaapp"},
+		{"github.com/foo/gortex-a", "gortexaapp"},
+		{"github.com/foo/resource", "resourceapp"},
+		{"github.com/foo/google", "googleapp"},
 	} {
 		if got := protoNamespace(tc.module); got != tc.want {
 			t.Errorf("protoNamespace(%q) = %q, want %q", tc.module, got, tc.want)
