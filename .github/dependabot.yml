@@ -8,14 +8,23 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      # OpenTelemetry ships otel/log, otel/sdk/log, the otlplog exporters and
+      # the contrib bridges as one coordinated release; a bump of any one
+      # alone leaves the graph inconsistent (`undefined: log.KeyValue`) and
+      # cannot merge. One PR per release instead of one per module.
+      opentelemetry:
+        patterns:
+          - go.opentelemetry.io/*
 
-  # The pinned dev toolchain (buf, the protoc plugins, sqlc, govulncheck).
+  # The generated gortexa.ai.v1 bindings; depends only on protobuf.
   - package-ecosystem: gomod
     directory: /api
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
 
+  # The pinned dev toolchain (buf, the protoc plugins, sqlc, govulncheck).
   - package-ecosystem: gomod
     directory: /tools
     schedule:
