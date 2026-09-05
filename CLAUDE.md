@@ -84,11 +84,9 @@ sitting — main is broken for consumers in between:
 The `replace` also means the framework always compiles against the local
 `./api`, while consumers get the tag. **Any change under `api/`** (a
 `proto/gortexa/ai/v1` edit regenerates it) therefore needs a new `api/vX.Y.Z`
-and a root `require` bump in the same PR — otherwise CI stays green while the
-framework depends on bindings no consumer can resolve. Once an api tag exists,
-add a CI step that builds with the replace dropped
-(`go mod edit -dropreplace=github.com/yshengliao/gortexa/api` on a temp copy)
-so that mismatch fails instead of shipping.
+and a root `require` bump in the same PR. CI's "Build without the api replace"
+step builds the tree the way a consumer resolves it, so that mismatch fails
+there instead of shipping.
 
 One-time for v0.28: once v0.28.0 is the `buf breaking` comparison base, remove
 the `FILE_SAME_GO_PACKAGE` entry from `buf.yaml`'s `breaking.except` — it exists
