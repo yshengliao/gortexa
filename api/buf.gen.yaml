@@ -1,0 +1,10 @@
+# The annotations proto stays in proto/ (the repo's proto SSOT); only its Go
+# bindings live in the api module. buf's `out` is per-plugin, so that split needs
+# its own template, invoked with --path proto/gortexa. The root template excludes
+# the same path so the descriptor is never generated twice.
+version: v2
+clean: true
+plugins:
+  - local: protoc-gen-go
+    out: api/gen
+    opt: paths=source_relative

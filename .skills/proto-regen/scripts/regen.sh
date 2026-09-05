@@ -31,6 +31,7 @@ else
 fi
 
 echo "==> [3/3] buf generate"
-buf generate
+if [ -f api/buf.gen.yaml ]; then buf generate --template api/buf.gen.yaml --path proto/gortexa; fi
+buf generate --exclude-path proto/gortexa
 
 echo "==> Done. Generated artifacts are under gen/. Do NOT hand-edit them."

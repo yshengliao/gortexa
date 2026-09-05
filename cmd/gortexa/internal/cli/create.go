@@ -16,6 +16,14 @@ import (
 // rewrites into the new project's module path.
 const layoutModule = "github.com/yshengliao/gortexa"
 
+// apiSubmodule is the suffix of the standalone module that owns the
+// gortexa.ai.v1 annotations proto and its Go bindings. A generated project
+// depends on that module instead of carrying its own copy, so the module
+// rewrite must leave its import path pointing upstream: protobuf's global
+// registry is keyed on the proto file path, so a second copy of
+// gortexa/ai/v1/annotations.proto panics at init.
+const apiSubmodule = "/api"
+
 func newCreateCmd() *cobra.Command {
 	var module, ref, repo string
 	cmd := &cobra.Command{
@@ -105,6 +113,7 @@ func createProject(dest, module, repo, ref string) error {
 // pruned from the clone before this runs, so generated code is later produced
 // against newMod by `make gen`.
 func rewriteModulePath(root, oldMod, newMod string) error {
+	apiMod := oldMod + apiSubmodule
 	return filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -130,13 +139,21 @@ func rewriteModulePath(root, oldMod, newMod string) error {
 		}
 		s := string(b)
 		// Avoid blindly rewriting HTTPS URLs (like the github repo in README.md)
-		// by temporarily masking them. The mask token must be absent from the file
-		// — a fixed literal would itself be rewritten in any file that contains it
-		// (e.g. this very source), so derive a unique one per file.
+		// and the upstream /api submodule import path by temporarily masking
+		// them. The replacement is a plain substring swap with no module-path
+		// boundary, so without the api mask "<oldMod>/api/gen/..." would become
+		// "<newMod>/api/gen/..." and the project would compile its own second
+		// copy of the annotations descriptor. The mask token must be absent from
+		// the file — a fixed literal would itself be rewritten in any file that
+		// contains it (e.g. this very source), so derive a unique one per file;
+		// suffixing one unique token keeps both masks unique.
 		mask := uniqueMask(s)
-		s = strings.ReplaceAll(s, "https://"+oldMod, mask)
+		urlMask, apiMask := mask+"A", mask+"B"
+		s = strings.ReplaceAll(s, "https://"+oldMod, urlMask)
+		s = strings.ReplaceAll(s, apiMod, apiMask)
 		s = strings.ReplaceAll(s, oldMod, newMod)
-		s = strings.ReplaceAll(s, mask, "https://"+oldMod)
+		s = strings.ReplaceAll(s, apiMask, apiMod)
+		s = strings.ReplaceAll(s, urlMask, "https://"+oldMod)
 
 		return os.WriteFile(path, []byte(s), info.Mode().Perm())
 	})

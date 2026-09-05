@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -40,7 +41,17 @@ func regen(root string, allowBreaking bool) error {
 			return fmt.Errorf("buf breaking: %w — pass --allow-breaking if the change is intended", err)
 		}
 	}
-	if err := runCmd(root, "buf", "generate"); err != nil {
+	// buf's `out` is per-plugin, not per-module, so one invocation cannot split
+	// output across the two module trees; api/ generates with its own template.
+	// A scaffolded project has no api/buf.gen.yaml — it depends on the published
+	// api module instead of regenerating the annotations — so this step is
+	// skipped there and only the project's own protos are generated.
+	if fileExists(filepath.Join(root, "api", "buf.gen.yaml")) {
+		if err := runCmd(root, "buf", "generate", "--template", "api/buf.gen.yaml", "--path", "proto/gortexa"); err != nil {
+			return fmt.Errorf("buf generate (api): %w", err)
+		}
+	}
+	if err := runCmd(root, "buf", "generate", "--exclude-path", "proto/gortexa"); err != nil {
 		return fmt.Errorf("buf generate: %w", err)
 	}
 	return nil

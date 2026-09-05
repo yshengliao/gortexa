@@ -13,7 +13,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	aiv1 "github.com/yshengliao/gortexa/gen/gortexa/ai/v1"
+	aiv1 "github.com/yshengliao/gortexa/api/gen/gortexa/ai/v1"
 )
 
 const (

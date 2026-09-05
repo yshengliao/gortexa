@@ -7,7 +7,7 @@ package gortexa.ai.v1;
 
 import "google/protobuf/descriptor.proto";
 
-option go_package = "github.com/yshengliao/gortexa/gen/gortexa/ai/v1;aiv1";
+option go_package = "github.com/yshengliao/gortexa/api/gen/gortexa/ai/v1;aiv1";
 
 // AIToolOptions marks an RPC as an AI tool and carries its metadata.
 message AIToolOptions {

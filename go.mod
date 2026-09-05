@@ -7,6 +7,11 @@ module github.com/yshengliao/gortexa
 // `toolchain goX.Y.Z` directive.
 go 1.27.0
 
+// The api submodule ships in this repo. `replace` is ignored by anything that
+// depends on gortexa, so consumers resolve the tagged api version from the
+// require above; it only makes the local tree build before that tag exists.
+replace github.com/yshengliao/gortexa/api => ./api
+
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.1
 	buf.build/go/protovalidate v1.2.0
@@ -26,6 +31,7 @@ require (
 	github.com/nats-io/nats-server/v2 v2.14.2
 	github.com/nats-io/nats.go v1.52.0
 	github.com/spf13/cobra v1.10.2
+	github.com/yshengliao/gortexa/api v0.0.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.19.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0

@@ -3,7 +3,7 @@ package mcp
 import (
 	"testing"
 
-	aiv1 "github.com/yshengliao/gortexa/gen/gortexa/ai/v1"
+	aiv1 "github.com/yshengliao/gortexa/api/gen/gortexa/ai/v1"
 )
 
 // TestAIExtensionNumbersAreStable pins the wire numbers of the ai annotation

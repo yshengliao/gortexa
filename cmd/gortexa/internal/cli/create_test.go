@@ -77,3 +77,40 @@ func TestRewriteModulePath_RewritesBareModuleButPreservesURL(t *testing.T) {
 		t.Errorf("module path should rewrite while the URL is preserved\n got: %q\nwant: %q", string(b), want)
 	}
 }
+
+// TestRewriteModulePath_PreservesAPISubmodule guards the api mask. The upstream
+// /api submodule owns gortexa/ai/v1/annotations.proto and its Go bindings, and a
+// generated project depends on it rather than regenerating its own copy.
+// protobuf's global registry is keyed on the proto file path, so retargeting
+// that import at the project's own module would link two copies of the same
+// descriptor and panic at init. The bare module path around it must still be
+// rewritten, and the https:// mask must keep working alongside it.
+func TestRewriteModulePath_PreservesAPISubmodule(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "mixed.go")
+	content := "module github.com/yshengliao/gortexa\n" +
+		"import (\n" +
+		"\taiv1 \"github.com/yshengliao/gortexa/api/gen/gortexa/ai/v1\"\n" +
+		"\tlogic \"github.com/yshengliao/gortexa/internal/logic\"\n" +
+		")\n" +
+		"// docs: https://github.com/yshengliao/gortexa/api\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteModulePath(root, "github.com/yshengliao/gortexa", "example.com/demo"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "module example.com/demo\n" +
+		"import (\n" +
+		"\taiv1 \"github.com/yshengliao/gortexa/api/gen/gortexa/ai/v1\"\n" +
+		"\tlogic \"example.com/demo/internal/logic\"\n" +
+		")\n" +
+		"// docs: https://github.com/yshengliao/gortexa/api\n"
+	if string(b) != want {
+		t.Errorf("api submodule import must survive the rewrite\n got: %q\nwant: %q", string(b), want)
+	}
+}
