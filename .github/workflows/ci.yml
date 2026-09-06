@@ -88,17 +88,19 @@ jobs:
           go -C api build ./...
           go -C api vet ./...
 
-      # Consumers never see the local replace: they resolve the api module from
-      # the version go.mod requires. Build once the way they do, so a change
-      # under api/ that was not re-tagged and re-required fails here instead of
-      # shipping a framework that depends on bindings nobody can resolve.
-      - name: Build without the api replace (consumer view)
+      # go.mod must carry no replace directive. `go install .../cmd/gortexa@<version>`
+      # refuses a module whose go.mod has one — v0.28.0 and v0.28.1 shipped with a
+      # replace for the api module and could not be installed that way — and
+      # consumers ignore replaces regardless, so without one the root build above
+      # already is what a consumer resolves. "Releasing" in CLAUDE.md covers how
+      # api/ changes are developed without committing one.
+      - name: go.mod has no replace directive
         run: |
-          tmp=$(mktemp -d)
-          git archive HEAD | tar -x -C "$tmp"
-          cd "$tmp"
-          go mod edit -dropreplace=github.com/yshengliao/gortexa/api
-          GOFLAGS=-mod=mod go build ./...
+          if go mod edit -json | grep -q '"Replace"'; then
+            echo "go.mod contains a replace directive; go install @version refuses such a module" >&2
+            go mod edit -json | grep -A4 '"Replace"' >&2
+            exit 1
+          fi
 
       - name: Build
         run: make build

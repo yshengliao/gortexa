@@ -117,9 +117,10 @@ func createProject(dest, module, repo, ref string) error {
 		return cleanup(fmt.Errorf("write project manifest: %w", err))
 	}
 
-	// The layout replaces the api module with ./api so the framework repo builds
-	// before that module is tagged. A generated project has no ./api, so it must
-	// resolve the require from the proxy instead.
+	// Layouts at v0.28.0 and v0.28.1 replaced the api module with ./api; later
+	// ones carry no replace (it breaks `go install ...@version`). A generated
+	// project has no ./api either way, so make sure it resolves the require
+	// from the proxy. On a layout without the replace this is a no-op.
 	if err := runCmd(dest, "go", "mod", "edit", "-dropreplace="+layoutModule+apiSubmodule); err != nil {
 		return cleanup(fmt.Errorf("drop api replace directive: %w", err))
 	}

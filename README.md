@@ -4,7 +4,7 @@
 [![Docs](https://img.shields.io/badge/docs-gortexa.sheng.page-2563EB)](https://gortexa.sheng.page)
 [![Status](https://img.shields.io/badge/status-active-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![AI generated](https://img.shields.io/badge/AI%20generated-Fable%205%20%7C%20Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
+[![AI generated](https://img.shields.io/badge/AI%20generated-Fable%205.1%20%7C%20Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
 
 A contract-first, batteries-included **gRPC framework** for Go 1.27. Protobuf is
 the single source of truth; **one h2c port** multiplexes three protocols:
@@ -307,7 +307,7 @@ protocol conformance — with every actionable finding fixed and verified
 
 | Model | Role |
 |---|---|
-| **Claude Fable 5** | Fourth full-codebase review, hardening fixes, and comprehensive test coverage |
+| **Claude Fable 5.1** (succeeding Fable 5) | Fourth full-codebase review, hardening fixes and comprehensive test coverage; the v0.28 api-module split review, its release process, and the bilingual docs pipeline |
 | **Claude Opus 4.8** | Design, implementation, and consolidation |
 | **Gemini 3.1 Pro** (Jules) | Second independent review |
 | **Codex 5.5** | Third independent review |
