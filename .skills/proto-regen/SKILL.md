@@ -33,6 +33,8 @@ Regenerate all code artifacts from Protobuf definitions in this Gortexa project.
 
 4. **Verify output.** Confirm `gen/` now contains updated `*.pb.go`, `*_grpc.pb.go`, `*.pb.gw.go`, and the merged OpenAPI document at `gen/openapiv2/gortexa.swagger.json` (`buf.gen.yaml` sets `merge_file_name=gortexa`, so there is one merged file, not one per service). Do not edit them. The MCP bridge reflects over the generated descriptors at runtime, so no separate MCP codegen step is needed.
 
+   In the framework repo only, `proto/gortexa/ai/v1` generates into `api/gen/` — the separate `github.com/yshengliao/gortexa/api` module — not `gen/`. A change there is a release event: the api module must be tagged and the root `require` bumped in the same PR (see "Releasing" in `CLAUDE.md`). A scaffolded project has no `api/` and consumes the published module; the script skips that step there.
+
 5. **Next steps for the user.** Generated code is regenerated; business logic in `internal/` is untouched. Remind that `internal/` handlers may need updating to satisfy new/changed service interfaces, and that this should follow the project's TDD loop (write/adjust the failing test first).
 
 ## Hard rules

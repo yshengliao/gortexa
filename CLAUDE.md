@@ -69,24 +69,30 @@ single source of truth; one h2c port multiplexes gRPC + HTTP/JSON (grpc-gateway)
 
 ## Releasing
 
-`api/` is a nested module, so it carries its own tag (`api/vX.Y.Z`) and that tag
-can only be cut from a commit that already contains `api/`. `replace` is ignored
-by anything depending on gortexa, so a root `go.mod` requiring an untagged api
-version is unbuildable for every consumer and for every `gortexa create` project
-(which drops the replace but keeps the require). Tag in this order, in one
-sitting — main is broken for consumers in between:
+`api/` is a nested module with its own tag (`api/vX.Y.Z`). The root `go.mod`
+requires it by version like any other dependency and carries **no `replace`**:
+`go install github.com/yshengliao/gortexa/cmd/gortexa@<version>` refuses a
+module whose go.mod has a replace directive (v0.28.0 and v0.28.1 shipped with
+one and could not be installed that way), and consumers ignore replaces anyway.
+CI fails on any replace in go.mod, so the root build is exactly what a consumer
+resolves.
 
-1. `git tag api/vX.Y.Z && git push origin api/vX.Y.Z`
-2. `go mod edit -require=github.com/yshengliao/gortexa/api@vX.Y.Z && go mod tidy`,
-   commit and push. Keep the `replace` — local development still needs it.
-3. Only then tag the framework: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+A release that does not touch `api/` is one step: `git tag vX.Y.Z && git push
+origin vX.Y.Z`.
 
-The `replace` also means the framework always compiles against the local
-`./api`, while consumers get the tag. **Any change under `api/`** (a
-`proto/gortexa/ai/v1` edit regenerates it) therefore needs a new `api/vX.Y.Z`
-and a root `require` bump in the same PR. CI's "Build without the api replace"
-step builds the tree the way a consumer resolves it, so that mismatch fails
-there instead of shipping.
+**Any change under `api/`** (an edit to `proto/gortexa/ai/v1` regenerates it) is
+a release of the api module, in the same PR:
+
+1. Develop against the working copy with a local, uncommitted replace:
+   `go mod edit -replace=github.com/yshengliao/gortexa/api=./api`. Drop it
+   (`-dropreplace=github.com/yshengliao/gortexa/api`) before committing — the CI
+   guard rejects it otherwise.
+2. When `api/` is final, tag it on the PR branch and push the tag:
+   `git tag api/vX.Y.Z <branch-head> && git push origin api/vX.Y.Z`. The proxy
+   serves the `api/` subtree of that commit; it does not need to be on main.
+3. `go mod edit -require=github.com/yshengliao/gortexa/api@vX.Y.Z && go mod tidy`,
+   commit, push. From here CI builds what consumers will resolve.
+4. Merge, then tag the framework.
 
 One-time for v0.28: once v0.28.0 is the `buf breaking` comparison base, remove
 the `FILE_SAME_GO_PACKAGE` entry from `buf.yaml`'s `breaking.except` — it exists

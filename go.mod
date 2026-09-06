@@ -7,11 +7,6 @@ module github.com/yshengliao/gortexa
 // `toolchain goX.Y.Z` directive.
 go 1.27.0
 
-// The api submodule ships in this repo. `replace` is ignored by anything that
-// depends on gortexa, so consumers resolve the tagged api version from the
-// require above; it only makes the local tree build before that tag exists.
-replace github.com/yshengliao/gortexa/api => ./api
-
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.1
 	buf.build/go/protovalidate v1.4.0
