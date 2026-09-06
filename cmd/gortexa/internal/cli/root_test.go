@@ -3,6 +3,7 @@ package cli
 import (
 	"io"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +27,29 @@ func TestRootRegistersSubcommands(t *testing.T) {
 		if !got[want] {
 			t.Errorf("root command missing subcommand %q", want)
 		}
+	}
+}
+
+// TestCLIVersion pins the precedence: an -ldflags value is reported as-is, and
+// without one the CLI never reports the raw "(devel)" placeholder or an empty
+// string — a test binary has no module version, so the fallback path is what
+// runs here.
+func TestCLIVersion(t *testing.T) {
+	old := version
+	defer func() { version = old }()
+
+	version = "v9.9.9"
+	if got := cliVersion(); got != "v9.9.9" {
+		t.Errorf("cliVersion() with ldflags override = %q, want v9.9.9", got)
+	}
+
+	version = "dev"
+	got := cliVersion()
+	if got == "" || got == "(devel)" {
+		t.Errorf("cliVersion() without override = %q, want a non-empty, non-placeholder value", got)
+	}
+	if !strings.HasPrefix(got, "dev") && !strings.HasPrefix(got, "v") {
+		t.Errorf("cliVersion() = %q, want a module version or a dev marker", got)
 	}
 }
 

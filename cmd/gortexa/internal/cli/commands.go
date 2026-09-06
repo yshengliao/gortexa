@@ -191,6 +191,6 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the gortexa CLI version",
 		Args:  cobra.NoArgs,
-		Run:   func(_ *cobra.Command, _ []string) { fmt.Println("gortexa", version) },
+		Run:   func(_ *cobra.Command, _ []string) { fmt.Println("gortexa", cliVersion()) },
 	}
 }

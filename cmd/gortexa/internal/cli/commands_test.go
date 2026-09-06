@@ -214,8 +214,8 @@ func TestVersionCmd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "gortexa "+version) {
-		t.Errorf("version output = %q, want it to contain %q", out, "gortexa "+version)
+	if !strings.Contains(out, "gortexa "+cliVersion()) {
+		t.Errorf("version output = %q, want it to contain %q", out, "gortexa "+cliVersion())
 	}
 }
 

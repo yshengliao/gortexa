@@ -108,7 +108,7 @@ func createProject(dest, module, repo, ref string) error {
 		return cleanup(fmt.Errorf("namespace sample service: %w", err))
 	}
 	if err := writeManifest(dest, projectManifest{
-		CLIVersion:     version,
+		CLIVersion:     cliVersion(),
 		ModulePath:     module,
 		ProtoNamespace: ns,
 		SourceRepo:     repo,
