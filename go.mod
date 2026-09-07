@@ -8,7 +8,7 @@ module github.com/yshengliao/gortexa
 go 1.27.0
 
 require (
-	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.1
+	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
 	buf.build/go/protovalidate v1.4.0
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/cespare/xxhash/v2 v2.3.0
