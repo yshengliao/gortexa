@@ -3,12 +3,17 @@ package observability_test
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 
 	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	_ "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/stats"
 
 	"github.com/yshengliao/gortexa/config"
 	"github.com/yshengliao/gortexa/observability"
@@ -48,7 +53,7 @@ func TestSetupLogs(t *testing.T) {
 	}{
 		{name: "invalid level", logCfg: config.LogConfig{Level: "bogus"}, wantErr: true},
 		{name: "json stdout no otlp", logCfg: config.LogConfig{Level: "info", Format: "json"}},
-		{name: "text stdout no otlp", logCfg: config.LogConfig{Level: "debug", Format: "text"}},
+		{name: "text stdout no otlp", logCfg: config.LogConfig{Level: "warn", Format: "text"}},
 		{
 			name:   "otlp fanout path",
 			logCfg: config.LogConfig{Level: "info"},
@@ -59,6 +64,8 @@ func TestSetupLogs(t *testing.T) {
 			},
 		},
 	}
+	oldDefault := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(oldDefault) })
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -74,6 +81,12 @@ func TestSetupLogs(t *testing.T) {
 			}
 			if logger == nil || shutdown == nil {
 				t.Fatal("nil logger or shutdown")
+			}
+			if slog.Default() != logger {
+				t.Fatal("SetupLogs did not install the logger as the slog default")
+			}
+			if logger.Enabled(ctx, slog.LevelDebug) {
+				t.Fatal("logger enabled for debug at level info (a sink ignores log.level)")
 			}
 			sctx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
 			defer cancel()
@@ -136,6 +149,30 @@ func TestNewGovernanceMetrics(t *testing.T) {
 func TestServerStatsHandler(t *testing.T) {
 	if observability.ServerStatsHandler() == nil {
 		t.Fatal("nil stats handler")
+	}
+}
+
+// TestServerStatsHandlerBoundsMethodNames verifies a caller-chosen method name
+// that no linked service defines is recorded under one fixed name, so it cannot
+// mint a span name / metric series per request.
+func TestServerStatsHandlerBoundsMethodNames(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr)))
+	t.Cleanup(func() { otel.SetTracerProvider(old) })
+
+	h := observability.ServerStatsHandler()
+	for _, m := range []string{"/grpc.health.v1.Health/Check", "/x.Svc/M1", "/x.Svc/M2", "/grpc.health.v1.Health/Nope", "junk"} {
+		ctx := h.TagRPC(context.Background(), &stats.RPCTagInfo{FullMethodName: m})
+		h.HandleRPC(ctx, &stats.End{})
+	}
+	var names []string
+	for _, s := range sr.Ended() {
+		names = append(names, s.Name())
+	}
+	want := []string{"grpc.health.v1.Health/Check", "_OTHER", "_OTHER", "_OTHER", "_OTHER"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("span names = %q, want %q", names, want)
 	}
 }
 
