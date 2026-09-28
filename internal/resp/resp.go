@@ -10,11 +10,13 @@ import (
 	"io"
 	"math"
 	"strconv"
+	"strings"
 )
 
 const (
-	// maxBulkLen guards against a malicious or corrupt length header triggering a
-	// huge allocation; it is Redis's proto-max-bulk-len default (512 MiB).
+	// maxBulkLen bounds a bulk reply at Redis's proto-max-bulk-len default
+	// (512 MiB); the payload buffer grows with the bytes actually received, so
+	// a length header alone never allocates it.
 	maxBulkLen = 512 << 20
 	// maxLineLen bounds a single CRLF-terminated line. Legitimate RESP2 status,
 	// error and integer lines are a few dozen bytes, and bulk payloads take the
@@ -93,18 +95,29 @@ func readReply(r *bufio.Reader) (any, error) {
 		if n < 0 || n > maxBulkLen {
 			return nil, fmt.Errorf("resp: bulk length out of range: %d", n)
 		}
-		buf := make([]byte, n+2) // payload + trailing CRLF
-		if _, err := io.ReadFull(r, buf); err != nil {
+		// Grow the payload as bytes arrive rather than allocating the claimed
+		// length up front: the length is only a claim, and a hostile peer that
+		// sends a 512 MiB header and stalls would otherwise pin that much memory
+		// per pooled connection for the whole read deadline.
+		var payload strings.Builder
+		if _, err := io.CopyN(&payload, r, n); err != nil {
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			return nil, err
+		}
+		var crlf [2]byte
+		if _, err := io.ReadFull(r, crlf[:]); err != nil {
 			return nil, err
 		}
 		// Validate the framing terminator: the same adversarial-input posture as
 		// the length bound above. A missing CRLF means a length/payload desync, so
 		// fail loudly here instead of silently returning bytes that belong to the
 		// next reply and corrupting every command after it on this connection.
-		if buf[n] != '\r' || buf[n+1] != '\n' {
+		if crlf[0] != '\r' || crlf[1] != '\n' {
 			return nil, fmt.Errorf("resp: bulk string not CRLF-terminated")
 		}
-		return string(buf[:n]), nil
+		return payload.String(), nil
 	default:
 		// This client only issues GET/SET/DEL/PING/AUTH/SELECT, whose replies are
 		// simple strings, bulk strings, integers or errors — never arrays ('*').
