@@ -12,7 +12,7 @@ import (
 // a context carrying the authenticated principal (or an error). It is the seam
 // that lets a consumer run the framework's stock interceptor chain with any
 // internal auth scheme — JWT, static bearer, mTLS, API key — instead of only
-// HS256 JWT. The auth interceptor calls it for every non-skipped method.
+// JWT. The auth interceptor calls it for every non-skipped method.
 //
 // Implementations must not leak internal detail in the returned error: return
 // an *apperr.Error with Category CatUnauthenticated (its message is the only
@@ -27,7 +27,7 @@ type Authenticator interface {
 // used before Authenticator existed, so JWT is now simply one implementation.
 type jwtAuthenticator struct{ v *Verifier }
 
-// NewJWTAuthenticator returns an Authenticator that verifies an HS256 JWT bearer
+// NewJWTAuthenticator returns an Authenticator that verifies a JWT bearer
 // token with v. It is the default when interceptor.Config sets Verifier but not
 // Authenticator, so existing configurations behave identically.
 func NewJWTAuthenticator(v *Verifier) Authenticator {
