@@ -49,7 +49,9 @@ type App struct {
 	adminAddrV   net.Addr
 	shutdownFns  []func(context.Context) error
 	shutdownOnce sync.Once
+	shutdownErr  error
 	started      atomic.Bool
+	notReady     atomic.Bool // last /readyz was not serving; gates its WARN to transitions
 
 	loopbackLis    *bufconn.Listener
 	loopbackMu     sync.Mutex
@@ -353,9 +355,15 @@ func (a *App) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
-	// Evaluate the checks once: a second pass (Overall + Snapshot) could observe
-	// a different state and report a 'status' that contradicts 'checks'.
-	snap := a.health.Snapshot(r.Context())
+	if a.health.Draining() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining"})
+		return
+	}
+	// Read one snapshot: a second pass (Overall + Snapshot) could observe a
+	// different state and report a 'status' that contradicts 'checks'. It is the
+	// shared, coalesced one, so a caller looping on this unauthenticated endpoint
+	// cannot drive dependency pings at its own request rate.
+	snap := a.health.CachedSnapshot(r.Context())
 	overall := health.Healthy
 	checks := make(map[string]string, len(snap))
 	for name, st := range snap {
@@ -369,9 +377,14 @@ func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusServiceUnavailable
 		// The 503 that takes a pod out of rotation wrote nothing anywhere, so the
 		// operator paged by the load balancer had no server-side record of which
-		// dependency went down or when. This is the one line that answers it.
-		a.log.WarnContext(r.Context(), "gortexa: readiness not serving",
-			"status", overall.String(), "checks", checks)
+		// dependency went down or when. This is the one line that answers it,
+		// logged on the transition only so a probe loop cannot flood the log.
+		if a.notReady.CompareAndSwap(false, true) {
+			a.log.WarnContext(r.Context(), "gortexa: readiness not serving",
+				"status", overall.String(), "checks", checks)
+		}
+	} else {
+		a.notReady.Store(false)
 	}
 	writeJSON(w, code, map[string]any{"status": overall.String(), "checks": checks})
 }
@@ -388,7 +401,8 @@ func (a *App) Run(ctx context.Context) error {
 	ln, err := net.Listen("tcp", a.cfg.Server.Addr)
 	if err != nil {
 		// Pre-serve bind failure: serve() (which owns shutdown) is never reached,
-		// so run the shutdown hooks here to flush buffered startup telemetry.
+		// so run the shutdown hooks here to flush buffered startup telemetry
+		// (Shutdown also closes the caller-provided extra listeners never served).
 		// Shutdown is idempotent (shutdownOnce), so the normal serve() path that
 		// also calls Shutdown remains a no-op.
 		_ = a.Shutdown(context.Background())
@@ -428,12 +442,16 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	// return, exactly like a main-listener bind failure.
 	for _, es := range a.extraSrvs {
 		lis := es.lis
+		if lis != nil && !es.claimed.CompareAndSwap(false, true) {
+			continue // a concurrent Shutdown already closed it
+		}
 		if lis == nil {
 			l, lerr := net.Listen("tcp", es.addr)
 			if lerr != nil {
 				// The main listener ln was opened by Run but is not yet handed to
 				// httpSrv.Serve, so Shutdown (which only closes what Serve tracked)
-				// would leak its fd — close it explicitly before bailing.
+				// would leak its fd — close it explicitly before bailing. Caller
+				// listeners not yet served are closed by Shutdown.
 				_ = ln.Close()
 				_ = a.Shutdown(context.Background())
 				return fmt.Errorf("kernel: bind extra listener %q: %w", es.addr, lerr)
@@ -456,7 +474,10 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 		return a.Shutdown(context.Background())
 	case err := <-errCh:
 		if err == http.ErrServerClosed {
-			return nil
+			// A concurrent Shutdown closed the listener. Wait for it (shutdownOnce
+			// blocks until the drain and flush hooks finish) and surface its
+			// error, so Run never returns mid-drain.
+			return a.Shutdown(context.Background())
 		}
 		// Serve failed (e.g. a late listener error). Tear down the loopback gRPC
 		// server/conn and run the shutdown hooks before returning, so this exit
@@ -466,11 +487,15 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 	}
 }
 
-// Shutdown gracefully stops the app. It is idempotent and bounded by the
-// configured ShutdownTimeout.
+// Shutdown gracefully stops the app. It is idempotent; every call waits for the
+// first to finish and returns its result. The drain and the shutdown hooks each
+// get their own ShutdownTimeout, so the worst case is twice ShutdownTimeout:
+// size the orchestrator's grace period (terminationGracePeriodSeconds) to that.
+// On entry the health registry starts draining: /readyz answers 503 and gRPC
+// health reports NOT_SERVING, ending any Watch stream.
 func (a *App) Shutdown(ctx context.Context) error {
-	var retErr error
 	a.shutdownOnce.Do(func() {
+		a.health.Drain()
 		tctx := ctx
 		if a.cfg.Server.ShutdownTimeout > 0 {
 			var cancel context.CancelFunc
@@ -486,15 +511,20 @@ func (a *App) Shutdown(ctx context.Context) error {
 				// shutdown, not a failure of it, so it is logged rather than
 				// returned: Run's documented caller treats any error as fatal and
 				// exits non-zero, which would turn every rolling deploy that still
-				// has a stream open into an apparent crash. retErr stays reserved
-				// for shutdown-hook (telemetry flush) failures.
+				// has a stream open into an apparent crash. shutdownErr stays
+				// reserved for shutdown-hook (telemetry flush) failures.
 				_ = a.httpSrv.Close()
 				a.log.Warn("gortexa: drain deadline exceeded, force-closing", "error", err)
 			}
 		}
 		// Stop secondary listeners the same way (Shutdown on a never-served
-		// server is a safe no-op, covering a pre-serve exit).
+		// server is a safe no-op, covering a pre-serve exit). A caller-provided
+		// listener serve() never handed to Serve is closed here, since no
+		// http.Server tracks it.
 		for _, es := range a.extraSrvs {
+			if es.lis != nil && es.claimed.CompareAndSwap(false, true) {
+				_ = es.lis.Close()
+			}
 			if err := es.srv.Shutdown(tctx); err != nil {
 				_ = es.srv.Close()
 				a.log.Warn("gortexa: extra listener drain deadline exceeded, force-closing", "error", err)
@@ -541,10 +571,10 @@ func (a *App) Shutdown(ctx context.Context) error {
 			defer hookCancel()
 		}
 		for _, fn := range a.shutdownFns {
-			if err := fn(hookCtx); err != nil && retErr == nil {
-				retErr = err
+			if err := fn(hookCtx); err != nil && a.shutdownErr == nil {
+				a.shutdownErr = err
 			}
 		}
 	})
-	return retErr
+	return a.shutdownErr
 }
