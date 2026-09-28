@@ -48,14 +48,19 @@ func main() {
 // authSkip exempts health checks from authentication (probes carry no tokens)
 // and, only when reflection is enabled, the reflection service itself — the
 // flag exists for schema-discovery tooling like `buf curl --reflect`, whose
-// reflection stream carries no token. The trailing dots keep the prefixes from
-// matching any user service (e.g. a "grpc.healthx" package).
+// reflection stream carries no token. It matches exact service names, not
+// prefixes, so a user service in a grpc.health.* or grpc.reflection.* package
+// stays authenticated.
 func authSkip(reflection bool) func(method string) bool {
 	return func(method string) bool {
-		if strings.HasPrefix(method, "/grpc.health.") {
+		service, _, _ := strings.Cut(strings.TrimPrefix(method, "/"), "/")
+		switch service {
+		case "grpc.health.v1.Health":
 			return true
+		case "grpc.reflection.v1.ServerReflection", "grpc.reflection.v1alpha.ServerReflection":
+			return reflection
 		}
-		return reflection && strings.HasPrefix(method, "/grpc.reflection.")
+		return false
 	}
 }
 

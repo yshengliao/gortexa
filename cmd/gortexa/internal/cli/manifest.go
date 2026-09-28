@@ -55,6 +55,8 @@ func readManifest(root string) (projectManifest, bool) {
 //     project's generate step; a project inside it never gets generated.
 //   - resource — the sample's own directory, which cannot be moved into itself.
 //   - google, buf — the well-known namespaces buf resolves the proto deps from.
+//   - grpc — grpc-go's own services (grpc.health.v1, grpc.reflection.v1) live
+//     there, and the server exempts those from authentication.
 //   - internal, vendor — path elements the Go toolchain gives special meaning:
 //     gen/internal/... could not be imported from internal/logic at all, and a
 //     nested vendor directory is skipped by ./... patterns.
@@ -65,6 +67,7 @@ var reservedNamespaces = map[string]bool{
 	"buf":      true,
 	"google":   true,
 	"gortexa":  true,
+	"grpc":     true,
 	"internal": true,
 	"resource": true,
 	"vendor":   true,
@@ -76,9 +79,11 @@ var reservedNamespaces = map[string]bool{
 // which made them impossible to link into one binary — protobuf's global registry
 // is keyed on exactly those two things.
 func protoNamespace(module string) string {
-	last := module
-	if i := strings.LastIndex(last, "/"); i >= 0 {
-		last = last[i+1:]
+	elems := strings.Split(module, "/")
+	last := elems[len(elems)-1]
+	// A major-version suffix (.../billing/v2) names the version, not the project.
+	if len(elems) > 1 && versionRe.MatchString(last) {
+		last = elems[len(elems)-2]
 	}
 	var b strings.Builder
 	for _, r := range strings.ToLower(last) {
