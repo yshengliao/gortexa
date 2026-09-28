@@ -64,3 +64,73 @@ func TestOpenAIStrictInvariants(t *testing.T) {
 		}
 	}
 }
+
+// Strict mode lists every property as required, so a property not marked
+// ai_field.required must accept null; otherwise the model has to invent a
+// server-populated id/createdAt or overwrite an optional field on every call.
+func TestOpenAIStrictNonRequiredFieldsAreNullable(t *testing.T) {
+	byName := map[string]mcp.OpenAIFunction{}
+	for _, ir := range irTools(t) {
+		byName[ir.Name] = mcp.DowngradeOpenAI(ir)
+	}
+	typeJSON := func(s *mcp.OpenAISchema) string {
+		b, err := json.Marshal(s.Type)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	res := byName["create_resource"].Function.Parameters.Properties["resource"]
+	if got := typeJSON(res.Properties["createdAt"]); got != `["string","null"]` {
+		t.Errorf("createdAt type = %s, want [\"string\",\"null\"]", got)
+	}
+	status := res.Properties["status"]
+	if got := typeJSON(status); got != `["string","null"]` || status.Enum[len(status.Enum)-1] != nil {
+		t.Errorf("status type = %s enum = %v, want nullable with null in enum", got, status.Enum)
+	}
+	// ai_field.required stays a plain, non-null type.
+	if got := typeJSON(byName["get_resource"].Function.Parameters.Properties["id"]); got != `"string"` {
+		t.Errorf("required id type = %s, want \"string\"", got)
+	}
+}
+
+// TestOpenAIStrictValidateRequiredFieldsStayNonNull guards the other side of the
+// nullable widening: a field buf.validate already requires (required = true, or
+// a non-optional string with min_len >= 1) must stay a plain type, so strict
+// decoding still forces the model to supply it rather than emit null and fail
+// with InvalidArgument. The MCP `required` list is still ai_field-driven.
+func TestOpenAIStrictValidateRequiredFieldsStayNonNull(t *testing.T) {
+	byName := map[string]mcp.OpenAIFunction{}
+	mcpByName := map[string]mcp.MCPTool{}
+	for _, ir := range irTools(t) {
+		byName[ir.Name] = mcp.DowngradeOpenAI(ir)
+		mcpByName[ir.Name] = mcp.DowngradeMCP(ir)
+	}
+	typeJSON := func(s *mcp.OpenAISchema) string {
+		t.Helper()
+		b, err := json.Marshal(s.Type)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	cases := []struct {
+		name string
+		got  *mcp.OpenAISchema
+		want string
+	}{
+		{"delete_resource.id (min_len 1)", byName["delete_resource"].Function.Parameters.Properties["id"], `"string"`},
+		{"create_resource.resource (required)", byName["create_resource"].Function.Parameters.Properties["resource"], `"object"`},
+		{"create_resource.resource.name (min_len 1)", byName["create_resource"].Function.Parameters.Properties["resource"].Properties["name"], `"string"`},
+		// Not validate-required: still nullable.
+		{"create_resource.resource.id (server-populated)", byName["create_resource"].Function.Parameters.Properties["resource"].Properties["id"], `["string","null"]`},
+	}
+	for _, c := range cases {
+		if got := typeJSON(c.got); got != c.want {
+			t.Errorf("%s type = %s, want %s", c.name, got, c.want)
+		}
+	}
+	if req := mcpByName["delete_resource"].InputSchema.Required; len(req) != 0 {
+		t.Errorf("MCP delete_resource required = %v, want unchanged (ai_field-driven, empty)", req)
+	}
+}

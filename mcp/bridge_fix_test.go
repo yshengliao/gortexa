@@ -166,9 +166,8 @@ func TestNewBridgeDuplicateToolName(t *testing.T) {
 	}
 }
 
-// getWithOrigin issues a GET (the SSE-open verb) with an optional Origin header
-// and returns the status. A disallowed origin is rejected before any stream is
-// opened, so the request completes immediately.
+// getWithOrigin issues a GET with an optional Origin header and returns the
+// status. A disallowed origin is rejected before the method check.
 func getWithOrigin(t *testing.T, url, origin string) int {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodGet, url, nil)
@@ -183,8 +182,8 @@ func getWithOrigin(t *testing.T, url, origin string) int {
 	return resp.StatusCode
 }
 
-// TestBridgeOriginValidationGET covers the DNS-rebinding guard on the GET/SSE
-// surface plus the empty-allowlist default.
+// TestBridgeOriginValidationGET covers the DNS-rebinding guard on GET plus the
+// empty-allowlist default.
 func TestBridgeOriginValidationGET(t *testing.T) {
 	allow := newBridgeServerWithOrigins(t, []string{"https://good.example"})
 	if code := getWithOrigin(t, allow.URL, "https://evil.example"); code != http.StatusForbidden {
@@ -243,7 +242,7 @@ func TestBridgeMethodNotAllowedSetsAllow(t *testing.T) {
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("PUT = %d, want 405", resp.StatusCode)
 	}
-	if allow := resp.Header.Get("Allow"); allow != "GET, POST" {
-		t.Fatalf("Allow header = %q, want %q", allow, "GET, POST")
+	if allow := resp.Header.Get("Allow"); allow != "POST" {
+		t.Fatalf("Allow header = %q, want %q", allow, "POST")
 	}
 }

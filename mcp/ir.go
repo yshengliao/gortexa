@@ -8,8 +8,10 @@ package mcp
 import (
 	"cmp"
 	"fmt"
+	"regexp"
 	"slices"
 
+	"buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -41,6 +43,13 @@ type JSONSchema struct {
 	// them from `required` so it never emits a schema protojson always rejects.
 	// Not serialized.
 	oneofMembers map[string]bool
+	// nonNullable is the set of property JSONNames the contract already forces
+	// the caller to supply through buf.validate (required, or a non-optional
+	// string/bytes with min_len >= 1). It is kept apart from Required so the
+	// MCP/Gemini `required` output stays driven by ai_field alone, while the
+	// OpenAI-strict downgrade does not widen these to accept null. Not
+	// serialized.
+	nonNullable map[string]bool
 }
 
 // ToolIR is the provider-neutral description of one exposed RPC.
@@ -55,11 +64,19 @@ type ToolIR struct {
 	Destructive bool
 }
 
+// toolNameRE is the intersection of the MCP, OpenAI (^[a-zA-Z0-9_-]{1,64}$) and
+// Gemini function-name rules, so an exported name registers with every provider.
+var toolNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`)
+
 // ValidateTool enforces the gortexa.ai.v1 tool constraints: a name no longer than 64
-// chars and read_only/destructive being mutually exclusive.
+// chars made only of letters, digits, '_' and '-' (not starting with a digit or
+// '-'), and read_only/destructive being mutually exclusive.
 func ValidateTool(name string, readOnly, destructive bool) error {
 	if len(name) > maxToolNameLen {
 		return fmt.Errorf("mcp: tool name %q exceeds %d chars", name, maxToolNameLen)
+	}
+	if !toolNameRE.MatchString(name) {
+		return fmt.Errorf("mcp: tool name %q must match %s", name, toolNameRE)
 	}
 	if readOnly && destructive {
 		return fmt.Errorf("mcp: tool %q is both read_only and destructive", name)
@@ -81,6 +98,33 @@ func aiField(f protoreflect.FieldDescriptor) *aiv1.AIFieldOptions {
 		return nil
 	}
 	return proto.GetExtension(opts, aiv1.E_AiField).(*aiv1.AIFieldOptions)
+}
+
+// validateRequires reports whether buf.validate rules on f reject an unset
+// value: `(buf.validate.field).required = true`, or a string/bytes min_len >= 1
+// on a field without explicit presence (a proto3 `optional` field is only
+// validated when set, so it may still be left unset). IGNORE_IF_ZERO_VALUE and
+// IGNORE_ALWAYS skip the rules for an unset value.
+func validateRequires(f protoreflect.FieldDescriptor) bool {
+	opts := f.Options()
+	if opts == nil || !proto.HasExtension(opts, validate.E_Field) {
+		return false
+	}
+	r, _ := proto.GetExtension(opts, validate.E_Field).(*validate.FieldRules)
+	if r == nil {
+		return false
+	}
+	switch r.GetIgnore() {
+	case validate.Ignore_IGNORE_IF_ZERO_VALUE, validate.Ignore_IGNORE_ALWAYS:
+		return false
+	}
+	if r.GetRequired() {
+		return true
+	}
+	if f.HasPresence() || f.IsList() || f.IsMap() {
+		return false
+	}
+	return r.GetString().GetMinLen() >= 1 || r.GetBytes().GetMinLen() >= 1
 }
 
 // BuildIR builds the tool IR for every exposed method of a service, validating
@@ -148,6 +192,12 @@ func schemaForMessage(md protoreflect.MessageDescriptor, depth int) (*JSONSchema
 			if af.GetRequired() {
 				s.Required = append(s.Required, f.JSONName())
 			}
+		}
+		if validateRequires(f) {
+			if s.nonNullable == nil {
+				s.nonNullable = map[string]bool{}
+			}
+			s.nonNullable[f.JSONName()] = true
 		}
 		s.Properties[f.JSONName()] = fs
 	}
