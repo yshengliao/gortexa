@@ -39,3 +39,17 @@ func TestValidateDirect(t *testing.T) {
 		t.Fatal("empty config should fail validation")
 	}
 }
+
+func TestValidateJWKSReplacesSecret(t *testing.T) {
+	c := &config.Config{}
+	c.Server.Addr = ":8080"
+	c.Auth.Issuer = "gortexa"
+	c.Auth.JWKSURL = "https://issuer.example/jwks.json"
+	if err := c.Validate(); err != nil {
+		t.Fatalf("jwks_url without jwt_secret should validate: %v", err)
+	}
+	c.Auth.JWKSURL = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("neither jwks_url nor jwt_secret should fail validation")
+	}
+}

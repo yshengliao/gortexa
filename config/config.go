@@ -54,7 +54,11 @@ type ServerConfig struct {
 
 type AuthConfig struct {
 	JWTSecret Secret `koanf:"jwt_secret"`
-	Issuer    string `koanf:"issuer"`
+	// JWKSURL, when set, switches verification to RS256/ES256 against the key
+	// set published at this URL (https, or http on loopback). JWTSecret is then
+	// neither required nor used.
+	JWKSURL string `koanf:"jwks_url"`
+	Issuer  string `koanf:"issuer"`
 	// Audience, when set, is stamped into and required from every token: it
 	// isolates services that share a secret and issuer (a token minted for
 	// service A is rejected by service B). Empty keeps aud unchecked.
@@ -289,8 +293,10 @@ func (c *Config) Validate() error {
 		errs = append(errs, "server.addr is required")
 	}
 	switch {
+	case c.Auth.JWKSURL != "":
+		// Asymmetric verification: the secret is unused, so it is not checked.
 	case c.Auth.JWTSecret == "":
-		errs = append(errs, "auth.jwt_secret is required")
+		errs = append(errs, "auth.jwt_secret (or auth.jwks_url) is required")
 	case c.Auth.JWTSecret.Reveal() == devPlaceholderSecret:
 		errs = append(errs, "auth.jwt_secret is the built-in dev placeholder; set a real secret via GORTEXA_AUTH__JWT_SECRET")
 	case len(c.Auth.JWTSecret) < 32:

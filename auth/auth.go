@@ -1,11 +1,14 @@
-// Package auth implements HS256 JWT verification and signing plus context
-// helpers for propagating verified claims. The auth interceptor and the HTTP
+// Package auth implements JWT verification (HS256 with a shared secret, or
+// RS256/ES256 against a public key set) and HS256 signing, plus context helpers
+// for propagating verified claims. The auth interceptor and the HTTP
 // gateway both flow through this single verifier, so HTTP and gRPC share one
 // authentication path.
 package auth
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"strings"
@@ -44,10 +47,13 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Verifier signs and verifies HS256 tokens for a fixed secret and issuer, and
-// optionally a fixed audience.
+// Verifier verifies tokens for a fixed issuer, and optionally a fixed audience.
+// A secret-based Verifier (NewVerifier) signs and verifies HS256; a key-set
+// Verifier (NewKeySetVerifier) only verifies RS256/ES256, since it holds no
+// private key.
 type Verifier struct {
 	secret   []byte
+	keys     *KeySet
 	issuer   string
 	audience string
 }
@@ -63,6 +69,21 @@ func NewVerifier(secret []byte, issuer string, audience ...string) (*Verifier, e
 		return nil, fmt.Errorf("auth: verifier secret must be at least %d bytes", minSecretBytes)
 	}
 	v := &Verifier{secret: append([]byte(nil), secret...), issuer: issuer}
+	if len(audience) > 0 {
+		v.audience = audience[0]
+	}
+	return v, nil
+}
+
+// NewKeySetVerifier builds a verification-only Verifier that accepts RS256 and
+// ES256 tokens signed by a key in keys (see NewJWKS, NewStaticKeySet). Services
+// holding only public keys cannot mint tokens, so one compromised verifier
+// cannot forge tokens for the others, which a shared HS256 secret allows.
+func NewKeySetVerifier(keys *KeySet, issuer string, audience ...string) (*Verifier, error) {
+	if keys == nil {
+		return nil, errors.New("auth: key set is nil")
+	}
+	v := &Verifier{keys: keys, issuer: issuer}
 	if len(audience) > 0 {
 		v.audience = audience[0]
 	}
@@ -85,6 +106,9 @@ func MustNewVerifier(secret []byte, issuer string, audience ...string) *Verifier
 func (v *Verifier) Sign(subject string, roles []string, ttl time.Duration) (string, error) {
 	if ttl <= 0 {
 		return "", apperr.New(apperr.CatInternal, "sign token: ttl must be positive")
+	}
+	if v.secret == nil {
+		return "", apperr.New(apperr.CatInternal, "sign token: verifier holds no signing key")
 	}
 	now := time.Now()
 	claims := Claims{
@@ -112,8 +136,12 @@ func (v *Verifier) Verify(tokenStr string) (*Claims, error) {
 	// WithExpirationRequired rejects tokens that omit `exp` (jwt/v5 otherwise
 	// treats a missing expiry as "never expires"). Every token Sign issues sets
 	// exp, so this only closes the door on forged/non-expiring tokens.
+	methods := []string{"HS256"}
+	if v.keys != nil {
+		methods = []string{"RS256", "ES256"}
+	}
 	opts := []jwt.ParserOption{
-		jwt.WithValidMethods([]string{"HS256"}),
+		jwt.WithValidMethods(methods),
 		jwt.WithExpirationRequired(),
 		jwt.WithLeeway(clockSkewLeeway),
 	}
@@ -123,12 +151,7 @@ func (v *Verifier) Verify(tokenStr string) (*Claims, error) {
 	if v.audience != "" {
 		opts = append(opts, jwt.WithAudience(v.audience))
 	}
-	tok, err := jwt.ParseWithClaims(tokenStr, &claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, apperr.New(apperr.CatUnauthenticated, "unexpected signing method")
-		}
-		return v.secret, nil
-	}, opts...)
+	tok, err := jwt.ParseWithClaims(tokenStr, &claims, v.keyFunc, opts...)
 	if err != nil || !tok.Valid {
 		// Keep the client message generic, but tag an expired token (as the
 		// non-serialized cause) so the interceptor can report reason="expired".
@@ -138,6 +161,34 @@ func (v *Verifier) Verify(tokenStr string) (*Claims, error) {
 		return nil, apperr.New(apperr.CatUnauthenticated, "invalid or expired token")
 	}
 	return &claims, nil
+}
+
+// keyFunc returns the key for a token whose alg WithValidMethods already
+// allowed. For a key set, the kid's key must also match the alg's key type, so
+// an RSA key is never fed to the ECDSA check or the reverse.
+func (v *Verifier) keyFunc(t *jwt.Token) (any, error) {
+	if v.keys == nil {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, apperr.New(apperr.CatUnauthenticated, "unexpected signing method")
+		}
+		return v.secret, nil
+	}
+	kid, _ := t.Header["kid"].(string)
+	k, ok := v.keys.key(context.Background(), kid)
+	if !ok {
+		return nil, apperr.New(apperr.CatUnauthenticated, "unknown signing key")
+	}
+	switch k.(type) {
+	case *rsa.PublicKey:
+		if _, ok := t.Method.(*jwt.SigningMethodRSA); ok {
+			return k, nil
+		}
+	case *ecdsa.PublicKey:
+		if _, ok := t.Method.(*jwt.SigningMethodECDSA); ok {
+			return k, nil
+		}
+	}
+	return nil, apperr.New(apperr.CatUnauthenticated, "signing method does not match key")
 }
 
 // BearerToken extracts the token from an "Authorization: Bearer <jwt>" value.
