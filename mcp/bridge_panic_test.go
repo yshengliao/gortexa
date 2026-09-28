@@ -1,7 +1,9 @@
 package mcp
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,7 +16,9 @@ import (
 // JSON-RPC -32603, not a dropped connection. A tool with a nil Input descriptor
 // makes toolsCall panic inside dynamicpb/protojson, exercising the recover wrapper.
 func TestBridgePanicRecovery(t *testing.T) {
+	var logBuf bytes.Buffer
 	b := &Bridge{
+		log:   slog.New(slog.NewTextHandler(&logBuf, nil)),
 		reg:   apperr.Default,
 		tools: map[string]ToolIR{"boom": {Name: "boom", FullMethod: "/x.Y/Z"}},
 		order: []string{"boom"},
@@ -41,5 +45,10 @@ func TestBridgePanicRecovery(t *testing.T) {
 	}
 	if out.Error == nil || out.Error.Code != -32603 {
 		t.Fatalf("want JSON-RPC -32603 (internal error), got %+v", out)
+	}
+	// The panic value and stack must reach the server log, or a bridge bug
+	// leaves operators nothing but opaque -32603s.
+	if logged := logBuf.String(); !strings.Contains(logged, "panic in request dispatch") || !strings.Contains(logged, "goroutine") {
+		t.Fatalf("panic must be logged with its stack; got:\n%s", logged)
 	}
 }

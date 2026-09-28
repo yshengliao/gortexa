@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/yshengliao/gortexa/config"
 	"github.com/yshengliao/gortexa/internal/storage/db"
 	"github.com/yshengliao/gortexa/storage"
@@ -85,10 +87,14 @@ func TestPgBouncerPoolCRUD(t *testing.T) {
 	if len(listed) != 25 {
 		t.Fatalf("list returned %d rows, want 25", len(listed))
 	}
+	page2, err := q.ListResources(ctx, db.ListResourcesParams{Owner: "it", PageToken: "it-09", PageLimit: 5})
+	if err != nil || len(page2) != 5 || page2[0].ID != "it-10" {
+		t.Fatalf("list after cursor it-09: %+v, %v; want 5 rows starting at it-10", page2, err)
+	}
 
-	upd, err := q.UpdateResource(ctx, db.UpdateResourceParams{ID: "it-00", Name: "renamed", Owner: "it", Status: "STATUS_INACTIVE"})
-	if err != nil || upd.Name != "renamed" {
-		t.Fatalf("update: %+v, %v", upd, err)
+	upd, err := q.UpdateResource(ctx, db.UpdateResourceParams{ID: "it-00", Name: pgtype.Text{String: "renamed", Valid: true}})
+	if err != nil || upd.Name != "renamed" || upd.Owner != "it" || upd.Status != "STATUS_ACTIVE" {
+		t.Fatalf("partial update must keep omitted owner/status: %+v, %v", upd, err)
 	}
 	if err := q.DeleteResource(ctx, "it-01"); err != nil {
 		t.Fatalf("delete: %v", err)

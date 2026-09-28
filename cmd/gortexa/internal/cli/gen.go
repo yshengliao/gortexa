@@ -36,6 +36,12 @@ func newGenCmd() *cobra.Command {
 			// namespace; the zero value keeps generating the flat layout its
 			// existing services already use.
 			if m, ok := readManifest(root); ok {
+				// The namespace becomes a path element and a proto package
+				// component; anything protoNamespace could not have produced
+				// (e.g. "../..") would write outside the project.
+				if !domainRe.MatchString(m.ProtoNamespace) {
+					return fmt.Errorf("invalid proto_namespace %q in %s: must match [a-z][a-z0-9]*", m.ProtoNamespace, manifestFile)
+				}
 				data.Namespace = m.ProtoNamespace
 			}
 			return generateAPI(root, data, genOpts{noWire: noWire, skipGen: skipGen, force: force, allowBreaking: allowBreaking})
@@ -60,6 +66,11 @@ func generateAPI(root string, d tmplData, opt genOpts) error {
 		if _, err := os.Stat(filepath.Join(root, "apperr")); os.IsNotExist(err) {
 			return fmt.Errorf("project layout predates gortexa v0.27 (internal/errors exists, apperr/ does not): regenerate with a gortexa CLI matching the project's framework version, or migrate the project to the v0.27 layout")
 		}
+	}
+	// In a flat (pre-v0.28) project the domain is the top-level proto directory,
+	// so it must stay out of the namespaces regen excludes or buf resolves deps from.
+	if d.Namespace == "" && (d.Domain == "gortexa" || d.Domain == "google" || d.Domain == "buf") {
+		return fmt.Errorf("invalid domain %q: in a project without a proto namespace it would land under proto/%s, which is reserved", d.Domain, d.Domain)
 	}
 	protoPath := filepath.Join(root, "proto", filepath.FromSlash(d.GenDir()), d.Snake+".proto")
 	logicPath := filepath.Join(root, "internal", "logic", d.Snake+".go")

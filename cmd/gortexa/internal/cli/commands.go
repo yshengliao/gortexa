@@ -28,6 +28,11 @@ func newRunCmd() *cobra.Command {
 			// gracefully; the CLI then waits for it and propagates its exit status,
 			// instead of dying first and orphaning the server mid-shutdown.
 			signal.Ignore(os.Interrupt, syscall.SIGTERM)
+			// DisableFlagParsing hands cobra's "--" separator through verbatim, and
+			// the server's flag.Parse would stop at it, ignoring every flag after.
+			if len(args) > 0 && args[0] == "--" {
+				args = args[1:]
+			}
 			return runCmd(root, "go", append([]string{"run", "./cmd/server"}, args...)...)
 		},
 	}

@@ -40,11 +40,13 @@ PERSISTED_GOPRIVATE="$(go env GOPRIVATE 2>/dev/null || true)"
 # The dev container ships GOPRIVATE/GOPROXY values that force github.com /
 # google.golang.org / go.opentelemetry.io to resolve direct-via-git, which the
 # network policy 403s. Export corrected values for this process; modules then
-# route through proxy.golang.org + sum.golang.org.
+# route through proxy.golang.org + sum.golang.org. GOPROXY/GOSUMDB are set
+# unconditionally, as the Makefile does: the inherited container GOPROXY is
+# itself one of the broken values.
 export GOPRIVATE="" GOINSECURE="" GONOSUMCHECK="" GONOSUMDB=""
 export GOFLAGS="-mod=mod"
-export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
-export GOSUMDB="${GOSUMDB:-sum.golang.org}"
+export GOPROXY="https://proxy.golang.org,direct"
+export GOSUMDB="sum.golang.org"
 export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
 # --- Persist corrections ONLY on machines with the broken container values ---
@@ -65,11 +67,15 @@ REPO_URL="${GORTEXA_REPO:-https://github.com/yshengliao/gortexa}"
 REPO_REF="${GORTEXA_REF:-main}"
 
 # --- Locate (or clone) the gortexa module root ------------------------------
-# If run inside a checkout, use it; otherwise clone (the curl|bash one-liner).
+# If run inside a checkout, use it; otherwise reuse the ./gortexa (GORTEXA_DIR)
+# clone a previous run left behind, or clone (the curl|bash one-liner).
+is_root() {
+  [ -f "${1}/go.mod" ] && grep -q -e '^module github.com/yshengliao/gortexa$' -- "${1}/go.mod" 2>/dev/null
+}
 find_root() {
   local d="${PWD}"
   while [ "${d}" != "/" ]; do
-    if [ -f "${d}/go.mod" ] && grep -q '^module github.com/yshengliao/gortexa$' "${d}/go.mod" 2>/dev/null; then
+    if is_root "${d}"; then
       printf '%s\n' "${d}"
       return 0
     fi
@@ -78,21 +84,24 @@ find_root() {
   return 1
 }
 
+DEST="${GORTEXA_DIR:-gortexa}"
 if ROOT="$(find_root)"; then
   echo "==> using gortexa checkout at ${ROOT}"
+elif is_root "${DEST}"; then
+  ROOT="$(cd -- "${DEST}" && pwd)"
+  echo "==> using gortexa checkout at ${ROOT} (cloned by a previous run)"
 else
   if ! command -v git >/dev/null 2>&1; then
     echo "ERROR: git is required to clone gortexa. Install git or run from a checkout." >&2
     exit 1
   fi
-  DEST="${GORTEXA_DIR:-gortexa}"
   echo "==> no checkout found; cloning ${REPO_URL} (${REPO_REF}) into ./${DEST}"
   echo "    (used to read the pinned tool versions; set GORTEXA_DIR to change the"
   echo "     location, delete the directory afterwards if you don't want a checkout)"
   # "--" ends option parsing so a REPO_URL/DEST beginning with "-" can't be read
   # as a git flag (argument injection), matching `gortexa create`.
   git clone --depth 1 --branch "${REPO_REF}" -- "${REPO_URL}" "${DEST}"
-  ROOT="$(cd "${DEST}" && pwd)"
+  ROOT="$(cd -- "${DEST}" && pwd)"
 fi
 cd "${ROOT}"
 

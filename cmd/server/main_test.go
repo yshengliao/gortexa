@@ -35,6 +35,8 @@ func TestAuthSkip(t *testing.T) {
 		{"prefix cannot leak past the dot", true, "/grpc.reflectionx.Evil/Method", false},
 		{"health prefix cannot leak past the dot", true, "/grpc.healthx.Evil/Method", false},
 		{"domain services stay authenticated", true, "/resource.v1.ResourceService/ListResources", false},
+		{"user service in grpc.health package stays authenticated", true, "/grpc.health.v1.RecordService/CreateRecord", false},
+		{"user service in grpc.reflection package stays authenticated", true, "/grpc.reflection.v1.RecordService/DeleteRecord", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

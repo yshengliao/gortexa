@@ -10,6 +10,7 @@ import (
 
 	"go.uber.org/goleak"
 
+	apperr "github.com/yshengliao/gortexa/apperr"
 	"github.com/yshengliao/gortexa/cache"
 	"github.com/yshengliao/gortexa/config"
 )
@@ -113,4 +114,27 @@ func TestMemoryCacheNoGoroutineLeakAfterClose(t *testing.T) {
 		t.Fatalf("second Close: %v", err)
 	}
 	goleak.VerifyNone(t, opts...)
+}
+
+// TestMemoryCacheUseAfterClose pins parity with the Redis backend: after Close
+// every operation fails as Unavailable instead of Set silently reporting a
+// write it dropped and Get/Del serving the stale map.
+func TestMemoryCacheUseAfterClose(t *testing.T) {
+	ctx := context.Background()
+	c, _ := cache.NewInMemory(config.CacheConfig{})
+	if err := c.Set(ctx, "k", []byte("v"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set(ctx, "k2", []byte("v"), 0); !apperr.Is(err, apperr.CatUnavailable) {
+		t.Fatalf("Set after Close = %v, want Unavailable", err)
+	}
+	if _, err := c.Get(ctx, "k"); !apperr.Is(err, apperr.CatUnavailable) {
+		t.Fatalf("Get after Close = %v, want Unavailable", err)
+	}
+	if err := c.Del(ctx, "k"); !apperr.Is(err, apperr.CatUnavailable) {
+		t.Fatalf("Del after Close = %v, want Unavailable", err)
+	}
 }

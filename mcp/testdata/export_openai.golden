@@ -13,24 +13,37 @@
               "type": "object",
               "properties": {
                 "createdAt": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "id": {
-                  "type": "string"
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "name": {
                   "type": "string"
                 },
                 "owner": {
-                  "type": "string",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
                   "description": "Owning user id."
                 },
                 "status": {
-                  "type": "string",
+                  "type": [
+                    "string",
+                    "null"
+                  ],
                   "enum": [
                     "STATUS_UNSPECIFIED",
                     "STATUS_ACTIVE",
-                    "STATUS_ARCHIVED"
+                    "STATUS_ARCHIVED",
+                    null
                   ]
                 }
               },
@@ -102,13 +115,22 @@
           "type": "object",
           "properties": {
             "owner": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "pageSize": {
-              "type": "integer"
+              "type": [
+                "integer",
+                "null"
+              ]
             },
             "pageToken": {
-              "type": "string"
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
