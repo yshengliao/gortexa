@@ -14,6 +14,7 @@ import (
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	apperr "github.com/yshengliao/gortexa/apperr"
 	"github.com/yshengliao/gortexa/auth"
@@ -223,6 +224,9 @@ func TestIncomingHeaderMatcherBlocksTrustedKeyCollisions(t *testing.T) {
 		"grpc-metadata-authorization",
 		"Grpc-Metadata-X-Request-Id",
 		"grpc-metadata-x-request-id",
+		"Grpc-Metadata-Baggage",
+		"grpc-metadata-traceparent",
+		"Grpc-Metadata-Tracestate",
 	} {
 		if got, ok := incomingHeaderMatcher(h); ok {
 			t.Errorf("header %q must not be forwarded, got key %q", h, got)
@@ -309,6 +313,29 @@ func TestOutgoingHeaderMatcher(t *testing.T) {
 				t.Fatalf("outgoingHeaderMatcher(%q) = %q,%v; want %q,%v", tt.key, got, ok, tt.wantKey, tt.wantOK)
 			}
 		})
+	}
+}
+
+// TestServeMuxDropsTrailers pins that no gRPC trailer reaches the HTTP client,
+// even when it opts in with "TE: trailers" (the gateway default would forward
+// each as a "Grpc-Trailer-*" header).
+func TestServeMuxDropsTrailers(t *testing.T) {
+	mux := NewServeMux(apperr.Default)
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("TE", "trailers")
+	ctx := runtime.NewServerMetadataContext(req.Context(), runtime.ServerMetadata{
+		TrailerMD: metadata.Pairs("x-internal-shard", "db-7"),
+	})
+	rec := httptest.NewRecorder()
+	runtime.ForwardResponseMessage(ctx, mux, jsonMarshaler(), rec, req, &emptypb.Empty{})
+
+	for k := range rec.Result().Header {
+		if strings.HasPrefix(k, "Grpc-Trailer-") {
+			t.Fatalf("trailer leaked as response header %q", k)
+		}
+	}
+	for k := range rec.Result().Trailer {
+		t.Fatalf("trailer leaked as HTTP trailer %q", k)
 	}
 }
 
@@ -422,6 +449,20 @@ func TestCORS(t *testing.T) {
 	onSpecific.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent || rec.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatalf("preflight specific denied = %d, origin=%q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	// With an explicit allowlist every response varies on Origin — denied and
+	// Origin-less ones too — so a shared cache keys on it.
+	for _, o := range []string{"", "https://example.com", "https://attacker.com"} {
+		rec = httptest.NewRecorder()
+		req = httptest.NewRequest(http.MethodGet, "/", nil)
+		if o != "" {
+			req.Header.Set("Origin", o)
+		}
+		onSpecific.ServeHTTP(rec, req)
+		if v := rec.Header().Values("Vary"); len(v) != 1 || v[0] != "Origin" {
+			t.Fatalf("origin %q: Vary = %v, want [Origin]", o, v)
+		}
 	}
 }
 
