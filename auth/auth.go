@@ -79,8 +79,13 @@ func MustNewVerifier(secret []byte, issuer string, audience ...string) *Verifier
 	return v
 }
 
-// Sign issues a token for subject with the given roles and TTL.
+// Sign issues a token for subject with the given roles and TTL. ttl must be
+// positive: Verify's clock-skew leeway would otherwise still accept a token
+// minted already expired (e.g. from an unset TTL setting).
 func (v *Verifier) Sign(subject string, roles []string, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		return "", apperr.New(apperr.CatInternal, "sign token: ttl must be positive")
+	}
 	now := time.Now()
 	claims := Claims{
 		Roles:     roles,

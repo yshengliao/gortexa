@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yshengliao/gortexa/auth"
 )
@@ -31,7 +32,7 @@ func FuzzVerify(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	valid, err := v.Sign("subject", []string{"role"}, 0)
+	valid, err := v.Sign("subject", []string{"role"}, time.Hour)
 	if err != nil {
 		f.Fatal(err)
 	}

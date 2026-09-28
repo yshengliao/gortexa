@@ -66,13 +66,13 @@ type breaker struct {
 	halfOpenedAt time.Time
 	probes       int
 	// gen identifies the current state episode; it is bumped on every transition
-	// so a probe's outcome only resolves the half-open episode it was actually
+	// so a call's outcome only counts toward the episode it was actually
 	// admitted into (see record).
 	gen uint64
 }
 
-// admission carries whether a call may proceed and, when it was admitted as a
-// half-open probe, the episode (gen) it belongs to — plus state-change details
+// admission carries whether a call may proceed, whether it is a half-open probe,
+// and the episode (gen) it was admitted into — plus state-change details
 // for the Open→HalfOpen transition so the caller can record the metric/span.
 type admission struct {
 	ok      bool
@@ -118,14 +118,14 @@ func (b *breaker) allow() admission {
 		}
 		return admission{ok: false, from: prev, to: b.state}
 	default: // cbClosed
-		return admission{ok: true, from: prev, to: b.state}
+		return admission{ok: true, gen: b.gen, from: prev, to: b.state}
 	}
 }
 
 // record folds a completed call's outcome back into the breaker. adm is the
 // admission allow returned for this same call, so a stale request admitted in an
-// earlier episode can't steal a probe slot or flip state on the genuine probe's
-// behalf when it completes during a later half-open episode.
+// earlier episode can't steal a probe slot, flip state on the genuine probe's
+// behalf, or count toward a later closed episode's failures.
 func (b *breaker) record(ctx context.Context, method string, out outcome, adm admission, c *CircuitBreaker) {
 	b.mu.Lock()
 	old := b.state
@@ -153,9 +153,10 @@ func (b *breaker) record(ctx context.Context, method string, out outcome, adm ad
 		}
 		b.gen++
 	case cbClosed:
-		// A half-open probe that lands after the breaker already closed must not
-		// be counted as a normal closed-state failure.
-		if adm.probe {
+		// Only calls admitted into this closed episode count. A half-open probe
+		// that lands after the breaker closed, or a slow call admitted before an
+		// earlier trip, says nothing about the dependency as it is now.
+		if adm.probe || adm.gen != b.gen {
 			break
 		}
 		// Neutral outcomes neither trip nor reset: otherwise a trickle of auth or
@@ -259,9 +260,7 @@ const (
 // server-side failures trip the breaker; client-caused outcomes are neutral.
 func classify(ctx context.Context, err error) outcome {
 	// The caller walked away (cancelled, or its deadline expired) — whatever the
-	// handler returned is about the client, not this method's health. This also
-	// covers a bare context.Canceled, which apperr launders into Internal (a
-	// tripping category) because status.FromError does not recognise it.
+	// handler returned is about the client, not this method's health.
 	if ctx.Err() != nil {
 		return outcomeNeutral
 	}
