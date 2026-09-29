@@ -3,6 +3,12 @@
 // and proto descriptors, downgrades that IR to MCP / OpenAI / Gemini tool
 // schemas, and serves a Streamable-HTTP MCP endpoint whose tools/call dispatches
 // back through the full gRPC interceptor chain via an in-process loopback.
+//
+// The endpoint speaks MCP revisions 2025-11-25 (the default offered at
+// initialize), 2025-06-18, 2025-03-26 and 2024-11-05. A request without an
+// MCP-Protocol-Version header is treated as 2025-03-26; an unsupported value
+// gets 400 Bad Request. JSON-RPC batches are accepted only on 2025-03-26 and
+// 2024-11-05.
 package mcp
 
 import (
