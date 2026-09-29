@@ -15,11 +15,10 @@ import (
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
-	// gortexa:import — `gortexa gen` inserts generated-package imports above this line
 	apperr "github.com/yshengliao/gortexa/apperr"
 	"github.com/yshengliao/gortexa/auth"
 	"github.com/yshengliao/gortexa/config"
+	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 	"github.com/yshengliao/gortexa/health"
 	"github.com/yshengliao/gortexa/httpcompat"
 	"github.com/yshengliao/gortexa/interceptor"
@@ -27,6 +26,7 @@ import (
 	"github.com/yshengliao/gortexa/kernel"
 	"github.com/yshengliao/gortexa/mcp"
 	"github.com/yshengliao/gortexa/observability"
+	// gortexa:import — `gortexa gen` inserts generated-package imports above this line
 )
 
 func main() {
