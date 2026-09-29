@@ -26,9 +26,13 @@ func CORS(next http.Handler, cfg config.ServerConfig) http.Handler {
 
 		if allowAll {
 			h.Set("Access-Control-Allow-Origin", "*")
-		} else if origin != "" && allowed[origin] {
-			h.Set("Access-Control-Allow-Origin", origin)
+		} else {
+			// Every response varies on Origin — including ones without ACAO — so
+			// a shared cache never serves an ACAO-less copy to an allowed origin.
 			h.Add("Vary", "Origin")
+			if origin != "" && allowed[origin] {
+				h.Set("Access-Control-Allow-Origin", origin)
+			}
 		}
 
 		if allowAll || (origin != "" && allowed[origin]) {

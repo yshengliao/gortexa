@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/yshengliao/gortexa/auth"
+	"github.com/yshengliao/gortexa/config"
 	resourcev1 "github.com/yshengliao/gortexa/gen/resource/v1"
 	"github.com/yshengliao/gortexa/interceptor"
 	"github.com/yshengliao/gortexa/internal/logic"
@@ -35,6 +36,8 @@ func TestAuthSkip(t *testing.T) {
 		{"prefix cannot leak past the dot", true, "/grpc.reflectionx.Evil/Method", false},
 		{"health prefix cannot leak past the dot", true, "/grpc.healthx.Evil/Method", false},
 		{"domain services stay authenticated", true, "/resource.v1.ResourceService/ListResources", false},
+		{"user service in grpc.health package stays authenticated", true, "/grpc.health.v1.RecordService/CreateRecord", false},
+		{"user service in grpc.reflection package stays authenticated", true, "/grpc.reflection.v1.RecordService/DeleteRecord", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,5 +146,21 @@ func TestLoadSheddingConfig_ReflectionExemptWhenAuthExempt(t *testing.T) {
 	}
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("authenticated GetResource = %v, want NotFound (not ResourceExhausted)", err)
+	}
+}
+
+// TestNewVerifierPicksScheme pins the auth wiring: jwks_url selects the
+// key-set verifier (which cannot sign), otherwise the HS256 secret is used.
+func TestNewVerifierPicksScheme(t *testing.T) {
+	ctx := context.Background()
+	hs, err := newVerifier(ctx, config.AuthConfig{JWTSecret: "0123456789abcdef0123456789abcdef", Issuer: "gortexa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hs.Sign("u", nil, time.Hour); err != nil {
+		t.Fatalf("HS256 verifier should sign: %v", err)
+	}
+	if _, err := newVerifier(ctx, config.AuthConfig{JWKSURL: "http://issuer.example/jwks", Issuer: "gortexa"}); err == nil {
+		t.Fatal("jwks_url over plain http to a remote host should fail startup")
 	}
 }

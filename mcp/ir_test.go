@@ -85,6 +85,17 @@ func TestValidateTool(t *testing.T) {
 	if err := mcp.ValidateTool(string(long), false, false); err == nil {
 		t.Error("name > 64 chars must error")
 	}
+	// OpenAI and Gemini reject these at registration; fail at build time instead.
+	for _, bad := range []string{"", "resource.get", "get resource", "9lives", "-x", "naïve"} {
+		if err := mcp.ValidateTool(bad, false, false); err == nil {
+			t.Errorf("tool name %q must error", bad)
+		}
+	}
+	for _, good := range []string{"GetResource", "get_resource", "_x", "a-b-1"} {
+		if err := mcp.ValidateTool(good, false, false); err != nil {
+			t.Errorf("tool name %q should be valid: %v", good, err)
+		}
+	}
 }
 
 func TestBuildIRRejectsRecursiveInputSchema(t *testing.T) {

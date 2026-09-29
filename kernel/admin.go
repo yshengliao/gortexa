@@ -3,6 +3,7 @@ package kernel
 import (
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,6 +34,9 @@ type extraListener struct {
 	lis   net.Listener // caller-provided; nil means bind addr in serve
 	addr  string       // bind target when lis is nil
 	admin bool
+	// claimed marks lis as owned by either serve (handed to Serve) or Shutdown
+	// (closed unserved), whichever gets there first.
+	claimed atomic.Bool
 }
 
 // WithExtraListener serves h on lis alongside the main port, under the same

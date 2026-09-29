@@ -12,7 +12,10 @@ type Querier interface {
 	CreateResource(ctx context.Context, arg CreateResourceParams) (Resource, error)
 	DeleteResource(ctx context.Context, id string) error
 	GetResource(ctx context.Context, id string) (Resource, error)
+	// page_token is the last id of the previous page, empty for the first page;
+	// request page_size+1 rows to learn whether a next page exists.
 	ListResources(ctx context.Context, arg ListResourcesParams) ([]Resource, error)
+	// A NULL argument leaves its column untouched (proto partial-update semantics).
 	UpdateResource(ctx context.Context, arg UpdateResourceParams) (Resource, error)
 }
 

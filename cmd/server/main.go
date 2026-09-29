@@ -48,14 +48,19 @@ func main() {
 // authSkip exempts health checks from authentication (probes carry no tokens)
 // and, only when reflection is enabled, the reflection service itself — the
 // flag exists for schema-discovery tooling like `buf curl --reflect`, whose
-// reflection stream carries no token. The trailing dots keep the prefixes from
-// matching any user service (e.g. a "grpc.healthx" package).
+// reflection stream carries no token. It matches exact service names, not
+// prefixes, so a user service in a grpc.health.* or grpc.reflection.* package
+// stays authenticated.
 func authSkip(reflection bool) func(method string) bool {
 	return func(method string) bool {
-		if strings.HasPrefix(method, "/grpc.health.") {
+		service, _, _ := strings.Cut(strings.TrimPrefix(method, "/"), "/")
+		switch service {
+		case "grpc.health.v1.Health":
 			return true
+		case "grpc.reflection.v1.ServerReflection", "grpc.reflection.v1alpha.ServerReflection":
+			return reflection
 		}
-		return reflection && strings.HasPrefix(method, "/grpc.reflection.")
+		return false
 	}
 }
 
@@ -151,7 +156,7 @@ func run() error {
 		return fmt.Errorf("setup governance metrics: %w", err)
 	}
 
-	verifier, err := auth.NewVerifier([]byte(cfg.Auth.JWTSecret.Reveal()), cfg.Auth.Issuer, cfg.Auth.Audience)
+	verifier, err := newVerifier(ctx, cfg.Auth)
 	if err != nil {
 		return fmt.Errorf("build auth verifier: %w", err)
 	}
@@ -225,4 +230,17 @@ func run() error {
 	log.Info("gortexa starting", "addr", cfg.Server.Addr)
 	appStarted = true // app.Run owns telemetry shutdown from here (kernel hooks)
 	return app.Run(ctx)
+}
+
+// newVerifier builds the JWT verifier: RS256/ES256 against the issuer's JWKS
+// when auth.jwks_url is set, otherwise HS256 with auth.jwt_secret.
+func newVerifier(ctx context.Context, c config.AuthConfig) (*auth.Verifier, error) {
+	if c.JWKSURL == "" {
+		return auth.NewVerifier([]byte(c.JWTSecret.Reveal()), c.Issuer, c.Audience)
+	}
+	keys, err := auth.NewJWKS(ctx, c.JWKSURL)
+	if err != nil {
+		return nil, err
+	}
+	return auth.NewKeySetVerifier(keys, c.Issuer, c.Audience)
 }

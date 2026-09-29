@@ -168,7 +168,7 @@ func TestJetStreamQueueGroupLoadBalance(t *testing.T) {
 
 // TestJetStreamRedeliveryOnHandlerError pins the at-least-once property the
 // JetStream driver adds over core NATS: a handler error negative-acks the
-// message and the server redelivers it after jsNakDelay.
+// message and the server redelivers it after the first jsNakBackoff step.
 func TestJetStreamRedeliveryOnHandlerError(t *testing.T) {
 	url, _ := jetStreamServer(t)
 	pub, sub := newJetStreamClient(t, url, "retry-workers")
@@ -206,7 +206,7 @@ func TestJetStreamRedeliveryOnHandlerError(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("handler invoked %d times, want 2 (fail, then redelivered success)", len(calls))
 	}
-	// NakWithDelay(jsNakDelay) paces the redelivery; generous slack to stay
+	// NakWithDelay(jsNakBackoff[0]) paces the redelivery; generous slack to stay
 	// robust on a loaded runner.
 	if gap := calls[1].Sub(calls[0]); gap < 500*time.Millisecond {
 		t.Fatalf("redelivery arrived after %v, want the ~1s NakWithDelay pacing", gap)
@@ -472,4 +472,53 @@ func TestJetStreamSubscribeNoGoroutineLeakAfterClose(t *testing.T) {
 		srv.WaitForShutdown()
 	}
 	goleak.VerifyNone(t, opts...)
+}
+
+// TestJetStreamPoisonMessageBounded pins the two bounds on a message whose
+// handler can never succeed: the consumer caps deliveries (MaxDeliver), and an
+// InvalidArgument handler error terminates the message outright instead of
+// redelivering it until the stream's MaxAge.
+func TestJetStreamPoisonMessageBounded(t *testing.T) {
+	url, _ := jetStreamServer(t)
+	pub, sub := newJetStreamClient(t, url, "poison-workers")
+
+	ctx := context.Background()
+	var mu sync.Mutex
+	calls := 0
+	if err := sub.Subscribe(ctx, "poison", func(context.Context, mq.Message) error {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return apperr.New(apperr.CatInvalidArgument, "malformed payload")
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	nc, err := nats.Connect(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	js, err := jetstream.New(nc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cons, err := js.Consumer(ctx, "gortexa_poison", "poison-workers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md := cons.CachedInfo().Config.MaxDeliver; md <= 0 {
+		t.Fatalf("consumer MaxDeliver = %d, want a positive bound", md)
+	}
+
+	if err := pub.Publish(ctx, "poison", mq.Message{Value: []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	// A Nak'd message would come back after the first 1s backoff step.
+	time.Sleep(2500 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("handler invoked %d times, want 1: an InvalidArgument failure must be terminal", calls)
+	}
 }

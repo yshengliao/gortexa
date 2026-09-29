@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -213,10 +214,10 @@ func (b *Bridge) Handler() http.Handler {
 		switch r.Method {
 		case http.MethodPost:
 			b.servePost(w, r)
-		case http.MethodGet:
-			b.handleGet(w, r)
 		default:
-			w.Header().Set("Allow", "GET, POST")
+			// GET would open a server→client SSE stream; Gortexa never pushes
+			// messages, so the MCP spec's 405 answer applies.
+			w.Header().Set("Allow", "POST")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
@@ -230,6 +231,8 @@ func (b *Bridge) Handler() http.Handler {
 func (b *Bridge) servePost(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if rec := recover(); rec != nil {
+			b.log.ErrorContext(r.Context(), "mcp: panic in request dispatch",
+				"panic", rec, "stack", string(debug.Stack()))
 			writeRPC(w, r, rpcResponse{
 				JSONRPC: "2.0",
 				ID:      json.RawMessage("null"),
@@ -460,36 +463,6 @@ func validRPCParams(_ string, raw json.RawMessage) bool {
 	// params-level concern resolved at dispatch as -32602 — not a request-shape
 	// (-32600) error, and never an error reply to a notification.
 	return (trimmed[0] == '{' || trimmed[0] == '[') && json.Valid(trimmed)
-}
-
-// ssePingInterval bounds how long an idle SSE stream sits silent; a periodic
-// comment frame keeps intermediaries (proxies, load balancers) from dropping it.
-const ssePingInterval = 25 * time.Second
-
-func (b *Bridge) handleGet(w http.ResponseWriter, r *http.Request) {
-	// A bare GET opens an SSE stream for server→client messages. Gortexa emits
-	// none today, so it stays open (with keep-alives) until the client leaves.
-	// Clear any per-stream write deadline so a configured http.Server WriteTimeout
-	// can't kill this long-lived stream before the first keep-alive ping fires.
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	flush(w)
-
-	ticker := time.NewTicker(ssePingInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-ticker.C:
-			if _, err := io.WriteString(w, ": ping\n\n"); err != nil {
-				return
-			}
-			flush(w)
-		}
-	}
 }
 
 func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
