@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Only superseded PR runs are cancelled: every commit on main is a release
+  # candidate and must keep a completed run.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GOTOOLCHAIN: auto
@@ -63,8 +65,18 @@ jobs:
 
       # Tolerant: a repo without a main branch (e.g. a scaffold pushed with a
       # different default) skips the fetch and the Makefile gate falls back.
-      - name: Fetch origin/main for the buf breaking gate
-        run: git fetch --no-tags --depth=1 origin main || echo "no origin/main — buf breaking gate will be skipped"
+      # On a push, origin/main already is the pushed commit, so the gate
+      # compares against the pre-push commit instead (none on a new branch).
+      - name: Fetch the buf breaking base
+        env:
+          BEFORE: ${{ github.event_name == 'push' && github.event.before || '' }}
+        run: |
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+            && git fetch --no-tags --depth=1 origin "$BEFORE"; then
+            echo "BUF_AGAINST=.git#ref=$BEFORE" >> "$GITHUB_ENV"
+          else
+            git fetch --no-tags --depth=1 origin main || echo "no origin/main — buf breaking gate will be skipped"
+          fi
 
       - name: Generate (buf lint + generate)
         run: make gen
@@ -80,13 +92,38 @@ jobs:
           git status --porcelain -- gen api/gen
           test -z "$(git status --porcelain -- gen api/gen)"
 
-      # The api module is a separate go.mod, so the root `./...` targets below
-      # never compile or vet it on its own — only as a dependency through the
-      # local replace, which a consumer does not have.
+      # The api module is a separate go.mod: the root `./...` targets below
+      # never compile or vet it, and the root build uses the published version
+      # go.mod requires, not the working copy. Scaffolded projects prune api/.
       - name: Build api module
         run: |
-          go -C api build ./...
-          go -C api vet ./...
+          if [ -d api ]; then
+            go -C api build ./...
+            go -C api vet ./...
+          fi
+
+      # The root build compiles against the api version go.mod requires, so an
+      # api/ or proto/gortexa/ai edit without the tag + require bump from
+      # "Releasing" in CLAUDE.md would pass every other step while matching no
+      # published api version.
+      - name: api/ matches the api version go.mod requires
+        run: |
+          if [ -d api ]; then
+            v="$(go list -m -f '{{.Version}}' github.com/yshengliao/gortexa/api)"
+            git fetch --no-tags --depth=1 origin "refs/tags/api/$v"
+            if ! git diff --exit-code --stat FETCH_HEAD HEAD -- api proto/gortexa/ai; then
+              echo "api/ differs from api/$v, which go.mod requires: tag the api module and bump the require" >&2
+              exit 1
+            fi
+          fi
+
+      # Every go step above and below runs -mod=readonly (the Makefile honours
+      # CI), so an incomplete go.mod fails the build; tidy -diff also catches
+      # requirements that are stale or unused.
+      - name: go.mod and go.sum are tidy
+        run: |
+          go mod tidy -diff
+          if [ -d api ]; then go -C api mod tidy -diff; fi
 
       # go.mod must carry no replace directive. `go install .../cmd/gortexa@<version>`
       # refuses a module whose go.mod has one — v0.28.0 and v0.28.1 shipped with a
@@ -114,9 +151,10 @@ jobs:
       - name: Test (integration)
         run: make test-integration
         env:
-          # Forces the storage integration test (fail instead of skip) against
-          # the compose-provided PgBouncer started in the step above.
+          # Force the storage and Redis integration tests (fail instead of
+          # skip) against the compose PgBouncer and the redis service.
           PGBOUNCER_DSN: postgres://postgres@127.0.0.1:6432/gortexa?sslmode=disable
+          REDIS_ADDR: 127.0.0.1:6379
 
       - name: Lint
         run: make lint

@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/reflect/protodesc"
@@ -89,9 +91,10 @@ func TestDowngradeOpenAIPreservesMapAdditionalProperties(t *testing.T) {
 	}
 }
 
-// Gemini downgrade must also carry a proto map's value schema via
-// additionalProperties (not silently flatten it to a closed object).
-func TestDowngradeGeminiPreservesMapAdditionalProperties(t *testing.T) {
+// Gemini's function-declaration Schema has no additionalProperties (an unknown
+// field fails registration of the whole tools array), so the Gemini downgrade
+// must not emit it and instead describes the map's value type in prose.
+func TestDowngradeGeminiDescribesMapWithoutAdditionalProperties(t *testing.T) {
 	sch, err := schemaForMessage(mapTestMessage(t), 0)
 	if err != nil {
 		t.Fatal(err)
@@ -100,18 +103,27 @@ func TestDowngradeGeminiPreservesMapAdditionalProperties(t *testing.T) {
 	if params == nil {
 		t.Fatal("parameters nil")
 	}
+	raw, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "additionalProperties") {
+		t.Fatalf("gemini schema must not carry additionalProperties: %s", raw)
+	}
 	for _, name := range []string{"labels", "counts", "statuses"} {
 		prop := params.Properties[name]
 		if prop == nil {
 			t.Fatalf("missing property %q", name)
 		}
-		ap, ok := prop.AdditionalProperties.(*GeminiSchema)
-		if !ok || ap == nil {
-			t.Fatalf("%s additionalProperties = %#v, want *GeminiSchema", name, prop.AdditionalProperties)
+		if prop.Type != "object" || !strings.Contains(prop.Description, "each value is a string") {
+			t.Fatalf("%s = %+v, want an object described as a string-valued map", name, prop)
 		}
-		if ap.Type != "string" {
-			t.Fatalf("%s map value type = %q, want string", name, ap.Type)
-		}
+	}
+	if d := params.Properties["statuses"].Description; !strings.Contains(d, "STATUS_ACTIVE") {
+		t.Fatalf("statuses description %q must list the enum values", d)
+	}
+	if st := toGeminiSchema(&JSONSchema{Type: "object", AdditionalProperties: true}); st.Description != "Free-form JSON object." {
+		t.Fatalf("struct description = %q", st.Description)
 	}
 }
 

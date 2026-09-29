@@ -160,6 +160,50 @@ func TestBreakerClosedIgnoresLateProbe(t *testing.T) {
 	}
 }
 
+// TestBreakerClosedIgnoresEarlierEpisodeFailures: calls admitted before a trip
+// that only fail after a probe has re-closed the breaker describe the old
+// outage, not the recovered dependency, so they must not re-trip it.
+func TestBreakerClosedIgnoresEarlierEpisodeFailures(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := NewCircuitBreaker(CBConfig{MaxFailures: 2, OpenInterval: time.Second, HalfOpenMax: 1}, c0Metrics(t))
+		b := c.get("/svc/M")
+		ctx := context.Background()
+
+		// Hanging calls admitted during the outage, while still closed.
+		var hung []admission
+		for range 4 {
+			hung = append(hung, b.allow())
+		}
+		for range 2 {
+			b.record(ctx, "/svc/M", outcomeFailure, b.allow(), c)
+		}
+		if b.state != cbOpen {
+			t.Fatalf("state = %v, want open", b.state)
+		}
+		time.Sleep(2 * time.Second)
+		b.record(ctx, "/svc/M", outcomeSuccess, b.allow(), c)
+		if b.state != cbClosed {
+			t.Fatalf("state = %v, want closed after probe success", b.state)
+		}
+
+		// The old calls now time out against the recovered dependency.
+		for _, a := range hung {
+			b.record(ctx, "/svc/M", outcomeFailure, a, c)
+		}
+		if b.state != cbClosed || b.failures != 0 {
+			t.Fatalf("stale closed-episode failures re-tripped the breaker: state=%v failures=%d", b.state, b.failures)
+		}
+
+		// Calls admitted into the current episode still count.
+		for range 2 {
+			b.record(ctx, "/svc/M", outcomeFailure, b.allow(), c)
+		}
+		if b.state != cbOpen {
+			t.Fatalf("state = %v, want open after current-episode failures", b.state)
+		}
+	})
+}
+
 func TestCBStateString(t *testing.T) {
 	cases := map[cbState]string{cbClosed: "closed", cbOpen: "open", cbHalfOpen: "half_open", cbState(99): "unknown"}
 	for s, want := range cases {

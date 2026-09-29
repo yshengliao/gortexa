@@ -30,6 +30,8 @@ import (
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/stats"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/yshengliao/gortexa/config"
 )
@@ -101,6 +103,25 @@ func (f fanoutHandler) WithGroup(name string) slog.Handler {
 	return out
 }
 
+// minLevelHandler gates a handler that has no level of its own (the otelslog
+// bridge accepts every level) so log.level applies to every sink.
+type minLevelHandler struct {
+	slog.Handler
+	min slog.Level
+}
+
+func (h minLevelHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= h.min && h.Handler.Enabled(ctx, level)
+}
+
+func (h minLevelHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return minLevelHandler{h.Handler.WithAttrs(attrs), h.min}
+}
+
+func (h minLevelHandler) WithGroup(name string) slog.Handler {
+	return minLevelHandler{h.Handler.WithGroup(name), h.min}
+}
+
 // installErrorHandler routes OTel export errors (collector down, TLS
 // mismatch) into the structured slog pipeline exactly once per process.
 // Without it they hit OTel's default unstructured stderr handler and a dead
@@ -124,7 +145,9 @@ func installErrorHandler() {
 	})
 }
 
-// SetupLogs builds the process logger and, when configured, an OTel Logs exporter.
+// SetupLogs builds the process logger and, when configured, an OTel Logs
+// exporter, and installs the logger as the slog default so package-level slog
+// calls (including OTel export errors) share its format and sinks.
 func SetupLogs(ctx context.Context, logCfg config.LogConfig, obsCfg config.ObservConfig) (*slog.Logger, ShutdownFunc, error) {
 	installErrorHandler()
 	lvl, err := parseLevel(logCfg.Level)
@@ -137,7 +160,9 @@ func SetupLogs(ctx context.Context, logCfg config.LogConfig, obsCfg config.Obser
 		stdout = slog.NewTextHandler(os.Stdout, opts)
 	}
 	if obsCfg.LogsOTLP == "" {
-		return slog.New(stdout), noopShutdown, nil
+		logger := slog.New(stdout)
+		slog.SetDefault(logger)
+		return logger, noopShutdown, nil
 	}
 	exp, err := otlploggrpc.New(ctx, otlploggrpc.WithEndpoint(obsCfg.LogsOTLP), logSecurity(obsCfg.OTLPInsecure))
 	if err != nil {
@@ -148,8 +173,10 @@ func SetupLogs(ctx context.Context, logCfg config.LogConfig, obsCfg config.Obser
 		return nil, nil, err
 	}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewBatchProcessor(exp)), sdklog.WithResource(res))
-	otelHandler := otelslog.NewHandler("gortexa", otelslog.WithLoggerProvider(lp))
-	return slog.New(fanoutHandler{stdout, otelHandler}), lp.Shutdown, nil
+	otelHandler := minLevelHandler{otelslog.NewHandler("gortexa", otelslog.WithLoggerProvider(lp)), lvl}
+	logger := slog.New(fanoutHandler{stdout, otelHandler})
+	slog.SetDefault(logger)
+	return logger, lp.Shutdown, nil
 }
 
 // NewLogger returns an explicitly supplied logger, or builds the legacy stdout logger.
@@ -183,8 +210,44 @@ func parseLevel(s string) (slog.Level, error) {
 	}
 }
 
-// ServerStatsHandler returns the OTel gRPC server StatsHandler.
-func ServerStatsHandler() stats.Handler { return otelgrpc.NewServerHandler() }
+// otherMethod is the span name and method label recorded for an RPC whose
+// method is not a known service method.
+const otherMethod = "_OTHER"
+
+// ServerStatsHandler returns the OTel gRPC server StatsHandler. grpc-go tags an
+// RPC before it looks the method up, so an unknown method name is recorded as
+// otherMethod: otherwise any caller could mint one metric series per name and
+// push real methods past the SDK cardinality limit.
+func ServerStatsHandler() stats.Handler {
+	return knownMethodHandler{otelgrpc.NewServerHandler()}
+}
+
+type knownMethodHandler struct{ stats.Handler }
+
+func (h knownMethodHandler) TagRPC(ctx context.Context, info *stats.RPCTagInfo) context.Context {
+	if !knownMethod(info.FullMethodName) {
+		c := *info
+		c.FullMethodName = otherMethod
+		info = &c
+	}
+	return h.Handler.TagRPC(ctx, info)
+}
+
+// knownMethod reports whether fullMethod ("/pkg.Service/Method") names a method
+// of a service linked into the binary. The set is fixed at build time, which
+// bounds the recorded names.
+func knownMethod(fullMethod string) bool {
+	service, method, ok := strings.Cut(strings.TrimPrefix(fullMethod, "/"), "/")
+	if !ok {
+		return false
+	}
+	d, err := protoregistry.GlobalFiles.FindDescriptorByName(protoreflect.FullName(service))
+	if err != nil {
+		return false
+	}
+	sd, ok := d.(protoreflect.ServiceDescriptor)
+	return ok && sd.Methods().ByName(protoreflect.Name(method)) != nil
+}
 
 func clampRatio(r float64) float64 {
 	switch {

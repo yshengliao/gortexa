@@ -3,6 +3,7 @@ package interceptor
 import (
 	"context"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -47,7 +48,8 @@ type rlShard struct {
 // RateLimiter is a per-peer token-bucket limiter, sharded by peer key to cut lock
 // contention. Eviction is incremental (bounded work per call) and the per-shard
 // entry count is capped, so a distributed surge of distinct IPs can neither OOM
-// the process nor cause a single request to do O(N) work under a lock. No
+// the process nor cause a single request to do O(N) work under a lock; a full
+// shard evicts a sampled least-recently-seen peer to admit a new one. No
 // background goroutine, so nothing to leak.
 type RateLimiter struct {
 	rps   rate.Limit
@@ -132,14 +134,29 @@ func peerKey(ctx context.Context) string {
 	// real network peer, so it can neither reach this branch nor spoof the key.
 	if p.Addr.Network() == loopbackNetwork {
 		if ip := peerIP(ctx); ip != "" {
-			return ip
+			return ipKey(ip)
 		}
 	}
 	addr := p.Addr.String()
 	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return ipKey(host)
+	}
+	return ipKey(addr)
+}
+
+// ipKey aggregates an IPv6 address to its /64: a single host is routinely
+// handed a whole /64, so per-address keys would give it 2^64 buckets. IPv4
+// (including IPv4-mapped IPv6) and non-IP strings key as-is.
+func ipKey(host string) string {
+	a, err := netip.ParseAddr(host)
+	if err != nil {
 		return host
 	}
-	return addr
+	a = a.Unmap()
+	if a.Is4() {
+		return a.String()
+	}
+	return netip.PrefixFrom(a.WithZone(""), 64).Masked().String()
 }
 
 // peerIP returns the trusted peer IP carried on PeerIPMetaKey, if any. The value
@@ -191,9 +208,23 @@ func (l *RateLimiter) allow(ctx context.Context) bool {
 		return e.lim.Allow()
 	}
 	// New peer: enforce the per-shard cap to bound memory under a distributed
-	// surge. Shedding the request (treating it as rate-limited) is preferable to OOM.
+	// surge. Evict the least-recently-seen of a bounded sample rather than
+	// rejecting the newcomer, so peers kept warm by one host cannot lock every
+	// new client out; recently active peers are the least likely to be evicted.
 	if len(sh.entries) >= l.maxEntriesShard {
-		return false
+		var oldestKey string
+		var oldest time.Time
+		scanned := 0
+		for k, e := range sh.entries {
+			if scanned >= evictBatch {
+				break
+			}
+			if scanned == 0 || e.seen.Before(oldest) {
+				oldestKey, oldest = k, e.seen
+			}
+			scanned++
+		}
+		delete(sh.entries, oldestKey)
 	}
 	e := &rlEntry{lim: rate.NewLimiter(l.rps, l.burst), seen: now}
 	sh.entries[key] = e

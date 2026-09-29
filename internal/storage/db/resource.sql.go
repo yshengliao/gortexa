@@ -7,6 +7,8 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createResource = `-- name: CreateResource :one
@@ -69,17 +71,21 @@ func (q *Queries) GetResource(ctx context.Context, id string) (Resource, error) 
 const listResources = `-- name: ListResources :many
 SELECT id, name, owner, status, created_at FROM resources
 WHERE ($1::text = '' OR owner = $1::text)
+  AND ($2::text = '' OR id > $2::text)
 ORDER BY id
-LIMIT $2
+LIMIT $3
 `
 
 type ListResourcesParams struct {
 	Owner     string `json:"owner"`
+	PageToken string `json:"page_token"`
 	PageLimit int32  `json:"page_limit"`
 }
 
+// page_token is the last id of the previous page, empty for the first page;
+// request page_size+1 rows to learn whether a next page exists.
 func (q *Queries) ListResources(ctx context.Context, arg ListResourcesParams) ([]Resource, error) {
-	rows, err := q.db.Query(ctx, listResources, arg.Owner, arg.PageLimit)
+	rows, err := q.db.Query(ctx, listResources, arg.Owner, arg.PageToken, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -106,24 +112,27 @@ func (q *Queries) ListResources(ctx context.Context, arg ListResourcesParams) ([
 
 const updateResource = `-- name: UpdateResource :one
 UPDATE resources
-SET name = $2, owner = $3, status = $4
-WHERE id = $1
+SET name   = COALESCE($1, name),
+    owner  = COALESCE($2, owner),
+    status = COALESCE($3, status)
+WHERE id = $4
 RETURNING id, name, owner, status, created_at
 `
 
 type UpdateResourceParams struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Owner  string `json:"owner"`
-	Status string `json:"status"`
+	Name   pgtype.Text `json:"name"`
+	Owner  pgtype.Text `json:"owner"`
+	Status pgtype.Text `json:"status"`
+	ID     string      `json:"id"`
 }
 
+// A NULL argument leaves its column untouched (proto partial-update semantics).
 func (q *Queries) UpdateResource(ctx context.Context, arg UpdateResourceParams) (Resource, error) {
 	row := q.db.QueryRow(ctx, updateResource,
-		arg.ID,
 		arg.Name,
 		arg.Owner,
 		arg.Status,
+		arg.ID,
 	)
 	var i Resource
 	err := row.Scan(

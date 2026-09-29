@@ -2,8 +2,11 @@
 SELECT * FROM resources WHERE id = $1;
 
 -- name: ListResources :many
+-- page_token is the last id of the previous page, empty for the first page;
+-- request page_size+1 rows to learn whether a next page exists.
 SELECT * FROM resources
 WHERE (sqlc.arg(owner)::text = '' OR owner = sqlc.arg(owner)::text)
+  AND (sqlc.arg(page_token)::text = '' OR id > sqlc.arg(page_token)::text)
 ORDER BY id
 LIMIT sqlc.arg(page_limit);
 
@@ -13,9 +16,12 @@ VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: UpdateResource :one
+-- A NULL argument leaves its column untouched (proto partial-update semantics).
 UPDATE resources
-SET name = $2, owner = $3, status = $4
-WHERE id = $1
+SET name   = COALESCE(sqlc.narg(name), name),
+    owner  = COALESCE(sqlc.narg(owner), owner),
+    status = COALESCE(sqlc.narg(status), status)
+WHERE id = sqlc.arg(id)
 RETURNING *;
 
 -- name: DeleteResource :exec

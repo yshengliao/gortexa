@@ -3,6 +3,7 @@ package storage_test
 import (
 	"context"
 	stderrors "errors"
+	"net"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -90,8 +91,8 @@ func TestBuildPoolConfigDefaultMaxConns(t *testing.T) {
 func TestBuildPoolConfigBadDSNCategory(t *testing.T) {
 	_, err := storage.BuildPoolConfig(config.DBConfig{DSN: config.Secret("::not a dsn::")}, nil)
 	var e *apperr.Error
-	if !stderrors.As(err, &e) || e.Category != apperr.CatInvalidArgument {
-		t.Fatalf("err = %v, want *errors.Error with CatInvalidArgument", err)
+	if !stderrors.As(err, &e) || e.Category != apperr.CatInternal {
+		t.Fatalf("err = %v, want *errors.Error with CatInternal (operator misconfiguration)", err)
 	}
 }
 
@@ -228,23 +229,26 @@ func TestDBTracerSpanAttributes(t *testing.T) {
 }
 
 func TestNewPool(t *testing.T) {
-	t.Run("valid dsn builds lazily without a server", func(t *testing.T) {
-		cfg := config.DBConfig{DSN: config.Secret("postgres://u:p@localhost:5432/db"), MaxConns: 2}
-		pool, err := storage.NewPool(context.Background(), cfg, storage.NewDBTracer(nil))
+	t.Run("unreachable server fails with unavailable", func(t *testing.T) {
+		lis, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if pool == nil {
-			t.Fatal("pool is nil")
+		addr := lis.Addr().String()
+		_ = lis.Close() // nothing listens here any more
+		cfg := config.DBConfig{DSN: config.Secret("postgres://u:p@" + addr + "/db?connect_timeout=5"), MaxConns: 2}
+		pool, err := storage.NewPool(context.Background(), cfg, storage.NewDBTracer(nil))
+		var e *apperr.Error
+		if pool != nil || !stderrors.As(err, &e) || e.Category != apperr.CatUnavailable {
+			t.Fatalf("pool = %v, err = %v, want nil pool and CatUnavailable", pool, err)
 		}
-		pool.Close()
 	})
 
-	t.Run("invalid dsn propagates invalid_argument", func(t *testing.T) {
+	t.Run("invalid dsn propagates internal", func(t *testing.T) {
 		_, err := storage.NewPool(context.Background(), config.DBConfig{DSN: config.Secret("::not a dsn::")}, nil)
 		var e *apperr.Error
-		if !stderrors.As(err, &e) || e.Category != apperr.CatInvalidArgument {
-			t.Fatalf("err = %v, want *errors.Error with CatInvalidArgument", err)
+		if !stderrors.As(err, &e) || e.Category != apperr.CatInternal {
+			t.Fatalf("err = %v, want *errors.Error with CatInternal", err)
 		}
 	})
 }

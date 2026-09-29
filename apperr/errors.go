@@ -8,11 +8,14 @@
 package apperr
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"sync"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -90,13 +93,15 @@ func Wrap(cat Category, msg string, cause error) *Error {
 	return &Error{Category: cat, Msg: msg, cause: cause}
 }
 
-// With attaches a structured field (for logging, never serialized to clients).
+// With returns a copy of e with a structured field attached (for logging, never
+// serialized to clients). e itself is left untouched, so With is safe on a
+// shared sentinel such as a package-level ErrX.
 func (e *Error) With(key string, val any) *Error {
-	if e.fields == nil {
-		e.fields = make(map[string]any, 4)
-	}
-	e.fields[key] = val
-	return e
+	c := *e
+	c.fields = make(map[string]any, len(e.fields)+1)
+	maps.Copy(c.fields, e.fields)
+	c.fields[key] = val
+	return &c
 }
 
 // Fields returns the attached structured fields.
@@ -109,8 +114,13 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("%s: %s", e.Category, e.Msg)
 }
 
-// Unwrap exposes the cause to errors.Is/As.
-func (e *Error) Unwrap() error { return e.cause }
+// Unwrap exposes the cause to errors.Is/As. A typed-nil *Error unwraps to nil.
+func (e *Error) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
 
 // GRPCStatus lets *Error satisfy the gRPC status interface so handlers may
 // return it directly. Uses the default registry.
@@ -137,22 +147,35 @@ func NewRegistry(seed ...Mapping) *Registry {
 	return r
 }
 
+// errorInfoDomain scopes the ErrorInfo detail that carries a category across
+// the gRPC loopback; details from any other domain are ignored.
+const errorInfoDomain = "gortexa.apperr"
+
 // Register adds a mapping, panicking (fail-loud at startup) on a duplicate
-// category or a duplicate gRPC code. Code uniqueness matters because a pre-built
-// gRPC status arriving over the loopback is resolved back to a category by its
-// code (resolve's byCode passthrough); two categories sharing a code would make
-// that reverse mapping ambiguous, so it is rejected at registration.
+// category or on codes.OK / codes.Unknown: an OK status is not an error (its
+// Err() is nil, so the failure would be swallowed) and Unknown is what an
+// unmapped error looks like on the wire.
+//
+// A gRPC code may be shared. The first category registered for a code owns it:
+// a bare status with that code (e.g. from a downstream call) resolves to the
+// owner. Every other category on the code — in practice any custom category,
+// since DefaultMappings claims all remaining codes — is carried across the
+// loopback as an ErrorInfo{Domain: errorInfoDomain, Reason: category} status
+// detail, so the gateway and MCP bridge still see the exact category. Only the
+// category name travels, never a message or cause.
 func (r *Registry) Register(m Mapping) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, dup := r.byCat[m.Category]; dup {
 		panic("apperr: duplicate mapping for category " + string(m.Category))
 	}
-	if existing, dup := r.byCode[m.GRPCCode]; dup {
-		panic(fmt.Sprintf("apperr: gRPC code %v is already mapped to category %q; cannot also map %q (each code needs a unique category for the loopback passthrough)", m.GRPCCode, existing, m.Category))
+	if m.GRPCCode == codes.OK || m.GRPCCode == codes.Unknown {
+		panic(fmt.Sprintf("apperr: category %q cannot map to gRPC code %v", m.Category, m.GRPCCode))
 	}
 	r.byCat[m.Category] = m
-	r.byCode[m.GRPCCode] = m.Category
+	if _, taken := r.byCode[m.GRPCCode]; !taken {
+		r.byCode[m.GRPCCode] = m.Category
+	}
 }
 
 // Lookup returns the mapping for a category.
@@ -192,12 +215,16 @@ func (r *Registry) resolve(err error) (Mapping, string) {
 		}
 		return m, msg
 	}
-	// Pre-built gRPC status (e.g. from a downstream call) passes through by code.
+	// A context error carries no status; without this it would become Internal.
+	if cat, isCtx := contextCategory(err); isCtx {
+		if m, ok := r.Lookup(cat); ok {
+			return m, m.SafeMessage
+		}
+	}
+	// Pre-built gRPC status (e.g. from a downstream call) passes through by its
+	// category detail, else by code.
 	if s, ok := status.FromError(err); ok && s.Code() != codes.Unknown && s.Code() != codes.OK {
-		r.mu.RLock()
-		cat, found := r.byCode[s.Code()]
-		r.mu.RUnlock()
-		if found {
+		if cat, found := r.statusCategory(s); found {
 			if m, ok := r.Lookup(cat); ok && m.Category != CatInternal {
 				if m.Category == CatInvalidArgument || m.Category == CatUnauthenticated {
 					// status.FromError splices the whole %w chain into the
@@ -224,13 +251,52 @@ func (r *Registry) resolve(err error) (Mapping, string) {
 	return in, in.SafeMessage
 }
 
-// ToGRPCStatus maps any error to a gRPC status. A nil error maps to OK.
+func contextCategory(err error) (Category, bool) {
+	switch {
+	case stderrors.Is(err, context.DeadlineExceeded):
+		return CatDeadlineExceeded, true
+	case stderrors.Is(err, context.Canceled):
+		return CatCanceled, true
+	}
+	return "", false
+}
+
+// statusCategory recovers the category of a status: an ErrorInfo detail from
+// ToGRPCStatus names it (honoured only when it agrees with the status code),
+// otherwise the code's owning category.
+func (r *Registry) statusCategory(s *status.Status) (Category, bool) {
+	for _, d := range s.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok && info.GetDomain() == errorInfoDomain {
+			if m, ok := r.Lookup(Category(info.GetReason())); ok && m.GRPCCode == s.Code() {
+				return m.Category, true
+			}
+		}
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	cat, found := r.byCode[s.Code()]
+	return cat, found
+}
+
+// ToGRPCStatus maps any error to a gRPC status. A nil error maps to OK. A
+// category that does not own its code gets an ErrorInfo detail naming it (see
+// Register).
 func (r *Registry) ToGRPCStatus(err error) *status.Status {
 	if err == nil {
 		return status.New(codes.OK, "")
 	}
 	m, msg := r.resolve(err)
-	return status.New(m.GRPCCode, msg)
+	st := status.New(m.GRPCCode, msg)
+	r.mu.RLock()
+	owner := r.byCode[m.GRPCCode]
+	r.mu.RUnlock()
+	if owner == "" || owner == m.Category {
+		return st
+	}
+	if withInfo, derr := st.WithDetails(&errdetails.ErrorInfo{Reason: string(m.Category), Domain: errorInfoDomain}); derr == nil {
+		return withInfo
+	}
+	return st
 }
 
 // ToHTTP maps any error to an HTTP status and a client-safe body.

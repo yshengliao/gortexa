@@ -52,6 +52,10 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, err error, dur
 				retryable = m.Retryable
 			}
 			attrs = append(attrs, "error.category", string(e.Category), "error.retryable", retryable, "error.msg", e.Msg)
+			// Server-side only: Recovery strips the cause before the client sees it.
+			if cause := errors.Unwrap(e); cause != nil {
+				attrs = append(attrs, "error.cause", cause.Error())
+			}
 			for k, v := range e.Fields() {
 				attrs = append(attrs, k, v)
 			}

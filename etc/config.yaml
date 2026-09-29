@@ -14,6 +14,7 @@ auth:
   # real secret via GORTEXA_AUTH__JWT_SECRET (>= 32 bytes). `gortexa create`
   # replaces it with a fresh random secret; `make run` injects a local dev one.
   jwt_secret: "dev-only-insecure-secret-change-me-please"
+  # jwks_url: "https://issuer.example/.well-known/jwks.json"  # optional; verify RS256/ES256 against the issuer's keys instead of jwt_secret
   issuer: "gortexa"
   # audience: "myapp"  # optional; isolates services sharing a secret+issuer (aud claim required when set)
   ttl: 1h

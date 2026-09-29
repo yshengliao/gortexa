@@ -6,7 +6,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"reflect"
 	"strings"
@@ -52,7 +54,11 @@ type ServerConfig struct {
 
 type AuthConfig struct {
 	JWTSecret Secret `koanf:"jwt_secret"`
-	Issuer    string `koanf:"issuer"`
+	// JWKSURL, when set, switches verification to RS256/ES256 against the key
+	// set published at this URL (https, or http on loopback). JWTSecret is then
+	// neither required nor used.
+	JWKSURL string `koanf:"jwks_url"`
+	Issuer  string `koanf:"issuer"`
 	// Audience, when set, is stamped into and required from every token: it
 	// isolates services that share a secret and issuer (a token minted for
 	// service A is rejected by service B). Empty keeps aud unchecked.
@@ -199,6 +205,11 @@ func BuildUnvalidated(opts ...Option) (*Config, error) {
 	}
 	if o.dotenvFile != "" {
 		if err := k.Load(file.Provider(o.dotenvFile), dotenv.ParserEnv(o.prefix, ".", envKeyToPath(o.prefix))); err != nil {
+			// A parse error embeds raw file bytes (secret values); only a read
+			// error is safe to surface.
+			if _, ok := errors.AsType[*fs.PathError](err); !ok {
+				return nil, fmt.Errorf("load dotenv %q: malformed file", o.dotenvFile)
+			}
 			return nil, fmt.Errorf("load dotenv %q: %w", o.dotenvFile, err)
 		}
 	}
@@ -224,7 +235,7 @@ func BuildUnvalidated(opts ...Option) (*Config, error) {
 				// so a list-valued key (cors_origins, observ.genai_mask_fields) can be
 				// set from the environment instead of collapsing to a single-element
 				// slice.
-				mapstructure.StringToSliceHookFunc(","),
+				stringToTrimmedSlice(),
 				rejectBareNumericDuration(),
 			),
 		},
@@ -232,6 +243,24 @@ func BuildUnvalidated(opts ...Option) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
 	return &c, nil
+}
+
+// stringToTrimmedSlice splits a comma list into a slice, trimming each entry
+// and dropping empty ones: list values are matched exactly (CORS, MCP origin
+// allowlist), so "a, b" must yield "b", not " b".
+func stringToTrimmedSlice() mapstructure.DecodeHookFuncType {
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		if from.Kind() != reflect.String || to.Kind() != reflect.Slice {
+			return data, nil
+		}
+		out := []string{}
+		for p := range strings.SplitSeq(reflect.ValueOf(data).String(), ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+		return out, nil
+	}
 }
 
 // rejectBareNumericDuration fails a config load when a time.Duration field is
@@ -264,8 +293,10 @@ func (c *Config) Validate() error {
 		errs = append(errs, "server.addr is required")
 	}
 	switch {
+	case c.Auth.JWKSURL != "":
+		// Asymmetric verification: the secret is unused, so it is not checked.
 	case c.Auth.JWTSecret == "":
-		errs = append(errs, "auth.jwt_secret is required")
+		errs = append(errs, "auth.jwt_secret (or auth.jwks_url) is required")
 	case c.Auth.JWTSecret.Reveal() == devPlaceholderSecret:
 		errs = append(errs, "auth.jwt_secret is the built-in dev placeholder; set a real secret via GORTEXA_AUTH__JWT_SECRET")
 	case len(c.Auth.JWTSecret) < 32:

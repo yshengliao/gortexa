@@ -5,6 +5,7 @@ package health
 
 import (
 	"context"
+	"log/slog"
 	"maps"
 	"sort"
 	"sync"
@@ -51,17 +52,24 @@ type Check func(ctx context.Context) State
 // checkTimeout bounds a single check invocation. A check is expected to be
 // fast; without a ceiling a blocking check (a DB/Redis ping with no internal
 // deadline) would stall the serving Check RPC or a long-lived Watch stream for
-// as long as the caller's own deadline allows. The metrics exporter already
-// bounds its whole snapshot the same way — this applies it per check, so one
-// slow check can't hold up the others. The check must honour the ctx it is
-// given for the ceiling to take effect.
+// as long as the caller's own deadline allows. Snapshot runs checks
+// concurrently, each under its own ceiling, so one slow check can't hold up the
+// others. The check must honour the ctx it is given for the ceiling to take
+// effect.
 const checkTimeout = 5 * time.Second
 
 // evalCheck runs one check under a bounded context so a hung check can't stall
-// the caller.
-func evalCheck(ctx context.Context, c Check) State {
+// the caller. A panicking check reports Unhealthy: the metrics exporter calls
+// checks from a bare goroutine, where an unrecovered panic kills the process.
+func evalCheck(ctx context.Context, name string, c Check) (st State) {
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
+	defer func() {
+		if p := recover(); p != nil {
+			slog.ErrorContext(ctx, "health: check panicked", "check", name, "panic", p)
+			st = Unhealthy
+		}
+	}()
 	return c(ctx)
 }
 
@@ -69,10 +77,39 @@ func evalCheck(ctx context.Context, c Check) State {
 type Registry struct {
 	mu     sync.RWMutex
 	checks map[string]Check
+	gen    atomic.Uint64 // bumped by Register/Replace; invalidates evalSnap
+
+	// evalMu guards the shared snapshot served by CachedSnapshot. Holding it
+	// across the evaluation is deliberate: it coalesces all callers that arrive
+	// in the same interval onto a single registry evaluation instead of one each.
+	evalMu   sync.Mutex
+	evalAt   time.Time
+	evalGen  uint64
+	evalSnap map[string]State
+
+	drainOnce sync.Once
+	drained   chan struct{}
 }
 
 // NewRegistry returns an empty registry.
-func NewRegistry() *Registry { return &Registry{checks: make(map[string]Check)} }
+func NewRegistry() *Registry {
+	return &Registry{checks: make(map[string]Check), drained: make(chan struct{})}
+}
+
+// Drain marks the server as shutting down. From then on the gRPC health service
+// reports NOT_SERVING and ends every Watch stream, so a load balancer stops
+// routing here and no health stream pins the graceful drain. It is idempotent.
+func (r *Registry) Drain() { r.drainOnce.Do(func() { close(r.drained) }) }
+
+// Draining reports whether Drain has been called.
+func (r *Registry) Draining() bool {
+	select {
+	case <-r.drained:
+		return true
+	default:
+		return false
+	}
+}
 
 // Register adds a named check. A duplicate name panics: registration is
 // boot-time and single-threaded, so a collision is a wiring mistake the
@@ -86,6 +123,7 @@ func (r *Registry) Register(name string, c Check) {
 		panic("health: duplicate check registered: " + name)
 	}
 	r.checks[name] = c
+	r.gen.Add(1)
 }
 
 // Replace installs a check under a name that may already be taken. It is the
@@ -94,20 +132,52 @@ func (r *Registry) Replace(name string, c Check) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.checks[name] = c
+	r.gen.Add(1)
 }
 
-// Snapshot evaluates every check.
+// Snapshot evaluates every check concurrently, each under its own checkTimeout.
 func (r *Registry) Snapshot(ctx context.Context) map[string]State {
 	r.mu.RLock()
 	checks := make(map[string]Check, len(r.checks))
 	maps.Copy(checks, r.checks)
 	r.mu.RUnlock()
 
-	out := make(map[string]State, len(checks))
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		out = make(map[string]State, len(checks))
+	)
 	for n, c := range checks {
-		out[n] = evalCheck(ctx, c)
+		wg.Go(func() {
+			st := evalCheck(ctx, n, c)
+			mu.Lock()
+			out[n] = st
+			mu.Unlock()
+		})
 	}
+	wg.Wait()
 	return out
+}
+
+// CachedSnapshot returns a snapshot shared by every caller, re-evaluating it at
+// most once per watchInterval. The unauthenticated probe surfaces (/readyz, the
+// gRPC Check and Watch) serve from it: without sharing, each probe would drive
+// a full registry evaluation — unbounded dependency work (a DB/Redis ping, per
+// the checkTimeout note above) driven by callers the chain never admits or
+// counts. The evaluation is detached from the caller's context so one caller
+// disconnecting mid-evaluation cannot cancel the checks the others are waiting
+// on; evalCheck still bounds each one. Register and Replace invalidate it. The
+// returned map must not be modified.
+func (r *Registry) CachedSnapshot(ctx context.Context) map[string]State {
+	r.evalMu.Lock()
+	defer r.evalMu.Unlock()
+	gen := r.gen.Load()
+	if r.evalSnap != nil && r.evalGen == gen && time.Since(r.evalAt) < watchInterval {
+		return r.evalSnap
+	}
+	r.evalSnap = r.Snapshot(context.WithoutCancel(ctx))
+	r.evalAt, r.evalGen = time.Now(), gen
+	return r.evalSnap
 }
 
 // worst folds a snapshot to its worst state. An empty snapshot is Healthy.
@@ -135,7 +205,7 @@ func (r *Registry) State(ctx context.Context, name string) (state State, ok bool
 	if !ok {
 		return Healthy, false
 	}
-	return evalCheck(ctx, c), true
+	return evalCheck(ctx, name, c), true
 }
 
 // Names returns the registered check names, sorted.
@@ -161,13 +231,6 @@ type grpcHealth struct {
 
 	// watchers counts live Watch streams, bounded by maxWatchers.
 	watchers atomic.Int64
-
-	// evalMu guards the snapshot every Watch stream shares. Holding it across
-	// the evaluation is deliberate: it coalesces all watchers that wake in the
-	// same interval onto a single registry evaluation instead of one each.
-	evalMu   sync.Mutex
-	evalAt   time.Time
-	evalSnap map[string]State
 }
 
 func serving(s State) grpc_health_v1.HealthCheckResponse_ServingStatus {
@@ -177,23 +240,28 @@ func serving(s State) grpc_health_v1.HealthCheckResponse_ServingStatus {
 	return grpc_health_v1.HealthCheckResponse_NOT_SERVING
 }
 
-// statusFor resolves the serving status for a health request's service field: an
-// empty service is the overall server health; a non-empty service names a
-// registered check. found is false for an unknown non-empty service.
-func (g *grpcHealth) statusFor(ctx context.Context, service string) (status grpc_health_v1.HealthCheckResponse_ServingStatus, found bool) {
+// statusFor resolves the serving status for a health request's service field
+// over the shared snapshot: an empty service is the overall server health; a
+// non-empty service names a registered check and is SERVICE_UNKNOWN if absent.
+// A draining server is NOT_SERVING whatever its checks say.
+func (g *grpcHealth) statusFor(ctx context.Context, service string) grpc_health_v1.HealthCheckResponse_ServingStatus {
+	if g.reg.Draining() {
+		return grpc_health_v1.HealthCheckResponse_NOT_SERVING
+	}
+	snap := g.reg.CachedSnapshot(ctx)
 	if service == "" {
-		return serving(g.reg.Overall(ctx)), true
+		return serving(worst(snap))
 	}
-	st, ok := g.reg.State(ctx, service)
+	st, ok := snap[service]
 	if !ok {
-		return grpc_health_v1.HealthCheckResponse_SERVICE_UNKNOWN, false
+		return grpc_health_v1.HealthCheckResponse_SERVICE_UNKNOWN
 	}
-	return serving(st), true
+	return serving(st)
 }
 
 func (g *grpcHealth) Check(ctx context.Context, req *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
-	st, found := g.statusFor(ctx, req.GetService())
-	if !found {
+	st := g.statusFor(ctx, req.GetService())
+	if st == grpc_health_v1.HealthCheckResponse_SERVICE_UNKNOWN {
 		return nil, status.Error(codes.NotFound, "unknown health service")
 	}
 	return &grpc_health_v1.HealthCheckResponse{Status: st}, nil
@@ -209,40 +277,6 @@ const watchInterval = time.Second
 // so it engages only when an anonymous caller is hoarding streams.
 const maxWatchers = 1024
 
-// watchSnapshot returns the registry snapshot every watcher shares, re-evaluating
-// it at most once per watchInterval. Watch polls, so without sharing N streams
-// would drive N full registry evaluations per interval — unbounded dependency
-// work (a DB/Redis ping, per the checkTimeout note above) driven by callers the
-// chain never admits or counts. The result is never staler than watchInterval,
-// which is already the resolution Watch promises. The evaluation is detached
-// from the calling stream's context so a watcher disconnecting mid-evaluation
-// cannot cancel the checks the other watchers are waiting on; evalCheck still
-// bounds each one.
-func (g *grpcHealth) watchSnapshot(ctx context.Context) map[string]State {
-	g.evalMu.Lock()
-	defer g.evalMu.Unlock()
-	if g.evalSnap != nil && time.Since(g.evalAt) < watchInterval {
-		return g.evalSnap
-	}
-	g.evalSnap = g.reg.Snapshot(context.WithoutCancel(ctx))
-	g.evalAt = time.Now()
-	return g.evalSnap
-}
-
-// watchStatusFor is statusFor over the shared snapshot: an empty service is the
-// overall health, a non-empty one names a check and is SERVICE_UNKNOWN if absent.
-func (g *grpcHealth) watchStatusFor(ctx context.Context, service string) grpc_health_v1.HealthCheckResponse_ServingStatus {
-	snap := g.watchSnapshot(ctx)
-	if service == "" {
-		return serving(worst(snap))
-	}
-	st, ok := snap[service]
-	if !ok {
-		return grpc_health_v1.HealthCheckResponse_SERVICE_UNKNOWN
-	}
-	return serving(st)
-}
-
 func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {
 	if g.watchers.Add(1) > maxWatchers {
 		g.watchers.Add(-1)
@@ -254,7 +288,7 @@ func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_h
 	// -1 is an impossible ServingStatus, so the first evaluation always sends.
 	last := grpc_health_v1.HealthCheckResponse_ServingStatus(-1)
 	send := func() error {
-		st := g.watchStatusFor(stream.Context(), service)
+		st := g.statusFor(stream.Context(), service)
 		if st == last {
 			return nil
 		}
@@ -270,6 +304,11 @@ func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_h
 		select {
 		case <-stream.Context().Done():
 			return nil
+		case <-g.reg.drained:
+			// Tell the watcher, then end the stream: a Watch open across
+			// shutdown would otherwise hold the graceful drain for its whole
+			// budget.
+			return send()
 		case <-ticker.C:
 			if err := send(); err != nil {
 				return err
@@ -296,10 +335,7 @@ func (r *Registry) StartMetricsExport(ctx context.Context, metrics *observabilit
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				// Bound each evaluation so a hung check can't stall the exporter.
-				evalCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-				snapshot := r.Snapshot(evalCtx)
-				cancel()
+				snapshot := r.Snapshot(ctx)
 				for component, state := range snapshot {
 					// The state belongs in the value, never in an attribute: under
 					// cumulative temporality the SDK re-exports every attribute set it

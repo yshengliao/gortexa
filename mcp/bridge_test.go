@@ -243,3 +243,18 @@ func TestBridgeRejectsAmplificationID(t *testing.T) {
 }
 
 func TestMain(m *testing.M) { testutil.VerifyTestMain(m) }
+
+// The OpenAI strict export makes non-required fields nullable, so the bridge
+// must accept null for them (protojson treats null as unset).
+func TestBridgeToolsCallAcceptsNullForUnsetFields(t *testing.T) {
+	ts := newBridgeServer(t)
+	create := rpc(t, ts.URL, token(t), map[string]any{
+		"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+		"params": map[string]any{"name": "create_resource", "arguments": map[string]any{
+			"resource": map[string]any{"name": "alpha", "owner": "u-1", "id": nil, "createdAt": nil, "status": nil},
+		}},
+	})
+	if result, _ := create["result"].(map[string]any); result == nil || result["isError"] != false {
+		t.Fatalf("create with null fields = %v", create)
+	}
+}

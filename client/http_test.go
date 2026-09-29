@@ -17,6 +17,15 @@ func TestNewHTTPClient(t *testing.T) {
 	}
 }
 
+// TestNewHTTPClientNegativeTimeout pins that a negative Timeout — which
+// net/http treats as "no deadline" — falls back to the 30s default.
+func TestNewHTTPClientNegativeTimeout(t *testing.T) {
+	c := NewHTTPClient(HTTPClientConfig{Timeout: -time.Second})
+	if c.Timeout != 30*time.Second {
+		t.Fatalf("timeout = %v, want 30s", c.Timeout)
+	}
+}
+
 // TestNewHTTPClientCustomTimeout pins that a non-zero Timeout is honoured
 // as-is instead of being replaced by the 30s default.
 func TestNewHTTPClientCustomTimeout(t *testing.T) {
