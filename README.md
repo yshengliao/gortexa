@@ -11,7 +11,8 @@ the single source of truth; **one h2c port** multiplexes three protocols:
 
 - **gRPC** (native, over cleartext HTTP/2)
 - **HTTP/JSON** via grpc-gateway (`google.api.http` annotations)
-- **MCP** (Model Context Protocol, Streamable HTTP) for AI agents
+- **MCP** (Model Context Protocol, Streamable HTTP; revisions 2025-11-25,
+  2025-06-18, 2025-03-26 and 2024-11-05) for AI agents
 
 …all sharing one interceptor chain, one error model, and one auth path.
 
@@ -221,6 +222,8 @@ Notes:
 - Integration tests needing real NATS/Redis/Postgres+PgBouncer are behind
   the `integration` build tag (`make test-integration`); the default suite
   needs no services.
+- Changes per release, including every API or behaviour break, are in
+  [CHANGELOG.md](CHANGELOG.md).
 
 ## Deploying
 

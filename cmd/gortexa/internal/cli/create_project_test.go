@@ -20,6 +20,7 @@ func setupLayoutRepo(t *testing.T) string {
 	// Repo meta that createProject must prune or replace.
 	writeFixture(t, filepath.Join(layout, "cmd", "gortexa", "main.go"), "package main\n")
 	writeFixture(t, filepath.Join(layout, "install.sh"), "#!/bin/sh\n")
+	writeFixture(t, filepath.Join(layout, "CHANGELOG.md"), "# Changelog\n")
 	writeFixture(t, filepath.Join(layout, "README.md"), "# gortexa framework readme\n")
 	// The config a scaffold inherits, carrying the placeholder secret the server
 	// refuses to boot with. create must leave it exactly as it is.
@@ -160,7 +161,7 @@ func TestCreateProject(t *testing.T) {
 	}
 	// Framework repo meta is pruned: the CLI source and installer must not ship
 	// inside a generated project.
-	for _, p := range []string{"cmd/gortexa", "install.sh"} {
+	for _, p := range []string{"cmd/gortexa", "install.sh", "CHANGELOG.md"} {
 		if _, err := os.Stat(filepath.Join(dest, p)); !os.IsNotExist(err) {
 			t.Errorf("expected %s to be pruned from the new project", p)
 		}

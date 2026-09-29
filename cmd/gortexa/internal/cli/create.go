@@ -98,12 +98,13 @@ func createProject(dest, module, repo, ref string) error {
 		return cleanup(fmt.Errorf("remove cloned .git: %w", err))
 	}
 	// Prune repo meta that must not ship inside a generated project: the CLI's
-	// own source tree and the bootstrap installer belong to the framework repo,
-	// and the module rewrite below would corrupt the install instructions they
-	// contain. gen/ is pruned because the framework commits it — a naive string
-	// rewrite inside a .pb.go length-prefixed rawDesc would corrupt the proto
-	// descriptor; the project regenerates all of gen/ via `make gen`. The
-	// framework README is replaced with a project README after the rewrite.
+	// own source tree, the bootstrap installer and the framework CHANGELOG belong
+	// to the framework repo, and the module rewrite below would corrupt the
+	// install instructions they contain. gen/ is pruned because the framework
+	// commits it — a naive string rewrite inside a .pb.go length-prefixed
+	// rawDesc would corrupt the proto descriptor; the project regenerates all of
+	// gen/ via `make gen`. The framework README is replaced with a project
+	// README after the rewrite.
 	// api/ holds the generated gortexa.ai.v1 bindings and its own go.mod. A
 	// project consumes that module from the proxy instead of regenerating the
 	// descriptor — two copies of gortexa/ai/v1/annotations.proto in one binary
@@ -111,7 +112,7 @@ func createProject(dest, module, repo, ref string) error {
 	// pruned: buf still has to resolve `import "gortexa/ai/v1/annotations.proto"`
 	// for the project's own protos. Dropping api/buf.gen.yaml with it is what
 	// makes regen skip the api generate step in a scaffolded project.
-	for _, p := range []string{"cmd/gortexa", "install.sh"} {
+	for _, p := range []string{"cmd/gortexa", "install.sh", "CHANGELOG.md"} {
 		if err := os.RemoveAll(filepath.Join(dest, p)); err != nil {
 			return cleanup(fmt.Errorf("prune %s: %w", p, err))
 		}
