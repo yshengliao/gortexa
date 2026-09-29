@@ -287,23 +287,7 @@ func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error
 		}
 		return apperr.Wrap(apperr.CatUnavailable, "jetstream consumer", err)
 	}
-	cc, err := cons.Consume(func(msg jetstream.Msg) {
-		c.mu.Lock()
-		if c.closed {
-			// Racing Close: drop the delivery un-acked; the server redelivers
-			// it later (at-least-once), so no work is lost.
-			c.mu.Unlock()
-			return
-		}
-		c.hwg.Add(1)
-		c.mu.Unlock()
-		defer c.hwg.Done()
-		if err := safeInvoke(ctx, msg.Subject(), h, messageFromWire(msg.Data(), msg.Headers())); err != nil {
-			jsSettleFailed(msg, err)
-			return
-		}
-		_ = msg.Ack()
-	})
+	cc, err := cons.Consume(c.deliver(ctx, h))
 	if err != nil {
 		return apperr.Wrap(apperr.CatUnavailable, "jetstream consume", err)
 	}
@@ -335,6 +319,29 @@ func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error
 		c.mu.Unlock()
 	}()
 	return nil
+}
+
+// deliver returns the Consume callback for one subscription: it runs h under
+// safeInvoke and settles the delivery with the outcome — Ack on success,
+// jsSettleFailed on error.
+func (c *jsClient) deliver(ctx context.Context, h Handler) jetstream.MessageHandler {
+	return func(msg jetstream.Msg) {
+		c.mu.Lock()
+		if c.closed {
+			// Racing Close: drop the delivery un-acked; the server redelivers
+			// it later (at-least-once), so no work is lost.
+			c.mu.Unlock()
+			return
+		}
+		c.hwg.Add(1)
+		c.mu.Unlock()
+		defer c.hwg.Done()
+		if err := safeInvoke(ctx, msg.Subject(), h, messageFromWire(msg.Data(), msg.Headers())); err != nil {
+			jsSettleFailed(msg, err)
+			return
+		}
+		_ = msg.Ack()
+	}
 }
 
 // jsSettleFailed settles a delivery whose handler failed. InvalidArgument
