@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -111,7 +112,7 @@ func createProject(dest, module, repo, ref string) error {
 		CLIVersion:     cliVersion(),
 		ModulePath:     module,
 		ProtoNamespace: ns,
-		SourceRepo:     repo,
+		SourceRepo:     redactURL(repo),
 		SourceRef:      ref,
 	}); err != nil {
 		return cleanup(fmt.Errorf("write project manifest: %w", err))
@@ -243,8 +244,17 @@ func rewriteTextFiles(root string, fn func(string) string) error {
 	})
 }
 
-// devPlaceholderSecret mirrors config: the value the server refuses to
-// boot with. `create` swaps it for a fresh random secret in the new project.
+// redactURL drops any userinfo (e.g. an embedded access token) from a URL, so
+// it is never recorded in the committed project manifest. Anything that does
+// not parse as a URL (such as scp-style git@host:path) is returned unchanged.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
+}
 
 // validModulePath does a lightweight check that module looks like a Go module
 // path (a slash-separated set of non-empty segments of safe characters, no

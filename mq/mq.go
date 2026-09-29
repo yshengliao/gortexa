@@ -6,7 +6,9 @@
 //     (or that arrived while no subscriber was up) is not seen again.
 //   - "jetstream": NATS JetStream, at-least-once. Publish blocks on the
 //     server's storage ack; a handler error negative-acks the message and the
-//     server redelivers it, so handlers must be idempotent. Streams the
+//     server redelivers it with a growing delay, up to jsMaxDeliver attempts
+//     (an InvalidArgument error is terminal and never redelivered), so
+//     handlers must be idempotent. Streams the
 //     framework creates itself carry a 24h age cap; an operator can pre-create
 //     a stream with different retention — it is adopted, never modified.
 //
@@ -34,6 +36,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"strings"
 
 	apperr "github.com/yshengliao/gortexa/apperr"
@@ -93,15 +97,37 @@ func checkReservedHeaders(h map[string]string) error {
 // whole process: on JetStream that also skips both Ack and Nak, so the poison
 // message stays ack-pending and kills the replacement process on redelivery.
 // Containment keeps the blast radius at one message, mirroring the Recovery
-// interceptor on the gRPC surface and the MCP bridge. The panic value rides
-// along as the wrapped cause, which apperr never serialises to a caller.
-func safeInvoke(ctx context.Context, h Handler, m Message) (err error) {
+// interceptor on the gRPC surface and the MCP bridge, including its log line:
+// the panic value and stack go to slog.Default, since neither driver has a
+// caller to surface them to. A plain handler error is logged at warn level
+// for the same reason. The panic value also rides along as the wrapped cause,
+// which apperr never serialises to a caller.
+func safeInvoke(ctx context.Context, subject string, h Handler, m Message) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			slog.Default().ErrorContext(ctx, "mq: handler panic recovered",
+				"subject", subject, "panic", r, "stack", string(debug.Stack()))
 			err = apperr.Wrap(apperr.CatInternal, "mq: handler panic", fmt.Errorf("%v", r))
+			return
+		}
+		if err != nil {
+			slog.Default().WarnContext(ctx, "mq: handler failed", "subject", subject, "error", err)
 		}
 	}()
 	return h(ctx, m)
+}
+
+// validateTopic rejects topics that are never a valid NATS subject on either
+// driver, so the permanent input error surfaces as InvalidArgument rather than
+// as a retryable transport failure from the SDK.
+func validateTopic(topic string) error {
+	if topic == "" {
+		return apperr.New(apperr.CatInvalidArgument, "mq: topic required")
+	}
+	if strings.ContainsAny(topic, " \t\r\n") {
+		return apperr.New(apperr.CatInvalidArgument, "mq: topic contains whitespace")
+	}
+	return nil
 }
 
 // Publisher publishes messages to a topic. Close honours ctx as a shutdown

@@ -130,6 +130,10 @@ func NewServeMux(reg *apperr.Registry) *runtime.ServeMux {
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, jsonMarshaler()),
 		runtime.WithIncomingHeaderMatcher(incomingHeaderMatcher),
 		runtime.WithOutgoingHeaderMatcher(outgoingHeaderMatcher),
+		// The gateway default forwards every gRPC trailer as "Grpc-Trailer-*"
+		// when the caller sends "TE: trailers"; no trailer is part of the
+		// contract, so none is exposed.
+		runtime.WithOutgoingTrailerMatcher(func(string) (string, bool) { return "", false }),
 		runtime.WithRoutingErrorHandler(routingErrorHandler(reg)),
 		runtime.WithMetadata(clientIPMetadata),
 	)
@@ -170,7 +174,10 @@ func jsonMarshaler() *runtime.JSONPb {
 // wins nondeterministically. Without this guard "Grpc-Metadata-Authorization",
 // "Grpc-Metadata-X-Request-Id" and "Grpc-Metadata-X-Gortexa-Peer-Ip" would let
 // an external client race its own token, request id or rate-limit identity
-// against the trusted one.
+// against the trusted one. The W3C trace-context and baggage keys are dropped
+// too: the server OTel StatsHandler would extract them into the handler context
+// as trusted, and mcp/bridge.go's inboundContext strips baggage for the same
+// reason.
 func incomingHeaderMatcher(key string) (string, bool) {
 	switch textproto.CanonicalMIMEHeaderKey(key) {
 	case "Authorization":
@@ -181,7 +188,10 @@ func incomingHeaderMatcher(key string) (string, bool) {
 		k, ok := runtime.DefaultHeaderMatcher(key)
 		if ok && (strings.EqualFold(k, interceptor.PeerIPMetaKey) ||
 			strings.EqualFold(k, auth.MetadataKey) ||
-			strings.EqualFold(k, interceptor.RequestIDMetadataKey)) {
+			strings.EqualFold(k, interceptor.RequestIDMetadataKey) ||
+			strings.EqualFold(k, "baggage") ||
+			strings.EqualFold(k, "traceparent") ||
+			strings.EqualFold(k, "tracestate")) {
 			return "", false
 		}
 		return k, ok

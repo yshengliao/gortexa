@@ -35,6 +35,10 @@ COPY --from=build /out/gortexa /gortexa
 # GORTEXA_AUTH__JWT_SECRET at runtime.
 COPY etc/config.yaml /etc/gortexa/config.yaml
 ENV GORTEXA_CONFIG=/etc/gortexa/config.yaml
+# cmd/server serves /openapi.json (server.openapi) from the cwd-relative
+# gen/openapiv2 path, so the spec sits under the WORKDIR.
+WORKDIR /
+COPY gen/openapiv2/gortexa.swagger.json /gen/openapiv2/gortexa.swagger.json
 EXPOSE 8080
 USER nonroot:nonroot
 ENTRYPOINT ["/gortexa"]

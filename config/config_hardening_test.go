@@ -96,3 +96,32 @@ func TestOTLPSecureByDefault(t *testing.T) {
 		t.Fatal("observ.otlp_insecure must default to false (TLS)")
 	}
 }
+
+// TestEnvSliceDecodingTrimsEntries verifies list entries are trimmed and empty
+// ones dropped: CORS and the MCP origin allowlist match entries exactly.
+func TestEnvSliceDecodingTrimsEntries(t *testing.T) {
+	c, err := config.BuildUnvalidated(config.WithEnviron(func() []string {
+		return []string{"GORTEXA_SERVER__CORS_ORIGINS= https://a.example, https://b.example ,,"}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Server.CORSOrigins
+	if len(got) != 2 || got[0] != "https://a.example" || got[1] != "https://b.example" {
+		t.Fatalf("cors_origins = %q, want [https://a.example https://b.example]", got)
+	}
+}
+
+// TestMalformedDotenvDoesNotLeakContent verifies a dotenv parse error, which
+// embeds raw file bytes, never reaches the error (and MustBuild's panic).
+func TestMalformedDotenvDoesNotLeakContent(t *testing.T) {
+	const secret = "s3cr3t-real-key-that-must-not-leak"
+	path := writeFile(t, ".env", "GORTEXA_AUTH__JWT_SECRET=\""+secret+"\n")
+	_, err := config.BuildUnvalidated(config.WithDotEnvFile(path))
+	if err == nil {
+		t.Fatal("expected error for malformed dotenv")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error leaks dotenv content: %v", err)
+	}
+}

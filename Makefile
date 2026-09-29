@@ -3,7 +3,10 @@ GOBIN := $(shell $(GO) env GOPATH)/bin
 
 # Override the container's broken GOPRIVATE/GOPROXY for every recipe shell
 # (Make-exported vars win over inherited OS env). See install.sh in the framework repo for the why.
-export GOFLAGS := -mod=mod
+# CI (CI=true on GitHub Actions) builds -mod=readonly instead: -mod=mod would
+# silently complete a go.mod/go.sum the commit left incomplete, and CI must
+# fail on exactly what a consumer resolving the tag would fail on.
+export GOFLAGS := $(if $(CI),-mod=readonly,-mod=mod)
 export GOPROXY := https://proxy.golang.org,direct
 export GOSUMDB := sum.golang.org
 export GOTOOLCHAIN := auto
@@ -22,13 +25,16 @@ bootstrap:
 	fi
 
 # gen is the contract-first pipeline: lint -> breaking -> generate. It uses the
-# committed buf.lock (run `buf dep update` manually to bump proto deps); the
-# breaking gate prefers origin/main (what CI fetches — comparing against the
-# local branch would self-compare on push builds), falls back to a local main,
-# and is skipped only when neither ref exists.
+# committed buf.lock (run `buf dep update` manually to bump proto deps). The
+# breaking gate compares against BUF_AGAINST when set (CI sets it to the
+# pre-push commit on pushes to main, where origin/main is HEAD itself), else
+# prefers origin/main (a local main may hold the very commits under test),
+# falls back to a local main, and is skipped only when neither ref exists.
 gen:
 	buf lint
-	@if git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then \
+	@if [ -n "$(BUF_AGAINST)" ]; then \
+		buf breaking --against '$(BUF_AGAINST)'; \
+	elif git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then \
 		buf breaking --against '.git#ref=origin/main'; \
 	elif git rev-parse --verify --quiet main >/dev/null 2>&1; then \
 		buf breaking --against '.git#branch=main'; \

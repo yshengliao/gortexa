@@ -22,9 +22,18 @@ import (
 // verifying it covers the topic, and never mutates its config.
 const jsStreamMaxAge = 24 * time.Hour
 
-// jsNakDelay paces redelivery after a handler error. A plain Nak would
-// redeliver immediately and hot-loop a poison message.
-const jsNakDelay = time.Second
+// jsMaxDeliver bounds how often the server delivers one message, so a poison
+// message that fails every attempt is eventually dropped instead of
+// redelivering until the stream's MaxAge — forever on an adopted stream with
+// no age limit — while holding one of the consumer's ack-pending slots.
+const jsMaxDeliver = 10
+
+// jsNakBackoff paces redelivery after a handler error, indexed by the
+// delivery count (the last step repeats). A plain Nak would redeliver
+// immediately and hot-loop a poison message. It is applied through
+// NakWithDelay rather than ConsumerConfig.BackOff, which would also replace
+// AckWait with its first step and redeliver any handler slower than 1s.
+var jsNakBackoff = []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute}
 
 // jsClient implements Publisher and Subscriber on NATS JetStream. Relative to
 // the core-NATS client it adds durability: Publish blocks on the server's
@@ -101,11 +110,8 @@ func NewJetStream(cfg config.MQConfig) (Publisher, Subscriber, error) {
 // misuse as InvalidArgument instead of a permanent-but-retryable server
 // error.
 func validateJSTopic(topic string) error {
-	if topic == "" {
-		return apperr.New(apperr.CatInvalidArgument, "mq: topic required")
-	}
-	if strings.ContainsAny(topic, " \t\r\n") {
-		return apperr.New(apperr.CatInvalidArgument, "mq: topic contains whitespace")
+	if err := validateTopic(topic); err != nil {
+		return err
 	}
 	for tok := range strings.SplitSeq(topic, ".") {
 		switch tok {
@@ -264,6 +270,7 @@ func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error
 		// FilterSubject keeps delivery exact even when an operator-provisioned
 		// stream carries more subjects than this topic.
 		FilterSubject: topic,
+		MaxDeliver:    jsMaxDeliver,
 	}
 	if c.groupID != "" {
 		// Load-balance: group members share one durable consumer; the server
@@ -291,10 +298,8 @@ func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error
 		c.hwg.Add(1)
 		c.mu.Unlock()
 		defer c.hwg.Done()
-		if err := safeInvoke(ctx, h, messageFromWire(msg.Data(), msg.Headers())); err != nil {
-			// Handler failure: negative-ack with a delay so the redelivery
-			// does not hot-loop a poison message.
-			_ = msg.NakWithDelay(jsNakDelay)
+		if err := safeInvoke(ctx, msg.Subject(), h, messageFromWire(msg.Data(), msg.Headers())); err != nil {
+			jsSettleFailed(msg, err)
 			return
 		}
 		_ = msg.Ack()
@@ -330,6 +335,22 @@ func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error
 		c.mu.Unlock()
 	}()
 	return nil
+}
+
+// jsSettleFailed settles a delivery whose handler failed. InvalidArgument
+// means the message itself is bad and no retry can succeed, so it is
+// terminated; anything else is negative-acked with a delay that grows with
+// the delivery count, bounded overall by the consumer's jsMaxDeliver.
+func jsSettleFailed(msg jetstream.Msg, err error) {
+	if apperr.Is(err, apperr.CatInvalidArgument) {
+		_ = msg.Term()
+		return
+	}
+	step := 0
+	if md, merr := msg.Metadata(); merr == nil && md.NumDelivered > 0 {
+		step = int(min(md.NumDelivered-1, uint64(len(jsNakBackoff)-1)))
+	}
+	_ = msg.NakWithDelay(jsNakBackoff[step])
 }
 
 func (c *jsClient) Close(ctx context.Context) error {

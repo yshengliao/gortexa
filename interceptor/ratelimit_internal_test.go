@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"google.golang.org/grpc/metadata"
@@ -110,5 +111,73 @@ func TestRateLimiterBoundedGrowth(t *testing.T) {
 	}
 	if total > 50 {
 		t.Fatalf("total entries = %d, want <= 50 (global cap)", total)
+	}
+}
+
+// A full shard must admit a new peer by evicting its least-recently-seen entry,
+// not reject it: otherwise one host keeping MaxEntries addresses warm locks out
+// every new client.
+func TestRateLimiterFullShardEvictsOldest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		l := NewRateLimiter(RateLimitConfig{RPS: 1000, Burst: 1000, TTL: time.Hour, MaxEntries: 2 * shardCount})
+		ctxFor := func(ip string) context.Context {
+			return peer.NewContext(context.Background(), &peer.Peer{Addr: rlFakeAddr(ip + ":1")})
+		}
+		const newcomer = "192.0.2.1"
+		target := l.shardFor(newcomer)
+		// Fill the newcomer's shard to its cap of two, oldest first; both stay
+		// well inside the TTL.
+		var filled []string
+		for i := 0; len(filled) < 2; i++ {
+			ip := fmt.Sprintf("10.0.%d.%d", i/256, i%256)
+			if l.shardFor(ip) != target {
+				continue
+			}
+			l.allow(ctxFor(ip))
+			filled = append(filled, ip)
+			time.Sleep(time.Second)
+		}
+		if !l.allow(ctxFor(newcomer)) {
+			t.Fatal("new peer rejected by a full shard")
+		}
+		target.mu.Lock()
+		defer target.mu.Unlock()
+		_, oldKept := target.entries[filled[0]]
+		_, recentKept := target.entries[filled[1]]
+		_, added := target.entries[newcomer]
+		if oldKept || !recentKept || !added || len(target.entries) != 2 {
+			t.Fatalf("entries = %v, want %s evicted and %s, %s kept", target.entries, filled[0], filled[1], newcomer)
+		}
+	})
+}
+
+// IPv6 peers share one bucket per /64, so a host cannot mint a fresh bucket per
+// address; IPv4 and IPv4-mapped peers key by address.
+func TestPeerKeyAggregatesIPv6To64(t *testing.T) {
+	ctxFor := func(addr string) context.Context {
+		return peer.NewContext(context.Background(), &peer.Peer{Addr: rlFakeAddr(addr)})
+	}
+	cases := map[string]string{
+		"[2001:db8:1:2:aaaa::1]:443": "2001:db8:1:2::/64",
+		"[2001:db8:1:2:ffff::9]:443": "2001:db8:1:2::/64",
+		"[fe80::1%eth0]:443":         "fe80::/64",
+		"[::ffff:192.0.2.7]:443":     "192.0.2.7",
+		"192.0.2.7:443":              "192.0.2.7",
+	}
+	for addr, want := range cases {
+		if got := peerKey(ctxFor(addr)); got != want {
+			t.Errorf("peerKey(%s) = %q, want %q", addr, got, want)
+		}
+	}
+	if got := peerKey(loopbackCtx("2001:db8:1:2::77")); got != "2001:db8:1:2::/64" {
+		t.Errorf("loopback IPv6 key = %q, want 2001:db8:1:2::/64", got)
+	}
+
+	l := NewRateLimiter(RateLimitConfig{RPS: 1, Burst: 1, TTL: time.Minute})
+	if !l.allow(ctxFor("[2001:db8:1:2::1]:1")) {
+		t.Fatal("first address in the /64 should be allowed")
+	}
+	if l.allow(ctxFor("[2001:db8:1:2::2]:1")) {
+		t.Fatal("a second address in the same /64 must share the exhausted bucket")
 	}
 }

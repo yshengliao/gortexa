@@ -1,6 +1,7 @@
 package mcp_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -21,8 +22,14 @@ func TestDowngradeNilSchema(t *testing.T) {
 	if mcp.DowngradeGemini(ir).Parameters != nil {
 		t.Error("nil input schema → nil Gemini parameters")
 	}
-	if mcp.DowngradeMCP(ir).Annotations != nil {
-		t.Error("non-read-only/non-destructive tool → nil annotations")
+	// MCP defaults an absent destructiveHint to true, so a mutating,
+	// non-destructive tool must say destructiveHint:false explicitly.
+	b, err := json.Marshal(mcp.DowngradeMCP(ir).Annotations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"readOnlyHint":false,"destructiveHint":false}` {
+		t.Errorf("non-read-only/non-destructive annotations = %s", b)
 	}
 }
 
@@ -47,15 +54,18 @@ func TestBridgeMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestBridgeGetOpensSSE(t *testing.T) {
+// GET would open a server→client SSE stream that holds a goroutine until the
+// client leaves, with no auth and no shutdown signal. Gortexa never pushes
+// messages, so GET is refused outright.
+func TestBridgeGetNotAllowed(t *testing.T) {
 	ts := newBridgeServer(t)
 	req, _ := http.NewRequest(http.MethodGet, ts.URL, nil)
-	resp, err := http.DefaultClient.Do(req) // returns once headers are flushed
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.Header.Get("Content-Type") != "text/event-stream" {
-		t.Fatalf("GET content-type = %q, want text/event-stream", resp.Header.Get("Content-Type"))
+	if resp.StatusCode != http.StatusMethodNotAllowed || resp.Header.Get("Allow") != "POST" {
+		t.Fatalf("GET = %d Allow=%q, want 405 Allow=POST", resp.StatusCode, resp.Header.Get("Allow"))
 	}
 }

@@ -208,3 +208,16 @@ func TestInstallErrorHandlerRoutesToSlog(t *testing.T) {
 		t.Fatalf("otel export error not routed to slog, got %q", buf.String())
 	}
 }
+
+// TestMinLevelHandlerGatesDerivedHandlers verifies the level gate survives
+// logger.With / WithGroup, which derive new handlers.
+func TestMinLevelHandlerGatesDerivedHandlers(t *testing.T) {
+	var buf bytes.Buffer
+	h := minLevelHandler{slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}), slog.LevelInfo}
+	logger := slog.New(h).With("k", "v").WithGroup("g")
+	logger.Debug("dropped")
+	logger.Info("kept")
+	if out := buf.String(); strings.Contains(out, "dropped") || !strings.Contains(out, "kept") || !strings.Contains(out, `"k":"v"`) {
+		t.Fatalf("output = %q, want only the info record with k=v", out)
+	}
+}

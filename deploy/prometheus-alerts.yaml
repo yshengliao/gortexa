@@ -1,10 +1,14 @@
 groups:
   - name: gortexa.slo
     rules:
+      # otelgrpc's StatsHandler (v0.71, default stable RPC semconv) records
+      # rpc.server.call.duration in seconds with rpc.response.status_code set
+      # to the canonical code name; the collector's Prometheus exporter turns
+      # that into the series below.
       - alert: ErrorBudgetFastBurn
         expr: |
-          sum(rate(rpc_server_duration_count{rpc_grpc_status_code!="0"}[1h])) /
-          sum(rate(rpc_server_duration_count[1h])) > 14.4 * 0.001
+          sum(rate(rpc_server_call_duration_seconds_count{rpc_response_status_code!="OK"}[1h])) /
+          sum(rate(rpc_server_call_duration_seconds_count[1h])) > 14.4 * 0.001
         for: 2m
         labels: {severity: critical}
         annotations:

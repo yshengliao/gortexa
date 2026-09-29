@@ -23,7 +23,11 @@ DEFAULT_BRANCH="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/d
 if [ "${BUF_ALLOW_BREAKING:-0}" = "1" ]; then
   echo "    BUF_ALLOW_BREAKING=1 set; skipping breaking-change gate (intended break)."
 else
-  if git rev-parse --verify "${DEFAULT_BRANCH}" >/dev/null 2>&1; then
+  # Same base as `make gen` and CI: the remote branch first, because a local
+  # branch may already hold the very commits under test (a self-compare).
+  if git rev-parse --verify --quiet "origin/${DEFAULT_BRANCH}" >/dev/null 2>&1; then
+    buf breaking --against ".git#ref=origin/${DEFAULT_BRANCH}"
+  elif git rev-parse --verify --quiet "${DEFAULT_BRANCH}" >/dev/null 2>&1; then
     buf breaking --against ".git#branch=${DEFAULT_BRANCH}"
   else
     echo "    No '${DEFAULT_BRANCH}' ref found (fresh repo?); skipping breaking check."

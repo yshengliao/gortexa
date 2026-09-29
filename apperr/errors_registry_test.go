@@ -15,7 +15,7 @@ func TestPackageRegisterOnDefault(t *testing.T) {
 	const cat = apperr.Category("test_registered_cat")
 	apperr.Register(apperr.Mapping{
 		Category:    cat,
-		GRPCCode:    codes.Unknown, // not claimed by any default mapping
+		GRPCCode:    codes.FailedPrecondition, // shared with the default owner
 		HTTPStatus:  418,
 		Retryable:   false,
 		SafeMessage: "test registered",
