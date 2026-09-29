@@ -280,3 +280,25 @@ func TestRewriteModulePathSkipsNonTextFiles(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateProjectKeepsImportsSorted pins the gofmt pass: rewriting the module
+// path moves the project's own imports ahead of the upstream api import in the
+// same block, and the scaffold's lint rejected the unsorted result.
+func TestCreateProjectKeepsImportsSorted(t *testing.T) {
+	layout := setupLayoutRepo(t)
+	writeFixture(t, filepath.Join(layout, "kernel", "x.go"), "package kernel\n\nimport (\n"+
+		"\taiv1 \""+layoutModule+apiSubmodule+"/gen/gortexa/ai/v1\"\n"+
+		"\t\""+layoutModule+"/internal/logic\"\n)\n\nvar _ = aiv1.E_AiTool\nvar _ = logic.X\n")
+	gitRun(t, layout, "add", "-A")
+	gitRun(t, layout, "commit", "-q", "-m", "imports")
+	dest := filepath.Join(t.TempDir(), "app")
+	if err := createProject(dest, "github.com/me/x", "file://"+layout, "main"); err != nil {
+		t.Fatal(err)
+	}
+	got := readFile(t, filepath.Join(dest, "kernel", "x.go"))
+	own := strings.Index(got, `"github.com/me/x/internal/logic"`)
+	api := strings.Index(got, `"`+layoutModule+apiSubmodule)
+	if own < 0 || api < 0 || own > api {
+		t.Fatalf("imports not sorted after the rewrite:\n%s", got)
+	}
+}

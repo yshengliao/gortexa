@@ -161,3 +161,53 @@ jobs:
 
       - name: Vulnerability scan
         run: make vuln
+
+  # A scaffolded project is this repo pruned and rewritten by `gortexa create`,
+  # and it inherits the workflow above. Nothing else checks that result: until
+  # #110 every scaffold failed its own CI on the first push. This job builds the
+  # CLI from the change under test, scaffolds from this checkout, and runs the
+  # scaffold's own gates, then adds an API with `gortexa gen` and runs them again.
+  scaffold:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Put go-installed tools on PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install toolchain (buf + plugins + golangci-lint)
+        run: |
+          make bootstrap
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.13.0/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.13.0
+
+      # create clones a branch, and a PR checkout is a detached merge commit, so
+      # name it. The layout is this checkout's committed tree.
+      - name: Scaffold a project from this checkout
+        run: |
+          go build -o "$RUNNER_TEMP/gortexa" ./cmd/gortexa
+          git branch scaffold-e2e HEAD
+          "$RUNNER_TEMP/gortexa" create "$RUNNER_TEMP/app" --module github.com/example/app \
+            --repo "file://$GITHUB_WORKSPACE" --ref scaffold-e2e
+
+      - name: Scaffold passes its own gates
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          make gen
+          go mod tidy -diff
+          make build vet test lint
+
+      - name: Scaffold still passes after gortexa gen
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          "$RUNNER_TEMP/gortexa" gen billing/v1 Invoice
+          make gen
+          go mod tidy -diff
+          make build vet test lint

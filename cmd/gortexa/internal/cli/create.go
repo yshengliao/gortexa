@@ -49,6 +49,23 @@ func newCreateCmd() *cobra.Command {
 	return cmd
 }
 
+// tidyLayout drops the requirements only the pruned CLI used (cobra and its
+// dependencies): the scaffold inherits CI's `go mod tidy -diff` check, which
+// otherwise fails on the project's first push. It runs before gen/ is pruned
+// and the module path is rewritten, the one point where the import graph is
+// complete and every path is the public framework's, so tidy neither drops
+// what the generated code needs nor looks up the project's own module path
+// remotely. A layout without a committed gen/ is left alone, since its graph
+// is incomplete. Failure only warns: the project still builds.
+func tidyLayout(dest string) {
+	if _, err := os.Stat(filepath.Join(dest, "gen")); err != nil {
+		return
+	}
+	if err := runCmd(dest, "go", "mod", "tidy"); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: go mod tidy failed; run `go mod tidy` after `make gen`:", err)
+	}
+}
+
 func createProject(dest, module, repo, ref string) error {
 	if !validModulePath(module) {
 		return fmt.Errorf("invalid --module %q: expected a Go module path like github.com/me/app", module)
@@ -94,7 +111,13 @@ func createProject(dest, module, repo, ref string) error {
 	// pruned: buf still has to resolve `import "gortexa/ai/v1/annotations.proto"`
 	// for the project's own protos. Dropping api/buf.gen.yaml with it is what
 	// makes regen skip the api generate step in a scaffolded project.
-	for _, p := range []string{"cmd/gortexa", "install.sh", "gen", "api"} {
+	for _, p := range []string{"cmd/gortexa", "install.sh"} {
+		if err := os.RemoveAll(filepath.Join(dest, p)); err != nil {
+			return cleanup(fmt.Errorf("prune %s: %w", p, err))
+		}
+	}
+	tidyLayout(dest)
+	for _, p := range []string{"gen", "api"} {
 		if err := os.RemoveAll(filepath.Join(dest, p)); err != nil {
 			return cleanup(fmt.Errorf("prune %s: %w", p, err))
 		}
@@ -107,6 +130,12 @@ func createProject(dest, module, repo, ref string) error {
 	fmt.Printf("==> namespacing sample service under %s.resource.v1\n", ns)
 	if err := namespaceSample(dest, ns); err != nil {
 		return cleanup(fmt.Errorf("namespace sample service: %w", err))
+	}
+	// The rewrite can reorder an import block: the project's own paths now sort
+	// before the upstream api import they used to follow, which gofmt (and so
+	// the scaffold's lint) rejects. Formatting only reorders imports here.
+	if err := runCmd(dest, "gofmt", "-w", "."); err != nil {
+		fmt.Fprintln(os.Stderr, "warning: gofmt failed; run `gofmt -w .`:", err)
 	}
 	if err := writeManifest(dest, projectManifest{
 		CLIVersion:     cliVersion(),
