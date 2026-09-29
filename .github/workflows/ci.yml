@@ -142,6 +142,49 @@ jobs:
       - name: Build
         run: make build
 
+      # gorelease (make bootstrap installs it from tools/go.mod) diffs the
+      # exported API against the latest vX.Y.Z tag; api/vX.Y.Z tags are the
+      # separate api module. It reports a break without failing on v0. On a PR
+      # the base branch is diffed against the same tag, and the PR fails only
+      # when it introduces an incompatible change the base does not already
+      # have and adds no bullet under "### Breaking" in CHANGELOG.md's
+      # [Unreleased] section. A push to main only reports. A scaffold (no
+      # CHANGELOG.md, no tags yet) skips.
+      - name: API compatibility (gorelease)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ ! -f CHANGELOG.md ]; then echo "no CHANGELOG.md — skipping"; exit 0; fi
+          tag="$(git ls-remote --tags --refs origin 'v*' | sed 's|.*refs/tags/||' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          if [ -z "$tag" ]; then echo "no vX.Y.Z tag — skipping"; exit 0; fi
+          # "pkg: change" lines under "## incompatible changes" in a report.
+          incompatible() { awk '/^# /{p=$2; next} /^## /{i=/^## incompatible changes/; next} i&&NF{print p": "$0}' "$1" | sort; }
+          gorelease -base="$tag" > "$RUNNER_TEMP/head.txt" || { cat "$RUNNER_TEMP/head.txt"; exit 1; }
+          cat "$RUNNER_TEMP/head.txt"
+          incompatible "$RUNNER_TEMP/head.txt" > "$RUNNER_TEMP/incompatible.head"
+          [ -s "$RUNNER_TEMP/incompatible.head" ] || exit 0
+          if [ -z "$BASE_REF" ]; then
+            echo "::warning::incompatible API changes since $tag; list them under Breaking in CHANGELOG.md"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          git worktree add --detach "$RUNNER_TEMP/base" FETCH_HEAD
+          (cd "$RUNNER_TEMP/base" && gorelease -base="$tag") > "$RUNNER_TEMP/base.txt" || true
+          git worktree remove --force "$RUNNER_TEMP/base"
+          incompatible "$RUNNER_TEMP/base.txt" > "$RUNNER_TEMP/incompatible.base"
+          introduced="$(comm -13 "$RUNNER_TEMP/incompatible.base" "$RUNNER_TEMP/incompatible.head")"
+          [ -n "$introduced" ] || exit 0
+          # Bullets under "### Breaking" in the [Unreleased] section.
+          breaking() { awk '/^## /{u=/^## \[Unreleased\]/; b=0; next} /^### /{b=u&&/^### Breaking/; next} b&&/^- /' | sort; }
+          { git show FETCH_HEAD:CHANGELOG.md 2>/dev/null || true; } | breaking > "$RUNNER_TEMP/breaking.base"
+          breaking < CHANGELOG.md > "$RUNNER_TEMP/breaking.head"
+          if [ -z "$(comm -13 "$RUNNER_TEMP/breaking.base" "$RUNNER_TEMP/breaking.head")" ]; then
+            printf '%s\n' "$introduced"
+            echo "::error::this PR adds incompatible API changes since $tag: add a bullet under '### Breaking' in the [Unreleased] section of CHANGELOG.md" >&2
+            exit 1
+          fi
+
       - name: Vet
         run: make vet
 

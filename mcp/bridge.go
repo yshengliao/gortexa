@@ -37,8 +37,18 @@ import (
 )
 
 const (
-	protocolVersion = "2025-03-26"
-	maxRequestBytes = httplimits.MaxRequestBytes
+	// protocolVersion is the revision offered on initialize when the client asks
+	// for one the bridge does not speak: the newest supported revision.
+	protocolVersion = "2025-11-25"
+	// headerlessProtocolVersion is the revision assumed for a post-initialize
+	// request without an MCP-Protocol-Version header: the bridge keeps no session
+	// state, so per the Streamable HTTP transport (2025-06-18 and later) it
+	// assumes 2025-03-26 for backwards compatibility.
+	headerlessProtocolVersion = "2025-03-26"
+	// protocolVersionHeader carries the negotiated revision on every request
+	// after initialize (MCP 2025-06-18 and later).
+	protocolVersionHeader = "MCP-Protocol-Version"
+	maxRequestBytes       = httplimits.MaxRequestBytes
 	// maxBatchElements caps a JSON-RPC batch's element count. The body cap alone
 	// is not a bound on work: a 1 MiB body of `{}` entries is ~350k elements, and
 	// every one of them is rejected before dispatch, so no gRPC Invoke happens and
@@ -60,8 +70,11 @@ const (
 // supportedProtocolVersions are the MCP revisions Gortexa can speak. On
 // initialize the server echoes the client's requested version when it is one of
 // these (the MCP spec's version negotiation), otherwise it offers its own
-// default and lets the client decide whether to proceed.
+// default and lets the client decide whether to proceed. The value reports
+// whether the revision still permits JSON-RPC batching, which 2025-06-18 removed.
 var supportedProtocolVersions = map[string]bool{
+	"2025-11-25": false,
+	"2025-06-18": false,
 	"2025-03-26": true,
 	"2024-11-05": true,
 }
@@ -73,11 +86,39 @@ func negotiateVersion(params json.RawMessage) string {
 		var p struct {
 			ProtocolVersion string `json:"protocolVersion"`
 		}
-		if err := json.Unmarshal(params, &p); err == nil && supportedProtocolVersions[p.ProtocolVersion] {
+		if err := json.Unmarshal(params, &p); err == nil && isSupportedVersion(p.ProtocolVersion) {
 			return p.ProtocolVersion
 		}
 	}
 	return protocolVersion
+}
+
+func isSupportedVersion(v string) bool {
+	_, ok := supportedProtocolVersions[v]
+	return ok
+}
+
+// requestVersion returns the protocol revision a request speaks, from its
+// MCP-Protocol-Version header (absent: headerlessProtocolVersion), and whether
+// that value is one the bridge supports. The transport requires 400 Bad Request
+// for an invalid or unsupported value.
+func requestVersion(r *http.Request) (string, bool) {
+	vs := r.Header.Values(protocolVersionHeader)
+	switch len(vs) {
+	case 0:
+		return headerlessProtocolVersion, true
+	case 1:
+		return vs[0], isSupportedVersion(vs[0])
+	default:
+		return "", false // repeated header: no single version to honor
+	}
+}
+
+// badVersion answers a request whose MCP-Protocol-Version is not supported. The
+// value is not echoed: it is caller-controlled and the supported set is public.
+func badVersion(w http.ResponseWriter, r *http.Request, id json.RawMessage) {
+	writeRPCStatus(w, r, http.StatusBadRequest,
+		rpcResponse{JSONRPC: "2.0", ID: idOrNull(id), Error: &rpcError{Code: -32600, Message: "unsupported MCP-Protocol-Version"}})
 }
 
 // Bridge serves an MCP Streamable-HTTP endpoint backed by a gRPC loopback.
@@ -275,17 +316,30 @@ func (b *Bridge) handlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	version, versionOK := requestVersion(r)
 	switch body[0] {
 	case '[':
+		// initialize may not be batched (2025-03-26), so a batch is always a
+		// post-initialize request and its header must name a supported revision.
+		if !versionOK {
+			badVersion(w, r, nil)
+			return
+		}
+		if batchable := supportedProtocolVersions[version]; !batchable {
+			// 2025-06-18 removed batching: the POST body MUST be a single message.
+			writeRPCStatus(w, r, http.StatusBadRequest,
+				rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32600, Message: "JSON-RPC batching is not supported in this protocol version"}})
+			return
+		}
 		b.handleBatchPost(w, r, body)
 	case '{':
-		b.handleSinglePost(w, r, body)
+		b.handleSinglePost(w, r, body, versionOK)
 	default:
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32600, Message: "invalid request"}})
 	}
 }
 
-func (b *Bridge) handleSinglePost(w http.ResponseWriter, r *http.Request, body []byte) {
+func (b *Bridge) handleSinglePost(w http.ResponseWriter, r *http.Request, body []byte, versionOK bool) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{Code: -32700, Message: "parse error"}})
@@ -294,6 +348,12 @@ func (b *Bridge) handleSinglePost(w http.ResponseWriter, r *http.Request, body [
 	req, id, rerr := validateRPCRequest(fields)
 	if rerr != nil {
 		writeRPC(w, r, rpcResponse{JSONRPC: "2.0", ID: id, Error: rerr})
+		return
+	}
+	// The header is required only after initialize; initialize itself negotiates
+	// the version in its body, so a stale header must not block negotiation.
+	if !versionOK && req.Method != "initialize" {
+		badVersion(w, r, req.ID)
 		return
 	}
 
@@ -523,7 +583,8 @@ func (b *Bridge) toolsCall(r *http.Request, id json.RawMessage, params json.RawM
 	out := dynamicpb.NewMessage(tool.Output)
 
 	ctx := inboundContext(r)
-	attrs := []attribute.KeyValue{attribute.String("gen_ai.tool.name", p.Name), attribute.String("mcp.method.name", "tools/call"), attribute.String("mcp.protocol.version", protocolVersion), attribute.String("jsonrpc.request.id", string(id))}
+	version, _ := requestVersion(r) // validated by handlePost
+	attrs := []attribute.KeyValue{attribute.String("gen_ai.tool.name", p.Name), attribute.String("mcp.method.name", "tools/call"), attribute.String("mcp.protocol.version", version), attribute.String("jsonrpc.request.id", string(id))}
 	ctx, span := otel.Tracer("github.com/yshengliao/gortexa/mcp").Start(ctx, "execute_tool "+p.Name, trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attrs...))
 	defer span.End()
 	if b.observ.GenAICaptureContent {

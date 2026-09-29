@@ -77,6 +77,9 @@ one and could not be installed that way), and consumers ignore replaces anyway.
 CI fails on any replace in go.mod, so the root build is exactly what a consumer
 resolves.
 
+Before tagging, move CHANGELOG.md's `[Unreleased]` entries under a new
+`[X.Y.Z]` heading (CI's gorelease step requires every API break under Breaking).
+
 A release that does not touch `api/` is one step: `git tag vX.Y.Z && git push
 origin vX.Y.Z`.
 

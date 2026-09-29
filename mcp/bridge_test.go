@@ -100,7 +100,7 @@ func TestBridgeInitializeNegotiatesVersion(t *testing.T) {
 	got = rpc(t, ts.URL, "", map[string]any{"jsonrpc": "2.0", "id": 2, "method": "initialize",
 		"params": map[string]any{"protocolVersion": "1999-01-01"}})
 	res, _ = got["result"].(map[string]any)
-	if res == nil || res["protocolVersion"] != "2025-03-26" {
+	if res == nil || res["protocolVersion"] != "2025-11-25" {
 		t.Fatalf("unsupported version should fall back to default: %v", got)
 	}
 }
