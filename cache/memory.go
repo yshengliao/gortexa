@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	apperr "github.com/yshengliao/gortexa/apperr"
 	"github.com/yshengliao/gortexa/config"
 )
 
@@ -13,6 +14,11 @@ import (
 // lazily (Get treats an expired entry as a miss), so this only bounds the memory
 // held by keys that are never read again after they expire.
 const cleanupInterval = time.Minute
+
+// errMemoryClosed is what every operation returns after Close, matching the
+// Redis backend (whose closed client fails each call as Unavailable) so code
+// tested against the default backend sees use-after-close the same way.
+var errMemoryClosed = apperr.New(apperr.CatUnavailable, "cache: closed")
 
 type memoryEntry struct {
 	val       []byte
@@ -68,7 +74,11 @@ func (c *memoryCache) janitor() {
 func (c *memoryCache) Get(_ context.Context, key string) ([]byte, error) {
 	c.mu.RLock()
 	e, ok := c.items[key]
+	closed := c.closed
 	c.mu.RUnlock()
+	if closed {
+		return nil, errMemoryClosed
+	}
 	if !ok || (!e.expiresAt.IsZero() && time.Now().After(e.expiresAt)) {
 		return nil, ErrCacheMiss
 	}
@@ -85,7 +95,7 @@ func (c *memoryCache) Set(_ context.Context, key string, val []byte, ttl time.Du
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return nil
+		return errMemoryClosed
 	}
 	c.items[key] = e
 	c.mu.Unlock()
@@ -94,8 +104,11 @@ func (c *memoryCache) Set(_ context.Context, key string, val []byte, ttl time.Du
 
 func (c *memoryCache) Del(_ context.Context, key string) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return errMemoryClosed
+	}
 	delete(c.items, key)
-	c.mu.Unlock()
 	return nil
 }
 

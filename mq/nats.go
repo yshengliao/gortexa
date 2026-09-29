@@ -145,6 +145,9 @@ func messageFromWire(data []byte, h nats.Header) Message {
 }
 
 func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error {
+	if err := validateTopic(topic); err != nil {
+		return err
+	}
 	if err := checkReservedHeaders(m.Headers); err != nil {
 		return err
 	}
@@ -170,6 +173,9 @@ func (c *natsClient) flush(ctx context.Context) error {
 }
 
 func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) error {
+	if err := validateTopic(topic); err != nil {
+		return err
+	}
 	cb := func(m *nats.Msg) {
 		c.mu.Lock()
 		if c.closed {
@@ -181,7 +187,7 @@ func (c *natsClient) Subscribe(ctx context.Context, topic string, h Handler) err
 		c.hwg.Add(1)
 		c.mu.Unlock()
 		defer c.hwg.Done()
-		_ = safeInvoke(ctx, h, messageFromWire(m.Data, m.Header))
+		_ = safeInvoke(ctx, m.Subject, h, messageFromWire(m.Data, m.Header))
 	}
 	var sub *nats.Subscription
 	var err error

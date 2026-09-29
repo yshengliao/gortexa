@@ -74,6 +74,10 @@ type conn struct {
 	nc net.Conn
 	br *bufio.Reader
 	bw *bufio.Writer
+	// tainted marks a connection whose cancel hook fired (or is firing) during
+	// a command: the hook may still trip SetDeadline(now) after the command
+	// returns, so the connection must never be parked for another request.
+	tainted bool
 }
 
 func (cn *conn) close() { _ = cn.nc.Close() }
@@ -134,13 +138,24 @@ func (c *Client) roundtrip(ctx context.Context, cn *conn, args ...any) (any, err
 	// connection rather than parking one with a poisoned deadline.
 	if ctx.Done() != nil {
 		stop := context.AfterFunc(ctx, func() { _ = cn.nc.SetDeadline(time.Now()) })
-		defer stop()
+		defer func() {
+			// stop does not wait for a hook already started, so a false result
+			// means the deadline may still be tripped after this returns.
+			if !stop() {
+				cn.tainted = true
+			}
+		}()
 	}
 	// Set deadlines unconditionally — a zero time clears any deadline. Setting
 	// them only when non-zero would let a deadline armed by a previous command
 	// (e.g. from that command's ctx) persist on a pooled connection and fire
 	// spuriously on the next reuse when this command has no deadline of its own.
 	if err := cn.nc.SetWriteDeadline(deadline(ctx, c.opts.WriteTimeout)); err != nil {
+		return nil, err
+	}
+	// Likewise for the write deadline: a cancel that fired since the hook was
+	// registered has just been overwritten, so re-check before writing.
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if err := writeCommand(cn.bw, args...); err != nil {
@@ -199,9 +214,10 @@ func (c *Client) getConn(ctx context.Context) (cn *conn, reused bool, err error)
 }
 
 // putConn returns a connection: parked for reuse when healthy, closed when the
-// command errored (bad) or the client is closing. The token is always released.
+// command errored (bad), its cancel hook fired (tainted) or the client is
+// closing. The token is always released.
 func (c *Client) putConn(cn *conn, bad bool) {
-	if bad {
+	if bad || cn.tainted {
 		cn.close()
 		<-c.sem
 		return
@@ -296,7 +312,7 @@ func (c *Client) Set(ctx context.Context, key, value string, ttl time.Duration) 
 	return err
 }
 
-// Del deletes key and reports whether it existed.
+// Del deletes key; deleting an absent key is not an error.
 func (c *Client) Del(ctx context.Context, key string) error {
 	_, err := c.Do(ctx, "DEL", key)
 	return err

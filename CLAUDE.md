@@ -93,7 +93,3 @@ a release of the api module, in the same PR:
 3. `go mod edit -require=github.com/yshengliao/gortexa/api@vX.Y.Z && go mod tidy`,
    commit, push. From here CI builds what consumers will resolve.
 4. Merge, then tag the framework.
-
-One-time for v0.28: once v0.28.0 is the `buf breaking` comparison base, remove
-the `FILE_SAME_GO_PACKAGE` entry from `buf.yaml`'s `breaking.except` — it exists
-only to let the annotations `go_package` move land.

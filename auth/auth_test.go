@@ -152,3 +152,14 @@ func TestBearerTokenAndContext(t *testing.T) {
 		t.Fatal("ClaimsFrom should find stored claims")
 	}
 }
+
+// A non-positive ttl would mint a token Verify still accepts for the whole
+// clock-skew leeway, so Sign refuses it.
+func TestSignRejectsNonPositiveTTL(t *testing.T) {
+	v := auth.MustNewVerifier(secret, "gortexa")
+	for _, ttl := range []time.Duration{0, -time.Minute} {
+		if tok, err := v.Sign("u", nil, ttl); err == nil || tok != "" {
+			t.Fatalf("Sign(ttl=%v) = %q, %v; want error", ttl, tok, err)
+		}
+	}
+}

@@ -14,12 +14,12 @@ import (
 )
 
 // BuildPoolConfig parses the DSN and applies PgBouncer transaction-mode safety:
-// the simple exec protocol (no server-side named prepared statements, which
-// break across pooled connections) and disabled statement/description caches.
+// the extended protocol with unnamed statements (QueryExecModeExec; no
+// server-side named prepared statements, which break across pooled connections) and disabled statement/description caches.
 func BuildPoolConfig(cfg config.DBConfig, tracer pgx.QueryTracer) (*pgxpool.Config, error) {
 	pc, err := pgxpool.ParseConfig(cfg.DSN.Reveal())
 	if err != nil {
-		return nil, apperr.Wrap(apperr.CatInvalidArgument, "parse db dsn", err)
+		return nil, apperr.Wrap(apperr.CatInternal, "parse db dsn", err)
 	}
 	pc.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	pc.ConnConfig.StatementCacheCapacity = 0
@@ -36,7 +36,8 @@ func BuildPoolConfig(cfg config.DBConfig, tracer pgx.QueryTracer) (*pgxpool.Conf
 	return pc, nil
 }
 
-// NewPool builds and connects a PgBouncer-safe pgx pool.
+// NewPool builds a PgBouncer-safe pgx pool and pings it, so an unreachable
+// database fails at startup rather than on the first query.
 func NewPool(ctx context.Context, cfg config.DBConfig, tracer pgx.QueryTracer) (*pgxpool.Pool, error) {
 	pc, err := BuildPoolConfig(cfg, tracer)
 	if err != nil {
@@ -44,6 +45,10 @@ func NewPool(ctx context.Context, cfg config.DBConfig, tracer pgx.QueryTracer) (
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
+		return nil, apperr.Wrap(apperr.CatUnavailable, "connect db", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
 		return nil, apperr.Wrap(apperr.CatUnavailable, "connect db", err)
 	}
 	return pool, nil

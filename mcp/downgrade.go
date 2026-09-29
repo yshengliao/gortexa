@@ -1,6 +1,10 @@
 package mcp
 
-import "sort"
+import (
+	"slices"
+	"sort"
+	"strings"
+)
 
 // MCPTool is the tools/list entry for the MCP protocol.
 type MCPTool struct {
@@ -10,19 +14,22 @@ type MCPTool struct {
 	Annotations *MCPAnnotations `json:"annotations,omitempty"`
 }
 
-// MCPAnnotations carries MCP behavioral hints.
+// MCPAnnotations carries MCP behavioral hints. Both are always serialized: MCP
+// defaults an absent destructiveHint to true, so omitting a false one would
+// mark every mutating, non-destructive tool as destructive.
 type MCPAnnotations struct {
-	ReadOnlyHint    bool `json:"readOnlyHint,omitempty"`
-	DestructiveHint bool `json:"destructiveHint,omitempty"`
+	ReadOnlyHint    bool `json:"readOnlyHint"`
+	DestructiveHint bool `json:"destructiveHint"`
 }
 
 // DowngradeMCP renders the IR as an MCP tool.
 func DowngradeMCP(ir ToolIR) MCPTool {
-	t := MCPTool{Name: ir.Name, Description: ir.Description, InputSchema: ir.InputSchema}
-	if ir.ReadOnly || ir.Destructive {
-		t.Annotations = &MCPAnnotations{ReadOnlyHint: ir.ReadOnly, DestructiveHint: ir.Destructive}
+	return MCPTool{
+		Name:        ir.Name,
+		Description: ir.Description,
+		InputSchema: ir.InputSchema,
+		Annotations: &MCPAnnotations{ReadOnlyHint: ir.ReadOnly, DestructiveHint: ir.Destructive},
 	}
-	return t
 }
 
 // OpenAIFunction is the strict-mode function-tool shape for the OpenAI API.
@@ -42,14 +49,16 @@ type OpenAIFuncBody struct {
 // OpenAISchema mirrors JSONSchema but, for strict mode, lists every property as
 // required and forbids additional properties.
 type OpenAISchema struct {
-	Type        string                   `json:"type"`
+	// Type is a string, or ["<type>","null"] for a property the model may leave
+	// unset (see nullable).
+	Type        any                      `json:"type"`
 	Description string                   `json:"description,omitempty"`
 	Properties  map[string]*OpenAISchema `json:"properties,omitempty"`
 	// Required is a pointer so an object with no properties still emits
 	// `"required": []` (OpenAI strict mode), while non-object schemas omit it.
 	Required *[]string     `json:"required,omitempty"`
 	Items    *OpenAISchema `json:"items,omitempty"`
-	Enum     []string      `json:"enum,omitempty"`
+	Enum     []any         `json:"enum,omitempty"`
 	// AdditionalProperties is `false` for a closed object (strict mode), a
 	// *OpenAISchema for a proto map's value, or `true` for a free-form Struct.
 	AdditionalProperties any `json:"additionalProperties,omitempty"`
@@ -96,13 +105,21 @@ func toOpenAISchema(s *JSONSchema) *OpenAISchema {
 	if s == nil {
 		return nil
 	}
-	out := &OpenAISchema{Type: s.Type, Description: s.Description, Enum: s.Enum}
+	out := &OpenAISchema{Type: s.Type, Description: s.Description}
+	for _, e := range s.Enum {
+		out.Enum = append(out.Enum, e)
+	}
 	if s.Items != nil {
 		out.Items = toOpenAISchema(s.Items)
 	}
 	if s.Type == "object" {
 		// Strict mode: every declared property is required (an empty object still
-		// emits `required: []`). A proto map preserves its value schema as
+		// emits `required: []`), so a property not marked ai_field.required is
+		// made nullable: the model sends null, which protojson treats as unset,
+		// instead of inventing a value for a server-populated or optional field.
+		// A field buf.validate already requires (nonNullable) stays non-null, so
+		// strict decoding still forces the model to supply it.
+		// A proto map preserves its value schema as
 		// additionalProperties; a free-form Struct stays open; a closed message
 		// forbids undeclared keys.
 		switch ap := s.AdditionalProperties.(type) {
@@ -122,6 +139,9 @@ func toOpenAISchema(s *JSONSchema) *OpenAISchema {
 				// listing it as required would make protojson reject every call.
 				if !s.oneofMembers[name] {
 					names = append(names, name)
+					if !slices.Contains(s.Required, name) && !s.nonNullable[name] {
+						nullable(out.Properties[name])
+					}
 				}
 			}
 			sort.Strings(names)
@@ -129,6 +149,15 @@ func toOpenAISchema(s *JSONSchema) *OpenAISchema {
 		out.Required = &names
 	}
 	return out
+}
+
+// nullable widens a schema to also accept JSON null. An enum must list null
+// too, or the enum constraint still rejects it.
+func nullable(s *OpenAISchema) {
+	s.Type = []string{s.Type.(string), "null"}
+	if len(s.Enum) > 0 {
+		s.Enum = append(s.Enum, nil)
+	}
 }
 
 // GeminiFunctionDeclaration is the Gemini function-calling shape.
@@ -146,10 +175,6 @@ type GeminiSchema struct {
 	Required    []string                 `json:"required,omitempty"`
 	Items       *GeminiSchema            `json:"items,omitempty"`
 	Enum        []string                 `json:"enum,omitempty"`
-	// AdditionalProperties carries a proto map's value schema (*GeminiSchema) or
-	// `true` for a free-form Struct, mirroring the MCP/OpenAI downgrades so map
-	// and Struct fields aren't silently flattened to a closed object.
-	AdditionalProperties any `json:"additionalProperties,omitempty"`
 }
 
 // DowngradeGemini renders the IR as a Gemini FunctionDeclaration.
@@ -169,11 +194,11 @@ func toGeminiSchema(s *JSONSchema) *GeminiSchema {
 	if s.Items != nil {
 		out.Items = toGeminiSchema(s.Items)
 	}
-	switch ap := s.AdditionalProperties.(type) {
-	case *JSONSchema:
-		out.AdditionalProperties = toGeminiSchema(ap)
-	case bool:
-		out.AdditionalProperties = ap
+	// Gemini's function-declaration Schema (an OpenAPI subset) has no
+	// additionalProperties and rejects the whole tools array on an unknown
+	// field, so a map or Struct is described in prose instead.
+	if note := openObjectNote(s.AdditionalProperties); note != "" {
+		out.Description = strings.TrimSpace(out.Description + " " + note)
 	}
 	if len(s.Properties) > 0 {
 		out.Properties = make(map[string]*GeminiSchema, len(s.Properties))
@@ -182,4 +207,22 @@ func toGeminiSchema(s *JSONSchema) *GeminiSchema {
 		}
 	}
 	return out
+}
+
+// openObjectNote describes an open object's keys and values for a schema
+// dialect that cannot express additionalProperties.
+func openObjectNote(ap any) string {
+	switch ap := ap.(type) {
+	case *JSONSchema:
+		note := "Object with arbitrary string keys; each value is a " + ap.Type
+		if len(ap.Enum) > 0 {
+			note += " (one of " + strings.Join(ap.Enum, ", ") + ")"
+		}
+		return note + "."
+	case bool:
+		if ap {
+			return "Free-form JSON object."
+		}
+	}
+	return ""
 }
