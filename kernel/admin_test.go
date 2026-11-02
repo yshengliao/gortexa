@@ -23,7 +23,10 @@ func runApp(t *testing.T, app *kernel.App) {
 	t.Cleanup(func() {
 		cancel()
 		select {
-		case <-done:
+		case err := <-done:
+			if err != nil {
+				t.Errorf("Run returned error after cancel: %v", err)
+			}
 		case <-time.After(5 * time.Second):
 			t.Error("Run did not return after cancel")
 		}
