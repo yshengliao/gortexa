@@ -164,20 +164,11 @@ func jsonMarshaler() *runtime.JSONPb {
 }
 
 // incomingHeaderMatcher forwards Authorization and X-Request-Id into gRPC
-// metadata under the keys the interceptors expect; other headers use the
-// gateway default — except anything that would land on a trusted metadata key.
-// The named cases above must be the only source of those keys: the gateway
-// default forwards any "Grpc-Metadata-*" header verbatim, and the interceptors
-// read only the first value of a key (auth.Authenticate, interceptor.RequestID,
-// interceptor.peerKey), while grpc-gateway builds the metadata by ranging over
-// the request header map — so a second, client-supplied value on the same key
-// wins nondeterministically. Without this guard "Grpc-Metadata-Authorization",
-// "Grpc-Metadata-X-Request-Id" and "Grpc-Metadata-X-Gortexa-Peer-Ip" would let
-// an external client race its own token, request id or rate-limit identity
-// against the trusted one. The W3C trace-context and baggage keys are dropped
-// too: the server OTel StatsHandler would extract them into the handler context
-// as trusted, and mcp/bridge.go's inboundContext strips baggage for the same
-// reason.
+// metadata under the keys the interceptors expect. Other headers use the secure
+// gateway default, which drops client-supplied Grpc-Metadata-* headers. Keep the
+// trusted-key guard independent of upstream matching rules: alternate spellings
+// must never override authentication, request IDs, peer identity, or trace
+// context. MCP's inboundContext enforces the same trace-context boundary.
 func incomingHeaderMatcher(key string) (string, bool) {
 	switch textproto.CanonicalMIMEHeaderKey(key) {
 	case "Authorization":

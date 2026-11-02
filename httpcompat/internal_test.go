@@ -191,10 +191,8 @@ func TestIncomingHeaderMatcher(t *testing.T) {
 }
 
 // TestIncomingHeaderMatcherBlocksPeerIP locks in the rate-limit identity guard:
-// the loopback trusts the dedicated peer-IP metadata key, and the gateway default
-// matcher forwards Grpc-Metadata-* verbatim, so any spelling that would land on
-// that key must be rejected — otherwise an external HTTP client could spoof its
-// rate-limit bucket per request.
+// the loopback trusts the dedicated peer-IP metadata key, so every client
+// spelling that could impersonate it must be rejected.
 func TestIncomingHeaderMatcherBlocksPeerIP(t *testing.T) {
 	for _, h := range []string{
 		"X-Gortexa-Peer-Ip",
@@ -205,9 +203,11 @@ func TestIncomingHeaderMatcherBlocksPeerIP(t *testing.T) {
 			t.Errorf("header %q must not be forwarded, got key %q", h, got)
 		}
 	}
-	// The Grpc-Metadata-* passthrough still works for non-trusted keys.
-	if got, ok := incomingHeaderMatcher("Grpc-Metadata-X-Tenant"); !ok || !strings.EqualFold(got, "x-tenant") {
-		t.Errorf("Grpc-Metadata-X-Tenant → %q,%v; want x-tenant,true", got, ok)
+	// The secure gateway default also drops arbitrary metadata-prefixed keys.
+	for _, h := range []string{"Grpc-Metadata-X-Tenant", "grpc-metadata-x-tenant"} {
+		if got, ok := incomingHeaderMatcher(h); ok {
+			t.Errorf("header %q must not be forwarded, got key %q", h, got)
+		}
 	}
 }
 
@@ -252,6 +252,7 @@ func TestServeMuxRejectsSmuggledTrustedHeaders(t *testing.T) {
 	req.Header.Set("Grpc-Metadata-Authorization", "Bearer CLIENT-FORGED")
 	req.Header.Set("X-Request-Id", "proxy-id")
 	req.Header.Set("Grpc-Metadata-X-Request-Id", "client-id")
+	req.Header.Set("Grpc-Metadata-X-Tenant", "client-tenant")
 
 	ctx, err := runtime.AnnotateContext(req.Context(), mux, req, "/x", runtime.WithHTTPPathPattern("/x"))
 	if err != nil {
@@ -277,6 +278,9 @@ func TestServeMuxRejectsSmuggledTrustedHeaders(t *testing.T) {
 	if len(ridVals) != 1 || ridVals[0] != "proxy-id" {
 		t.Fatalf("%s = %v, want exactly [proxy-id] (only the canonical X-Request-Id header's value)",
 			interceptor.RequestIDMetadataKey, ridVals)
+	}
+	if vals := md.Get("x-tenant"); len(vals) != 0 {
+		t.Fatalf("client-supplied metadata reached the backend: x-tenant = %v", vals)
 	}
 }
 
