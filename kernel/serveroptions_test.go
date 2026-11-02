@@ -65,13 +65,7 @@ func TestWithServerOptionsRunsInsideChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	runDone := make(chan error, 1)
-	go func() { runDone <- app.Run(ctx) }()
-	t.Cleanup(func() {
-		cancel()
-		<-runDone
-	})
+	runApp(t, app)
 
 	conn, err := app.Loopback()
 	if err != nil {

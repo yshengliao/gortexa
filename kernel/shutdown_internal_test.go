@@ -204,7 +204,10 @@ func TestShutdownBoundedWithHungConnection(t *testing.T) {
 	cancel() // serve → Shutdown
 
 	select {
-	case <-served:
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("serve returned error: %v", err)
+		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("shutdown blocked on a hung connection")
 	}
