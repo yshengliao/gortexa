@@ -1,11 +1,9 @@
 module github.com/yshengliao/gortexa
 
-// go1.27.0 (2026-08-19) is the only 1.27 release so far, so the go directive
-// and the effective toolchain coincide and no separate toolchain line is
-// needed. Once 1.27 patch releases exist, restore the usual split: keep the
-// language floor here and pin the latest security-patched toolchain via a
-// `toolchain goX.Y.Z` directive.
+// Keep the language floor separate from the security-patched build toolchain.
 go 1.27.0
+
+toolchain go1.27.3
 
 require (
 	buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go v1.36.12-20260825204119-511051f7f437.2
@@ -43,7 +41,7 @@ require (
 	golang.org/x/time v0.16.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5
-	google.golang.org/grpc v1.83.2
+	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
 

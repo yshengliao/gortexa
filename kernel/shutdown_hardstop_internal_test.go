@@ -95,7 +95,10 @@ func TestShutdownBoundedWhenHardStopRacesGracefulStop(t *testing.T) {
 	// Let the handler finish so grpc's own goroutines unwind before goleak runs.
 	close(release)
 	select {
-	case <-callDone:
+	case err := <-callDone:
+		if err == nil {
+			t.Error("in-flight RPC succeeded after the loopback connection closed")
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("in-flight RPC never completed after release")
 	}
