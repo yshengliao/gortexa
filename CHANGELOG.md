@@ -13,6 +13,9 @@ touches it names the api version it needs.
 
 ### Breaking
 
+- HTTP gateway: grpc-gateway v2.33.0 drops client-supplied `Grpc-Metadata-*`
+  headers, including custom keys. Canonical `Authorization` and `X-Request-Id`
+  headers continue to work. (#122)
 - `apperr.Register`: a gRPC code may now be shared by several categories — the
   first registered owns it and the others travel across the loopback as an
   `ErrorInfo{Domain: "gortexa.apperr"}` status detail — instead of panicking on
