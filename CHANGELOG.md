@@ -104,6 +104,8 @@ touches it names the api version it needs.
 
 ### Security
 
+- Pin Go 1.27.3 and update `golang.org/x/net` to v0.60.0 to pick up the
+  standard-library and HTTP/2 security fixes required by `govulncheck`. (#124)
 - Closed the `grpc.*` namespace auth bypass, stopped leaking gRPC trailers and
   trusted trace baggage over HTTP, removed the unauthenticated MCP SSE stream,
   and kept dotenv secrets and URL credentials out of errors and manifests.
