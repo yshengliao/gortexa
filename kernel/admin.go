@@ -43,6 +43,8 @@ type extraListener struct {
 // graceful-shutdown lifecycle. Use it for an ops surface (pprof, a custom
 // metrics or health handler) on a separate — e.g. internal-only — listener. The
 // main single h2c port is unchanged; this is purely additive and opt-in.
+// The caller must disable MPTCP before binding lis (ListenConfig.SetMultipathTCP
+// with false); an already-bound listener's socket protocol cannot be changed.
 func WithExtraListener(lis net.Listener, h http.Handler) Option {
 	return func(a *appConfig) {
 		a.extraListeners = append(a.extraListeners, extraListenerSpec{lis: lis, handler: h})

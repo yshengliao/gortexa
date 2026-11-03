@@ -227,6 +227,14 @@ Notes:
 
 ## Deploying
 
+Framework-created main and admin listeners explicitly disable MPTCP, including
+when `GODEBUG` enables it. For `WithExtraListener`, disable it before binding with
+`net.ListenConfig.SetMultipathTCP(false)`. For other Go listeners in the same
+deployment, `GODEBUG=multipathtcp=0` disables the default; explicit socket settings
+can override it. These are mitigations for the demonstrated CVE-2026-98432 exploit,
+not a kernel fix. Update the Linux host kernel using its vendor's advisory,
+reboot, and verify the running kernel, including hosts running containers.
+
 - **Terminate TLS in front of it.** The port is cleartext h2c and the server
   does no TLS itself — bearer tokens transit it — so put it behind a reverse
   proxy, service mesh, or load balancer that terminates TLS before exposing it.
