@@ -398,7 +398,7 @@ func writeJSON(w http.ResponseWriter, code int, body any) {
 // Run starts the h2c listener and blocks until ctx is cancelled or the server
 // stops. On cancellation it performs a graceful, bounded shutdown.
 func (a *App) Run(ctx context.Context) error {
-	ln, err := net.Listen("tcp", a.cfg.Server.Addr)
+	ln, err := listenTCP(ctx, a.cfg.Server.Addr)
 	if err != nil {
 		// Pre-serve bind failure: serve() (which owns shutdown) is never reached,
 		// so run the shutdown hooks here to flush buffered startup telemetry
@@ -446,7 +446,7 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 			continue // a concurrent Shutdown already closed it
 		}
 		if lis == nil {
-			l, lerr := net.Listen("tcp", es.addr)
+			l, lerr := listenTCP(ctx, es.addr)
 			if lerr != nil {
 				// The main listener ln was opened by Run but is not yet handed to
 				// httpSrv.Serve, so Shutdown (which only closes what Serve tracked)

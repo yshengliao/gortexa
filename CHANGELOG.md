@@ -107,6 +107,10 @@ touches it names the api version it needs.
 
 ### Security
 
+- Disable MPTCP on framework-created main and admin listeners, even when enabled
+  by `GODEBUG`, to mitigate the demonstrated CVE-2026-98432 exploit. A patched
+  Linux host kernel is still required; caller-provided listeners remain the
+  caller's responsibility.
 - Pin Go 1.27.3 and update `golang.org/x/net` to v0.60.0 to pick up the
   standard-library and HTTP/2 security fixes required by `govulncheck`. (#124)
 - Closed the `grpc.*` namespace auth bypass, stopped leaking gRPC trailers and
