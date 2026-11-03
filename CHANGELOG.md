@@ -11,6 +11,8 @@ touches it names the api version it needs.
 
 ## [Unreleased]
 
+## [0.28.4] - 2026-11-04
+
 ### Breaking
 
 - HTTP gateway: grpc-gateway v2.33.0 drops client-supplied `Grpc-Metadata-*`
@@ -135,5 +137,6 @@ Released 2026-09-06. Earlier history is in the
 [GitHub releases](https://github.com/yshengliao/gortexa/releases) and the tag
 compare links below.
 
-[Unreleased]: https://github.com/yshengliao/gortexa/compare/v0.28.3...HEAD
+[Unreleased]: https://github.com/yshengliao/gortexa/compare/v0.28.4...HEAD
+[0.28.4]: https://github.com/yshengliao/gortexa/compare/v0.28.3...v0.28.4
 [0.28.3]: https://github.com/yshengliao/gortexa/compare/v0.28.2...v0.28.3
