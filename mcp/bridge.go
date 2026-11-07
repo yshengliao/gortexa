@@ -131,7 +131,12 @@ type Bridge struct {
 	// tool set is fixed for the bridge's lifetime, so tools/list returns this
 	// cached slice instead of re-downgrading every schema per request.
 	mcpTools []MCPTool
-	observ   config.ObservConfig
+	// toolsListResult is the tools/list result pre-serialized once. tools/list
+	// is served without Invoke, so the interceptor chain never governs it; a
+	// batch of them used to re-marshal every schema per element, an
+	// unauthenticated CPU multiplier on top of the response size.
+	toolsListResult json.RawMessage
+	observ          config.ObservConfig
 
 	// allowedOrigins gates browser access for DNS-rebinding protection (MCP
 	// Streamable HTTP): a browser request's Origin must be on this list.
@@ -170,6 +175,11 @@ func NewBridge(conn *grpc.ClientConn, services []protoreflect.ServiceDescriptor,
 	for _, name := range b.order {
 		b.mcpTools = append(b.mcpTools, DowngradeMCP(b.tools[name]))
 	}
+	raw, err := json.Marshal(map[string]any{"tools": b.mcpTools})
+	if err != nil {
+		return nil, fmt.Errorf("mcp: serialize tools/list: %w", err)
+	}
+	b.toolsListResult = raw
 	return b, nil
 }
 
@@ -391,6 +401,12 @@ func (b *Bridge) handleBatchPost(w http.ResponseWriter, r *http.Request, body []
 	}
 
 	responses := make([]rpcResponse, 0, len(raws))
+	// tools/list and initialize are answered without Invoke, so nothing in
+	// the chain (rate limit, auth) governs them, and tools/list is the one
+	// method whose reply is large (the whole catalogue). A real client sends
+	// each once per session; a batch of 100 was a ~45x unauthenticated
+	// response amplifier on the sample service, scaling with the API size.
+	served := map[string]int{}
 	for _, raw := range raws {
 		raw = bytes.TrimSpace(raw)
 		var fields map[string]json.RawMessage
@@ -405,6 +421,13 @@ func (b *Bridge) handleBatchPost(w http.ResponseWriter, r *http.Request, body []
 		}
 		if len(req.ID) == 0 {
 			continue // notification: no response
+		}
+		if limit, capped := maxPerBatch[req.Method]; capped {
+			if served[req.Method] >= limit {
+				responses = append(responses, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{Code: -32600, Message: "batch may carry at most one " + req.Method}})
+				continue
+			}
+			served[req.Method]++
 		}
 		responses = append(responses, b.dispatch(r, req))
 	}
@@ -475,6 +498,16 @@ func idOrNull(id json.RawMessage) json.RawMessage {
 // validation from doing unbounded work on attacker input.
 const maxRPCIDNumberLen = 32
 
+// maxRPCIDStringLen bounds a string id's raw literal (quotes and escapes
+// included). The id is echoed in the response and, for tools/call, copied
+// into a span attribute before the chain runs, so an unbounded id let an
+// unauthenticated caller size what the server retains per request.
+const maxRPCIDStringLen = 256
+
+// maxPerBatch caps, per batch, the methods served without Invoke: nothing in
+// the chain governs them, and a client needs each once.
+var maxPerBatch = map[string]int{"tools/list": 1, "initialize": 1}
+
 // validRPCID accepts null, a string, or an integer-valued JSON number (JSON-RPC
 // 2.0 disallows fractional ids).
 func validRPCID(raw json.RawMessage) bool {
@@ -487,6 +520,9 @@ func validRPCID(raw json.RawMessage) bool {
 	}
 	switch trimmed[0] {
 	case '"':
+		if len(trimmed) > maxRPCIDStringLen {
+			return false
+		}
 		var s string
 		return json.Unmarshal(trimmed, &s) == nil
 	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
@@ -537,7 +573,7 @@ func (b *Bridge) dispatch(r *http.Request, req rpcRequest) rpcResponse {
 	case "ping":
 		resp.Result = map[string]any{}
 	case "tools/list":
-		resp.Result = map[string]any{"tools": b.mcpTools}
+		resp.Result = b.toolsListResult
 	case "tools/call":
 		result, rerr := b.toolsCall(r, req.ID, req.Params)
 		if rerr != nil {
