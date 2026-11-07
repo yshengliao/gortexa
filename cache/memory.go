@@ -28,10 +28,12 @@ type memoryEntry struct {
 // memoryCache is a process-local Cache backed by a map guarded by an RWMutex,
 // with a background janitor for expired-entry eviction.
 type memoryCache struct {
-	mu     sync.RWMutex
-	items  map[string]memoryEntry
-	closed bool
-	done   chan struct{}
+	mu    sync.RWMutex
+	items map[string]memoryEntry
+	// maxEntries bounds len(items); 0 means unbounded (config.MaxEntries < 0).
+	maxEntries int
+	closed     bool
+	done       chan struct{}
 	// wg tracks the janitor so Close returns only once it has exited — no
 	// goroutine outlives the cache.
 	wg sync.WaitGroup
@@ -41,10 +43,11 @@ type memoryCache struct {
 // is the default backend and lets an app run with no Redis. It is per-instance:
 // entries are not shared across replicas, so use the Redis backend when a
 // distributed cache is required.
-func NewInMemory(config.CacheConfig) (Cache, error) {
+func NewInMemory(cfg config.CacheConfig) (Cache, error) {
 	c := &memoryCache{
-		items: make(map[string]memoryEntry),
-		done:  make(chan struct{}),
+		items:      make(map[string]memoryEntry),
+		maxEntries: maxEntries(cfg.MaxEntries),
+		done:       make(chan struct{}),
 	}
 	c.wg.Add(1)
 	go c.janitor()
@@ -88,6 +91,12 @@ func (c *memoryCache) Get(_ context.Context, key string) ([]byte, error) {
 }
 
 func (c *memoryCache) Set(_ context.Context, key string, val []byte, ttl time.Duration) error {
+	if ttl < 0 {
+		// A negative ttl used to persist the entry forever, the opposite of
+		// what a caller computing "expires_at - now" on an already-expired value
+		// meant; refuse it loudly instead.
+		return apperr.New(apperr.CatInvalidArgument, "cache: negative ttl")
+	}
 	e := memoryEntry{val: bytes.Clone(val)} // copy so a later caller mutation can't reach the store
 	if ttl > 0 {
 		e.expiresAt = time.Now().Add(ttl)
@@ -97,9 +106,48 @@ func (c *memoryCache) Set(_ context.Context, key string, val []byte, ttl time.Du
 		c.mu.Unlock()
 		return errMemoryClosed
 	}
+	if _, exists := c.items[key]; !exists && c.maxEntries > 0 && len(c.items) >= c.maxEntries {
+		c.evictOne()
+	}
 	c.items[key] = e
 	c.mu.Unlock()
 	return nil
+}
+
+// defaultMaxEntries applies when CacheConfig.MaxEntries is zero.
+const defaultMaxEntries = 100_000
+
+func maxEntries(configured int) int {
+	switch {
+	case configured == 0:
+		return defaultMaxEntries
+	case configured < 0:
+		return 0
+	default:
+		return configured
+	}
+}
+
+// evictOne frees a slot for a new key, with c.mu held: an expired entry if
+// the first few visited include one, otherwise an arbitrary entry (Go's map
+// iteration order is randomised, so this is random eviction, which keeps Set
+// O(1) and needs no per-entry bookkeeping).
+func (c *memoryCache) evictOne() {
+	now := time.Now()
+	victim, visited := "", 0
+	for k, e := range c.items {
+		if visited == 0 {
+			victim = k
+		}
+		if !e.expiresAt.IsZero() && now.After(e.expiresAt) {
+			victim = k
+			break
+		}
+		if visited++; visited == 8 {
+			break
+		}
+	}
+	delete(c.items, victim)
 }
 
 func (c *memoryCache) Del(_ context.Context, key string) error {

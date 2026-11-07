@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -138,3 +139,101 @@ func TestMemoryCacheUseAfterClose(t *testing.T) {
 		t.Fatalf("Del after Close = %v, want Unavailable", err)
 	}
 }
+
+// TestMemoryCacheIsBounded pins the entry cap on the default backend. The map
+// used to grow without limit, so a handler caching per-request-derived keys
+// (per user, per query string) let an unauthenticated client grow the heap
+// until OOM. A full cache evicts to admit a new key, an existing key is
+// updated in place without eviction, and the bound is observable through the
+// contract: at most MaxEntries of the written keys can still hit.
+func TestMemoryCacheIsBounded(t *testing.T) {
+	ctx := context.Background()
+	const limit = 100
+	c, err := cache.NewInMemory(config.CacheConfig{MaxEntries: limit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	for i := range 10 * limit {
+		if err := c.Set(ctx, "k"+itoa(i), []byte("v"), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hits := 0
+	for i := range 10 * limit {
+		if _, err := c.Get(ctx, "k"+itoa(i)); err == nil {
+			hits++
+		}
+	}
+	if hits > limit {
+		t.Fatalf("%d keys still cached, want <= %d: no eviction", hits, limit)
+	}
+	if hits == 0 {
+		t.Fatal("eviction removed everything, want the cache still useful")
+	}
+	// Overwriting a live key must not evict another one: 2 keys, limit 2.
+	small, _ := cache.NewInMemory(config.CacheConfig{MaxEntries: 2})
+	t.Cleanup(func() { _ = small.Close() })
+	_ = small.Set(ctx, "a", []byte("1"), 0)
+	_ = small.Set(ctx, "b", []byte("1"), 0)
+	_ = small.Set(ctx, "a", []byte("2"), 0)
+	for _, k := range []string{"a", "b"} {
+		if _, err := small.Get(ctx, k); err != nil {
+			t.Fatalf("%q evicted by an in-place update: %v", k, err)
+		}
+	}
+}
+
+// TestMemoryCacheEvictsExpiredFirst pins the eviction preference: a full
+// cache holding expired entries drops those before any live one.
+func TestMemoryCacheEvictsExpiredFirst(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		c, _ := cache.NewInMemory(config.CacheConfig{MaxEntries: 2})
+		defer func() { _ = c.Close() }()
+		_ = c.Set(ctx, "live", []byte("v"), 0)
+		_ = c.Set(ctx, "stale", []byte("v"), time.Second)
+		time.Sleep(2 * time.Second) // under the janitor's minute: still in the map
+		if err := c.Set(ctx, "new", []byte("v"), 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Get(ctx, "live"); err != nil {
+			t.Fatalf("live entry evicted while an expired one was available: %v", err)
+		}
+	})
+}
+
+// TestMemoryCacheRejectsNegativeTTL pins that a negative ttl is refused rather
+// than stored forever: ttl <= 0 used to mean "persist", so a caller computing
+// expires_at - now on an already-expired value cached it permanently.
+func TestMemoryCacheRejectsNegativeTTL(t *testing.T) {
+	ctx := context.Background()
+	c, _ := cache.NewInMemory(config.CacheConfig{})
+	t.Cleanup(func() { _ = c.Close() })
+	err := c.Set(ctx, "k", []byte("v"), -time.Second)
+	if !apperr.Is(err, apperr.CatInvalidArgument) {
+		t.Fatalf("Set with negative ttl = %v, want InvalidArgument", err)
+	}
+	if _, err := c.Get(ctx, "k"); !errors.Is(err, cache.ErrCacheMiss) {
+		t.Fatalf("negative-ttl entry was stored: %v", err)
+	}
+}
+
+// TestMemoryCacheUnboundedOptIn pins the escape hatch: a negative MaxEntries
+// removes the bound (zero is the default, not "unbounded").
+func TestMemoryCacheUnboundedOptIn(t *testing.T) {
+	ctx := context.Background()
+	c, _ := cache.NewInMemory(config.CacheConfig{MaxEntries: -1})
+	t.Cleanup(func() { _ = c.Close() })
+	for i := range 1000 {
+		_ = c.Set(ctx, "k"+itoa(i), []byte("v"), 0)
+	}
+	for i := range 1000 {
+		if _, err := c.Get(ctx, "k"+itoa(i)); err != nil {
+			t.Fatalf("key %d evicted from an unbounded cache", i)
+		}
+	}
+}
+
+func itoa(i int) string { return strconv.Itoa(i) }

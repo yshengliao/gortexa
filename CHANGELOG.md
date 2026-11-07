@@ -13,6 +13,13 @@ touches it names the api version it needs.
 
 ### Security
 
+- cache: the in-memory backend is bounded by `cache.max_entries` (default
+  100000; negative removes the bound). The default driver was an unbounded
+  map, so a handler caching per-request-derived keys let a client grow the
+  heap until OOM. A full cache evicts an existing entry (an expired one when
+  found among the first few visited, otherwise an arbitrary one) to admit a
+  new key; updating a live key never evicts. A negative TTL is refused as
+  `InvalidArgument` instead of storing the entry forever.
 - health: `Health.Watch` streams are also capped per client address (64;
   IPv6 keyed by its /64), under the existing global cap of 1024. Watch is
   unauthenticated and exempt from load shedding, so one source could fill

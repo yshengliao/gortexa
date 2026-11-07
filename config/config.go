@@ -94,6 +94,12 @@ type CacheConfig struct {
 	ReadTimeout  time.Duration `koanf:"read_timeout"`
 	WriteTimeout time.Duration `koanf:"write_timeout"`
 	PoolSize     int           `koanf:"pool_size"`
+	// MaxEntries bounds the memory driver. The default backend is per-process
+	// and used to grow without limit, so a handler caching per-request-derived
+	// keys (per user, per query) let a client grow the heap until OOM. When the
+	// cache is full a Set evicts an existing entry (expired ones first). Zero
+	// means the default (100000); a negative value removes the bound.
+	MaxEntries int `koanf:"max_entries"`
 }
 
 type MQConfig struct {
@@ -157,6 +163,7 @@ func defaults() map[string]any {
 		"db.max_conns":                      10,
 		"cache.driver":                      "memory", // in-memory default; "redis" opts in to a distributed cache
 		"cache.addr":                        "localhost:6379",
+		"cache.max_entries":                 100000,
 		"mq.driver":                         "nats",
 		"log.level":                         "info",
 		"log.format":                        "json",
