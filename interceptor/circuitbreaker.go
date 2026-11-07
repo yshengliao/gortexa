@@ -270,13 +270,18 @@ func classify(ctx context.Context, err error) outcome {
 	switch apperr.ToGRPCStatus(err).Code() {
 	case codes.Unavailable, codes.Internal, codes.DeadlineExceeded:
 		return outcomeFailure
-	case codes.Canceled, codes.InvalidArgument, codes.Unauthenticated, codes.PermissionDenied:
-		// Client fault — and the two stages inside the breaker (auth, validation)
-		// reject here without ever reaching the handler, so there is nothing to
-		// learn about the downstream from them.
-		return outcomeNeutral
 	default:
-		return outcomeSuccess
+		// Everything else is neutral. Client faults (Canceled, InvalidArgument,
+		// Unauthenticated, PermissionDenied) say nothing about the downstream;
+		// the two stages inside the breaker (auth, validation) reject there
+		// without reaching the handler. Codes the breaker has no model for
+		// (Aborted, ResourceExhausted, NotFound, Unknown, DataLoss, ...) used to
+		// count as success and reset the consecutive-failure counter, so an
+		// outage interleaved with ordinary NotFound lookups never opened the
+		// breaker. Note a plain error (no *apperr.Error, no status) resolves to
+		// Internal and therefore counts as a failure: handlers return client
+		// faults as *apperr.Error so the breaker and the client agree.
+		return outcomeNeutral
 	}
 }
 

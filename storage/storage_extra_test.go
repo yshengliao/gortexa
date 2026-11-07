@@ -61,9 +61,16 @@ func TestBuildPoolConfigTracerWiring(t *testing.T) {
 			},
 		},
 		{
-			name:   "typed-nil DBTracer does not panic",
+			// A typed-nil *DBTracer used to be wired into pgx as a non-nil
+			// interface (pgx only nil-checks the interface), so the first query
+			// dereferenced it and panicked; the pool was unusable from then on.
+			name:   "typed-nil DBTracer is dropped, not wired",
 			tracer: (*storage.DBTracer)(nil),
-			check:  func(t *testing.T, got pgx.QueryTracer) {},
+			check: func(t *testing.T, got pgx.QueryTracer) {
+				if got != nil {
+					t.Errorf("tracer = %T (typed nil), want nil interface", got)
+				}
+			},
 		},
 	}
 	for _, c := range cases {
