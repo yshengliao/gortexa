@@ -105,34 +105,56 @@ func isLoopback(host string) bool {
 // refresh replaces the set with a fresh fetch. On failure the old keys stay in
 // place: an issuer outage must not lock out tokens signed by known keys.
 func (ks *KeySet) refresh(ctx context.Context) error {
-	now := time.Now()
-	ks.attemptedAt = now
+	ks.mu.Lock()
+	ks.attemptedAt = time.Now()
+	ks.mu.Unlock()
+	return ks.fetchAndSwap(ctx)
+}
+
+// fetchAndSwap runs the fetch without holding ks.mu and installs the result
+// under it. The fetch is network I/O bounded only by jwksFetchTimeout, and a
+// refresh is triggered on the request path by any token naming an unknown kid
+// — something an unauthenticated caller can send once per jwksMinRefreshGap.
+// Holding the lock across it would stall every other verification on the
+// server for the duration whenever the issuer is slow, and would break the
+// promise that an issuer outage never locks out tokens signed by known keys.
+func (ks *KeySet) fetchAndSwap(ctx context.Context) error {
 	keys, err := ks.fetch(ctx)
 	if err != nil {
 		return err
 	}
-	ks.keys, ks.fetchedAt = keys, now
+	ks.mu.Lock()
+	ks.keys, ks.fetchedAt = keys, time.Now()
+	ks.mu.Unlock()
 	return nil
 }
 
-// key returns the key for kid, refreshing first when the set is stale or kid
-// is unknown, within the refresh rate limit. An empty kid is accepted only
-// while the set holds exactly one key.
+// key resolves kid, refreshing the set first when the kid is unknown or the
+// set is stale, subject to the refresh gap. While a refresh is in flight other
+// callers are served from the current set: the gap is claimed under the lock
+// before the fetch starts, so a burst of unknown kids costs one fetch, and a
+// known kid never waits on the network.
 func (ks *KeySet) key(ctx context.Context, kid string) (crypto.PublicKey, bool) {
 	ks.mu.Lock()
-	defer ks.mu.Unlock()
 	k, ok := ks.lookup(kid)
 	if ks.fetch == nil {
+		ks.mu.Unlock()
 		return k, ok
 	}
 	now := time.Now()
 	stale := now.Sub(ks.fetchedAt) >= jwksRefreshInterval
 	if (ok && !stale) || now.Sub(ks.attemptedAt) < jwksMinRefreshGap {
+		ks.mu.Unlock()
 		return k, ok
 	}
-	if err := ks.refresh(ctx); err != nil {
+	ks.attemptedAt = now // claim the gap before releasing the lock
+	ks.mu.Unlock()
+
+	if err := ks.fetchAndSwap(ctx); err != nil {
 		return k, ok
 	}
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
 	return ks.lookup(kid)
 }
 
