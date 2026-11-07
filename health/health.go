@@ -7,6 +7,8 @@ import (
 	"context"
 	"log/slog"
 	"maps"
+	"net"
+	"net/netip"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -16,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"github.com/yshengliao/gortexa/observability"
@@ -231,6 +234,10 @@ type grpcHealth struct {
 
 	// watchers counts live Watch streams, bounded by maxWatchers.
 	watchers atomic.Int64
+	// perPeer counts live Watch streams per client address, bounded by
+	// maxWatchersPerPeer, so one source cannot spend the whole global budget.
+	perPeerMu sync.Mutex
+	perPeer   map[string]int
 }
 
 func serving(s State) grpc_health_v1.HealthCheckResponse_ServingStatus {
@@ -277,12 +284,80 @@ const watchInterval = time.Second
 // so it engages only when an anonymous caller is hoarding streams.
 const maxWatchers = 1024
 
-func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {
+// maxWatchersPerPeer bounds the Watch streams one client address may hold.
+// The global cap alone is a lever against other clients: Watch is
+// unauthenticated and exempt from load shedding, so one source that fills the
+// 1024 slots and sits on them makes every later Watch fail with
+// ResourceExhausted, and a gRPC client using client-side health checking
+// treats that as the backend being down. A fleet of probers behind one NAT is
+// still far below this; only a hoarder reaches it. An IPv6 peer is keyed by
+// its /64, as the rate limiter does.
+const maxWatchersPerPeer = 64
+
+// acquireWatcher claims a slot under both caps for the stream's peer, or
+// reports which one refused. A stream with no network peer (an in-process
+// caller) is subject to the global cap only.
+func (g *grpcHealth) acquireWatcher(ctx context.Context) (release func(), err error) {
 	if g.watchers.Add(1) > maxWatchers {
 		g.watchers.Add(-1)
-		return status.Error(codes.ResourceExhausted, "too many health watchers")
+		return nil, status.Error(codes.ResourceExhausted, "too many health watchers")
 	}
-	defer g.watchers.Add(-1)
+	key, ok := watcherPeerKey(ctx)
+	if !ok {
+		return func() { g.watchers.Add(-1) }, nil
+	}
+	g.perPeerMu.Lock()
+	if g.perPeer == nil {
+		g.perPeer = map[string]int{}
+	}
+	if g.perPeer[key] >= maxWatchersPerPeer {
+		g.perPeerMu.Unlock()
+		g.watchers.Add(-1)
+		return nil, status.Error(codes.ResourceExhausted, "too many health watchers from this client")
+	}
+	g.perPeer[key]++
+	g.perPeerMu.Unlock()
+	return func() {
+		g.perPeerMu.Lock()
+		if g.perPeer[key] <= 1 {
+			delete(g.perPeer, key) // never grows past the set of live peers
+		} else {
+			g.perPeer[key]--
+		}
+		g.perPeerMu.Unlock()
+		g.watchers.Add(-1)
+	}, nil
+}
+
+// watcherPeerKey derives the per-peer key from the stream's network peer: the
+// host without its ephemeral port (so reconnecting does not mint a new key),
+// IPv6 aggregated to its /64. ok is false when there is no network peer.
+func watcherPeerKey(ctx context.Context) (key string, ok bool) {
+	p, found := peer.FromContext(ctx)
+	if !found || p.Addr == nil {
+		return "", false
+	}
+	host := p.Addr.String()
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	a, err := netip.ParseAddr(host)
+	if err != nil {
+		return host, true
+	}
+	a = a.Unmap()
+	if a.Is4() {
+		return a.String(), true
+	}
+	return netip.PrefixFrom(a.WithZone(""), 64).Masked().String(), true
+}
+
+func (g *grpcHealth) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {
+	release, err := g.acquireWatcher(stream.Context())
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	service := req.GetService()
 	// -1 is an impossible ServingStatus, so the first evaluation always sends.
