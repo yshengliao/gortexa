@@ -41,8 +41,14 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr              string        `koanf:"addr"`
-	ShutdownTimeout   time.Duration `koanf:"shutdown_timeout"`
+	Addr            string        `koanf:"addr"`
+	ShutdownTimeout time.Duration `koanf:"shutdown_timeout"`
+	// ShutdownDelay is how long Shutdown keeps the listener open, answering
+	// /readyz with 503 and gRPC health with NOT_SERVING, before closing it. A
+	// load balancer that has not yet observed the readiness flip keeps routing
+	// new connections for one probe period; without the delay those were
+	// refused. Zero (default) keeps the previous behaviour.
+	ShutdownDelay     time.Duration `koanf:"shutdown_delay"`
 	ReadTimeout       time.Duration `koanf:"read_timeout"`
 	WriteTimeout      time.Duration `koanf:"write_timeout"`
 	IdleTimeout       time.Duration `koanf:"idle_timeout"`
@@ -145,6 +151,7 @@ func defaults() map[string]any {
 	return map[string]any{
 		"server.addr":             ":8080",
 		"server.shutdown_timeout": "20s",
+		"server.shutdown_delay":   "0s",
 		// read_timeout and write_timeout are 0 (disabled): the single h2c server
 		// multiplexes long-lived HTTP/2 streams and both deadlines are armed
 		// per-stream. write_timeout would kill a server-stream (Health.Watch) or
