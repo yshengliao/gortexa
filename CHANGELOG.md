@@ -11,6 +11,22 @@ touches it names the api version it needs.
 
 ## [Unreleased]
 
+### Security
+
+- Dependencies: `golang.org/x/net` v0.62.0 in the root module (GO-2026-6866,
+  GO-2026-6860; `html` package, not reachable from gortexa). The `tools/`
+  module moves to `golang.org/x/net` v0.62.0, `github.com/klauspost/compress`
+  v1.20.3 and `golang.org/x/vuln` v1.9.0, closing 13 advisories that were
+  reachable from the pinned dev tools (GO-2026-6617 HTTP/2 HPACK race,
+  GO-2026-6865, and the Go 1.27.0/1.27.1 stdlib set). `tools/go.mod` now
+  carries `toolchain go1.27.3` like the root module, so the dev tools build on
+  the patched standard library (GO-2026-6809, GO-2026-6617). `api/go.mod` is
+  left untouched: any change there is an api release, and the module has no
+  reachable stdlib exposure.
+- `make vuln` now also scans the `api/` module and the pinned tool binaries in
+  `tools/` (`govulncheck tool`); previously only the root module was covered,
+  which is why the tools advisories above went unnoticed by CI.
+
 ## [0.28.4] - 2026-11-04
 
 ### Breaking
