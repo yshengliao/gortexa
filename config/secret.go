@@ -30,5 +30,10 @@ func (s Secret) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + secretMask + `"`), nil
 }
 
+// MarshalText masks the value for encoders that consult encoding.TextMarshaler
+// rather than fmt.Stringer (yaml.v3, encoding/xml, encoding/csv): dumping a
+// Config through any of them must not reveal the raw value.
+func (s Secret) MarshalText() ([]byte, error) { return []byte(s.String()), nil }
+
 // Reveal returns the underlying secret value.
 func (s Secret) Reveal() string { return string(s) }

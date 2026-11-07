@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -140,7 +141,10 @@ type Bridge struct {
 
 	// allowedOrigins gates browser access for DNS-rebinding protection (MCP
 	// Streamable HTTP): a browser request's Origin must be on this list.
-	allowedOrigins map[string]struct{}
+	// Swapped atomically so SetAllowedOrigins is safe while serving (a
+	// consumer reloading CORS origins after Run) and a request never sees a
+	// half-filled map.
+	allowedOrigins atomic.Pointer[map[string]struct{}]
 
 	// log records the denials that otherwise leave no trace: a rejected Origin
 	// is an attempted DNS-rebinding, and an over-cap batch is an attempted
@@ -232,13 +236,14 @@ type rpcError struct {
 // protection, letting any website drive the MCP endpoint through a victim's
 // browser. To permit a browser origin, list it explicitly.
 func (b *Bridge) SetAllowedOrigins(origins []string) {
-	b.allowedOrigins = make(map[string]struct{}, len(origins))
+	set := make(map[string]struct{}, len(origins))
 	for _, o := range origins {
 		if o == "*" {
 			continue
 		}
-		b.allowedOrigins[o] = struct{}{}
+		set[o] = struct{}{}
 	}
+	b.allowedOrigins.Store(&set)
 }
 
 // originAllowed implements the DNS-rebinding guard: absent Origin (non-browser)
@@ -247,7 +252,11 @@ func (b *Bridge) originAllowed(origin string) bool {
 	if origin == "" {
 		return true
 	}
-	_, ok := b.allowedOrigins[origin]
+	set := b.allowedOrigins.Load()
+	if set == nil {
+		return false
+	}
+	_, ok := (*set)[origin]
 	return ok
 }
 

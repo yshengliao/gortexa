@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"reflect"
 	"strings"
@@ -255,6 +256,7 @@ func BuildUnvalidated(opts ...Option) (*Config, error) {
 				// slice.
 				stringToTrimmedSlice(),
 				rejectBareNumericDuration(),
+				rejectIntOverflow(),
 			),
 		},
 	}); err != nil {
@@ -299,6 +301,50 @@ func rejectBareNumericDuration() mapstructure.DecodeHookFuncType {
 			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 			reflect.Float32, reflect.Float64:
 			return nil, fmt.Errorf("duration must be a string like \"30s\", not the bare number %v (a bare number would be read as nanoseconds)", data)
+		}
+		return data, nil
+	}
+}
+
+// rejectIntOverflow fails a YAML integer that does not fit the target's sized
+// integer field. mapstructure converts int→int32 with a plain SetInt, so
+// `db.max_conns: 4294967306` silently became 10 and 4294967296 became 0 — a
+// misconfiguration that ran degraded with no error. (Env and dotenv values are
+// strings and already fail on overflow through strconv.)
+func rejectIntOverflow() mapstructure.DecodeHookFuncType {
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		var bits int
+		switch to.Kind() {
+		case reflect.Int8, reflect.Uint8:
+			bits = 8
+		case reflect.Int16, reflect.Uint16:
+			bits = 16
+		case reflect.Int32, reflect.Uint32:
+			bits = 32
+		default:
+			return data, nil
+		}
+		v := reflect.ValueOf(data)
+		var lo, hi float64
+		switch to.Kind() {
+		case reflect.Int8, reflect.Int16, reflect.Int32:
+			lo, hi = -math.Exp2(float64(bits-1)), math.Exp2(float64(bits-1))-1
+		default:
+			lo, hi = 0, math.Exp2(float64(bits))-1
+		}
+		var f float64
+		switch from.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			f = float64(v.Int())
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			f = float64(v.Uint())
+		case reflect.Float32, reflect.Float64:
+			f = v.Float()
+		default:
+			return data, nil
+		}
+		if f < lo || f > hi {
+			return nil, fmt.Errorf("%v does not fit a %d-bit integer", data, bits)
 		}
 		return data, nil
 	}

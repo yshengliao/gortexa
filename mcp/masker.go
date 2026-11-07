@@ -5,7 +5,17 @@ import (
 	"strings"
 )
 
-var defaultMaskFields = []string{"password", "token", "secret", "authorization", "api_key"}
+// defaultMaskFields is the floor every MaskSecrets call applies. Matching is
+// exact after normalizeKey, so the common spellings have to be listed: the
+// floor used to hold the five bare names and left accessToken, clientSecret,
+// privateKey, apiToken, cookie and friends in cleartext telemetry.
+var defaultMaskFields = []string{
+	"password", "password_hash", "passwd",
+	"token", "access_token", "refresh_token", "id_token", "api_token", "bearer",
+	"secret", "client_secret", "secret_key", "private_key",
+	"authorization", "api_key", "apikey", "x_api_key",
+	"cookie", "set_cookie", "credentials", "credential", "session_id",
+}
 
 // MaskSecrets recursively redacts configured JSON object keys. Input that is
 // not valid JSON (or a bare string/number/bool root, which could itself be a
@@ -46,9 +56,10 @@ func MaskSecrets(raw string, maskFields []string) string {
 
 // normalizeKey folds a field name for comparison so a mask field written in
 // snake_case ("api_key") also matches the camelCase key protojson emits
-// ("apiKey"): lowercase, then drop underscores.
+// ("apiKey") and a hyphenated json_name or header-style key ("api-key",
+// "x-api-key"): lowercase, then drop underscores and hyphens.
 func normalizeKey(s string) string {
-	return strings.ReplaceAll(strings.ToLower(s), "_", "")
+	return strings.NewReplacer("_", "", "-", "").Replace(strings.ToLower(s))
 }
 
 func maskSet(fields []string) map[string]struct{} {

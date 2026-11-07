@@ -13,6 +13,18 @@ touches it names the api version it needs.
 
 ### Security
 
+- config: a YAML integer that does not fit the target's sized integer field
+  fails loading instead of being truncated (`db.max_conns: 4294967306` used
+  to become 10 silently). `Secret` implements `encoding.TextMarshaler`, so
+  yaml.v3, encoding/xml and encoding/csv emit the mask, not the raw value.
+- MCP: `SetAllowedOrigins` swaps the browser-origin allowlist atomically; a
+  reload after `Run` was a data race against every request and briefly
+  rejected all browser origins. The default mask floor for
+  `genai_capture_content` now covers the common spellings (access / refresh /
+  id / api token, client secret, secret / private key, cookie, credentials,
+  session id, password hash, x-api-key), and key folding also drops hyphens.
+- cli: `gortexa create` no longer echoes `--repo` with embedded credentials
+  to the console.
 - apperr: the caller-provided message that `InvalidArgument` and
   `Unauthenticated` forward is capped at 4 KiB (rune-safe, marked). A handler
   embedding a request field in the message otherwise reflected an arbitrarily
