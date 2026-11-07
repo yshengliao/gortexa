@@ -13,6 +13,13 @@ touches it names the api version it needs.
 
 ### Security
 
+- auth: the JWKS refresh no longer runs under the key-set lock. A token
+  naming an unknown kid triggers a refresh on the request path (once per 30s
+  gap), and the HTTP fetch, bounded only by its 5s timeout, used to hold the
+  mutex every other verification needs, so a slow issuer stalled all token
+  checks, including those signed by known keys. The refresh gap is claimed
+  under the lock, the fetch runs outside it, and concurrent callers are
+  served from the current set meanwhile.
 - kernel: external gRPC streams on the h2c port now have a first-message
   deadline (`server.grpc_first_message_timeout`, default 30s; negative
   disables). grpc-go's ServeHTTP mode reads the request message before the
