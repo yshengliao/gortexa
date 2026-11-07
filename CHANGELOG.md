@@ -13,6 +13,13 @@ touches it names the api version it needs.
 
 ### Security
 
+- health: `Health.Watch` streams are also capped per client address (64;
+  IPv6 keyed by its /64), under the existing global cap of 1024. Watch is
+  unauthenticated and exempt from load shedding, so one source could fill
+  every slot and sit on it, after which every other client's Watch failed
+  with `ResourceExhausted` — which a gRPC client using client-side health
+  checking reads as the backend being down. A stream with no network peer
+  (an in-process caller) is subject to the global cap only.
 - MCP: a JSON-RPC batch serves `tools/list` and `initialize` at most once
   each (further copies get a `-32600` element). Both are answered without
   Invoke, so the interceptor chain never governed them, and `tools/list`
