@@ -270,6 +270,20 @@ func newResource(ctx context.Context, service, version string) (*resource.Resour
 
 // SetupTracing installs the global tracer provider. With no OTLP endpoint it
 // installs a no-op provider and a no-op shutdown.
+// maxSpanAttributeValueBytes bounds every string attribute the SDK retains.
+// Several attributes copy client-controlled strings (the MCP request id, the
+// masked tool arguments under genai_capture_content), and a remote parent
+// with the sampled flag is always sampled under ParentBased, so without a
+// limit an unauthenticated caller sized the spans the batch processor holds
+// until export (up to 2048 of them).
+const maxSpanAttributeValueBytes = 4096
+
+func spanLimits() sdktrace.SpanLimits {
+	l := sdktrace.NewSpanLimits()
+	l.AttributeValueLengthLimit = maxSpanAttributeValueBytes
+	return l
+}
+
 func SetupTracing(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, error) {
 	installErrorHandler()
 	// Propagate W3C trace context and baggage across services and the in-process
@@ -294,6 +308,7 @@ func SetupTracing(ctx context.Context, cfg config.ObservConfig) (ShutdownFunc, e
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(clampRatio(cfg.SampleRatio)))),
+		sdktrace.WithRawSpanLimits(spanLimits()),
 	)
 	otel.SetTracerProvider(tp)
 	return tp.Shutdown, nil

@@ -13,6 +13,15 @@ touches it names the api version it needs.
 
 ### Security
 
+- MCP: a JSON-RPC batch serves `tools/list` and `initialize` at most once
+  each (further copies get a `-32600` element). Both are answered without
+  Invoke, so the interceptor chain never governed them, and `tools/list`
+  returns the whole catalogue: a batch of 100 was a ~45x unauthenticated
+  response amplifier that re-marshalled every schema per element. The
+  `tools/list` result is now serialized once. A string `id` longer than 256
+  bytes is rejected like a numeric id longer than 32 characters, since the
+  id is echoed and copied into a span attribute before the chain runs; the
+  tracer provider also caps span attribute values at 4 KiB.
 - interceptor: the validation cause the Logger records is bounded. The
   client-facing message was already capped at 10 violations / 512 bytes, but
   the full `*protovalidate.ValidationError` was still wrapped as the cause and
