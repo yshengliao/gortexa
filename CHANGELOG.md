@@ -11,6 +11,8 @@ touches it names the api version it needs.
 
 ## [Unreleased]
 
+## [0.28.5] - 2026-11-07
+
 ### Security
 
 - cache: the in-memory backend is bounded by `cache.max_entries` (default
