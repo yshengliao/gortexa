@@ -13,6 +13,15 @@ touches it names the api version it needs.
 
 ### Security
 
+- kernel: external gRPC streams on the h2c port now have a first-message
+  deadline (`server.grpc_first_message_timeout`, default 30s; negative
+  disables). grpc-go's ServeHTTP mode reads the request message before the
+  interceptor chain runs, so a client that sent HEADERS and nothing else held a
+  handler goroutine that load shedding, rate limiting and auth never saw and
+  that no server timeout ended (`read_timeout` is disabled by design,
+  `idle_timeout` only fires on a stream-less connection). The deadline is
+  cleared on the first body read, so slow bodies and long-lived streams are
+  unaffected. The per-connection HTTP/2 stream budget is pinned to 250.
 - Dependencies: `golang.org/x/net` v0.62.0 in the root module (GO-2026-6866,
   GO-2026-6860; `html` package, not reachable from gortexa). The `tools/`
   module moves to `golang.org/x/net` v0.62.0, `github.com/klauspost/compress`

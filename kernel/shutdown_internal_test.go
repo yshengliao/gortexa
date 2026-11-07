@@ -47,6 +47,37 @@ func TestNewDefaultServerTimeouts(t *testing.T) {
 	if app.httpSrv.ReadHeaderTimeout != 5*time.Second {
 		t.Fatalf("default ReadHeaderTimeout = %v, want 5s", app.httpSrv.ReadHeaderTimeout)
 	}
+	// The per-connection stream budget is the only ceiling on parked gRPC
+	// streams besides the first-message deadline, so it is pinned, not
+	// inherited from the stdlib default.
+	if app.httpSrv.HTTP2 == nil || app.httpSrv.HTTP2.MaxConcurrentStreams != maxConcurrentStreamsPerConn {
+		t.Fatalf("HTTP2 config = %+v, want MaxConcurrentStreams pinned to %d", app.httpSrv.HTTP2, maxConcurrentStreamsPerConn)
+	}
+	if app.cfg.Server.GRPCFirstMessageTimeout != defaultGRPCFirstMessageTimeout {
+		t.Fatalf("default GRPCFirstMessageTimeout = %v, want %v", app.cfg.Server.GRPCFirstMessageTimeout, defaultGRPCFirstMessageTimeout)
+	}
+}
+
+// TestFirstMessageTimeoutMapping pins the config contract: zero is the default
+// (a config literal that only sets ShutdownTimeout must still be protected),
+// negative disables, positive is taken as-is.
+func TestFirstMessageTimeoutMapping(t *testing.T) {
+	cases := map[time.Duration]time.Duration{
+		0:               -0 + defaultGRPCFirstMessageTimeout,
+		-1:              0,
+		-time.Hour:      0,
+		time.Second:     time.Second,
+		5 * time.Minute: 5 * time.Minute,
+		time.Nanosecond: time.Nanosecond,
+	}
+	for in, want := range cases {
+		if got := firstMessageTimeout(in); got != want {
+			t.Errorf("firstMessageTimeout(%v) = %v, want %v", in, got, want)
+		}
+	}
+	if h := http.NewServeMux(); withFirstMessageDeadline(h, 0) != http.Handler(h) {
+		t.Error("a disabled deadline must return the handler unchanged")
+	}
 }
 
 // A Shutdown issued before serve() must be safe and make a subsequent serve()

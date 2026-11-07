@@ -102,3 +102,14 @@ func TestSecretMasking(t *testing.T) {
 		t.Errorf("Reveal should return raw value")
 	}
 }
+
+// The gRPC first-message deadline ships enabled: a built config carries the
+// 30s default so the h2c port is protected without any operator action.
+func TestDefaultGRPCFirstMessageTimeout(t *testing.T) {
+	cfg := config.MustBuild(config.WithEnviron(func() []string {
+		return []string{"GORTEXA_AUTH__JWT_SECRET=" + validSecret}
+	}))
+	if cfg.Server.GRPCFirstMessageTimeout != 30*time.Second {
+		t.Fatalf("server.grpc_first_message_timeout default = %v, want 30s", cfg.Server.GRPCFirstMessageTimeout)
+	}
+}

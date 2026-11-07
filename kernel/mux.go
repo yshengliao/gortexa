@@ -1,9 +1,80 @@
 package kernel
 
 import (
+	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"time"
 )
+
+// firstMessageTimeout maps the config value to the deadline the gRPC branch
+// arms: zero means the default, negative disables.
+func firstMessageTimeout(d time.Duration) time.Duration {
+	switch {
+	case d == 0:
+		return defaultGRPCFirstMessageTimeout
+	case d < 0:
+		return 0
+	default:
+		return d
+	}
+}
+
+// withFirstMessageDeadline arms a read deadline on an external gRPC stream
+// that is cleared as soon as the first bytes of the request body arrive.
+//
+// grpc-go's ServeHTTP mode reads the request message before the interceptor
+// chain runs, so a client that sends HEADERS and then nothing holds a handler
+// goroutine (and an http2 stream) that load shedding, rate limiting and auth
+// never see. The h2c server runs with ReadTimeout disabled (it would reset
+// long-lived streams) and IdleTimeout only fires on a connection with no
+// streams, so nothing else ends such a stream. When the deadline expires the
+// http2 layer resets the stream; the body read fails and grpc-go tears the
+// stream down. d <= 0 returns next unchanged.
+func withFirstMessageDeadline(next http.Handler, d time.Duration) http.Handler {
+	if d <= 0 {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc := http.NewResponseController(w)
+		if err := rc.SetReadDeadline(time.Now().Add(d)); err != nil {
+			// A writer without deadline support (a test recorder, a wrapper
+			// that hides it): nothing to clear later either.
+			next.ServeHTTP(w, r)
+			return
+		}
+		body := &firstReadClears{ReadCloser: r.Body, clear: func() { _ = rc.SetReadDeadline(time.Time{}) }}
+		r.Body = body
+		// Clear on exit too: a handler that returns without reading (an
+		// unknown method, a rejected content-type) must not leave the timer
+		// armed against a stream the http2 layer is already closing.
+		defer body.clearOnce()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// firstReadClears is a request body that runs clear once, after the first
+// Read that returns data.
+type firstReadClears struct {
+	io.ReadCloser
+	clear   func()
+	cleared atomic.Bool
+}
+
+func (b *firstReadClears) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if n > 0 {
+		b.clearOnce()
+	}
+	return n, err
+}
+
+func (b *firstReadClears) clearOnce() {
+	if b.cleared.CompareAndSwap(false, true) {
+		b.clear()
+	}
+}
 
 // newMux builds the single-port dispatch handler (without the h2c wrapper, so
 // it is unit-testable). Decision order, cheapest checks first:

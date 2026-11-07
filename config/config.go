@@ -46,10 +46,20 @@ type ServerConfig struct {
 	WriteTimeout      time.Duration `koanf:"write_timeout"`
 	IdleTimeout       time.Duration `koanf:"idle_timeout"`
 	ReadHeaderTimeout time.Duration `koanf:"read_header_timeout"`
-	EnableCORS        bool          `koanf:"enable_cors"`
-	CORSOrigins       []string      `koanf:"cors_origins"`
-	OpenAPI           bool          `koanf:"openapi"`
-	Reflection        bool          `koanf:"reflection"`
+	// GRPCFirstMessageTimeout bounds how long an external gRPC stream on the
+	// h2c port may wait for the first bytes of its request message after
+	// HEADERS. grpc-go's ServeHTTP mode reads that message before any
+	// interceptor runs, so without this deadline a client can park streams
+	// that no stage of the chain (load shedding, rate limiting, auth) ever
+	// sees and that neither read_timeout (disabled) nor idle_timeout (fires
+	// only on a connection with no streams) ends. The deadline is cleared on
+	// the first successful read, so a slow body or a long-lived stream is not
+	// affected. Zero means the default (30s); a negative value disables it.
+	GRPCFirstMessageTimeout time.Duration `koanf:"grpc_first_message_timeout"`
+	EnableCORS              bool          `koanf:"enable_cors"`
+	CORSOrigins             []string      `koanf:"cors_origins"`
+	OpenAPI                 bool          `koanf:"openapi"`
+	Reflection              bool          `koanf:"reflection"`
 }
 
 type AuthConfig struct {
@@ -134,25 +144,26 @@ func defaults() map[string]any {
 		// MCP SSE mid-response; read_timeout would reset a slow
 		// client-streaming/bidi request whose body spans more than the window.
 		// read_header_timeout still bounds the header phase (slow-loris guard).
-		"server.read_timeout":        "0",
-		"server.write_timeout":       "0",
-		"server.idle_timeout":        "60s",
-		"server.read_header_timeout": "5s",
-		"server.enable_cors":         false,
-		"server.openapi":             true,
-		"server.reflection":          false,
-		"auth.issuer":                "gortexa",
-		"auth.ttl":                   "1h",
-		"db.max_conns":               10,
-		"cache.driver":               "memory", // in-memory default; "redis" opts in to a distributed cache
-		"cache.addr":                 "localhost:6379",
-		"mq.driver":                  "nats",
-		"log.level":                  "info",
-		"log.format":                 "json",
-		"observ.service_name":        "gortexa",
-		"observ.service_version":     "dev",
-		"observ.sample_ratio":        1.0,
-		"observ.genai_mask_fields":   []string{"password", "token", "secret", "authorization", "api_key"},
+		"server.read_timeout":               "0",
+		"server.write_timeout":              "0",
+		"server.idle_timeout":               "60s",
+		"server.read_header_timeout":        "5s",
+		"server.grpc_first_message_timeout": "30s",
+		"server.enable_cors":                false,
+		"server.openapi":                    true,
+		"server.reflection":                 false,
+		"auth.issuer":                       "gortexa",
+		"auth.ttl":                          "1h",
+		"db.max_conns":                      10,
+		"cache.driver":                      "memory", // in-memory default; "redis" opts in to a distributed cache
+		"cache.addr":                        "localhost:6379",
+		"mq.driver":                         "nats",
+		"log.level":                         "info",
+		"log.format":                        "json",
+		"observ.service_name":               "gortexa",
+		"observ.service_version":            "dev",
+		"observ.sample_ratio":               1.0,
+		"observ.genai_mask_fields":          []string{"password", "token", "secret", "authorization", "api_key"},
 	}
 }
 

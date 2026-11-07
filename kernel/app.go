@@ -31,6 +31,15 @@ import (
 
 const loopbackBufSize = 1024 * 1024
 
+// defaultGRPCFirstMessageTimeout is applied when ServerConfig leaves
+// GRPCFirstMessageTimeout at zero; see config.ServerConfig.
+const defaultGRPCFirstMessageTimeout = 30 * time.Second
+
+// maxConcurrentStreamsPerConn pins http.HTTP2Config.MaxConcurrentStreams on
+// the main port to the stdlib default, so a future default change cannot
+// silently widen the per-connection stream budget.
+const maxConcurrentStreamsPerConn = 250
+
 // App is Gortexa's composition root and lifecycle owner. It holds the gRPC
 // server (built with the interceptor chain + StatsHandler), the optional HTTP
 // gateway and MCP handlers, and a health registry, and serves them all on one
@@ -172,10 +181,11 @@ func New(opts ...Option) (*App, error) {
 			// HTTP/2) would reset a slow client-streaming/bidi request whose body
 			// spans more than the window. ReadHeaderTimeout still bounds the
 			// header phase, so slow-loris protection is retained.
-			ReadTimeout:       0,
-			WriteTimeout:      0,
-			IdleTimeout:       60 * time.Second,
-			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:             0,
+			WriteTimeout:            0,
+			IdleTimeout:             60 * time.Second,
+			ReadHeaderTimeout:       5 * time.Second,
+			GRPCFirstMessageTimeout: defaultGRPCFirstMessageTimeout,
 		}}
 	}
 	if ac.log == nil {
@@ -220,6 +230,10 @@ func New(opts ...Option) (*App, error) {
 		// Pinned rather than left at zero so a future stdlib default change
 		// cannot silently raise the header-count budget on the public port.
 		MaxHeaderValueCount: http.DefaultMaxHeaderValueCount,
+		// Likewise pinned: the per-connection stream budget is the only ceiling
+		// on how many gRPC streams one client can hold open on the shared port,
+		// and grpc-go's own MaxConcurrentStreams is inert in ServeHTTP mode.
+		HTTP2: &http.HTTP2Config{MaxConcurrentStreams: maxConcurrentStreamsPerConn},
 	}
 	// Build any secondary listeners (opt-in). Their http.Servers are allocated
 	// here (Handler known); serve() binds and serves them, Shutdown stops them.
@@ -330,7 +344,11 @@ func (a *App) Health() *health.Registry { return a.health }
 func (a *App) Logger() *slog.Logger { return a.log }
 
 func (a *App) handler() http.Handler {
-	mux := newMux(a.grpcSrv, a.mcp, a.gateway,
+	var grpcH http.Handler
+	if a.grpcSrv != nil {
+		grpcH = withFirstMessageDeadline(a.grpcSrv, firstMessageTimeout(a.cfg.Server.GRPCFirstMessageTimeout))
+	}
+	mux := newMux(grpcH, a.mcp, a.gateway,
 		http.HandlerFunc(a.handleHealthz),
 		http.HandlerFunc(a.handleReadyz),
 	)
