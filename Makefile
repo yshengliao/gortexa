@@ -77,6 +77,9 @@ vet:
 vuln:
 	govulncheck ./...
 	govulncheck -tags integration ./...
+	cd api && govulncheck ./...
+	# tools/ has no packages of its own: scan the pinned tool binaries' import graphs.
+	cd tools && govulncheck tool
 
 tidy:
 	$(GO) mod tidy
