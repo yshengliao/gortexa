@@ -100,7 +100,12 @@ func failValidation(ctx context.Context, gm *observability.GovernanceMetrics, me
 	if gm != nil {
 		gm.ValidationFails.Add(ctx, 1, metric.WithAttributes(attribute.String("method", method), attribute.String("field", field)))
 	}
-	return apperr.Wrap(apperr.CatInvalidArgument, message, err)
+	// The cause is the bounded rendering, not the *ValidationError: Logger
+	// writes the cause into the ERROR record in full, and ValidationError.Error()
+	// renders every violation, so wrapping the original would reinstate the
+	// per-element amplification server-side that boundedViolations removed
+	// client-side. The ValidationFails metric already carries the field.
+	return apperr.Wrap(apperr.CatInvalidArgument, message, errors.New(message))
 }
 
 // Validation enforces buf.validate rules, returning InvalidArgument on failure.
