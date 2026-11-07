@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -33,6 +34,21 @@ func LoggerStream(log *slog.Logger) grpc.StreamServerInterceptor {
 	}
 }
 
+// maxLoggedCauseBytes bounds the error.cause attribute. A cause is whatever a
+// handler or a driver wrapped, and some of those echo request values (a
+// protovalidate error renders one line per violation; a database error quotes
+// the offending literal), so an unbounded copy lets a caller size the server's
+// ERROR records. The head of the message is what identifies the fault.
+const maxLoggedCauseBytes = 2048
+
+// truncateUTF8 cuts s to at most n bytes on a rune boundary, marking the cut.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + "…(truncated)"
+}
+
 func logRPC(ctx context.Context, log *slog.Logger, method string, err error, dur time.Duration) {
 	if log == nil {
 		return
@@ -54,7 +70,7 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, err error, dur
 			attrs = append(attrs, "error.category", string(e.Category), "error.retryable", retryable, "error.msg", e.Msg)
 			// Server-side only: Recovery strips the cause before the client sees it.
 			if cause := errors.Unwrap(e); cause != nil {
-				attrs = append(attrs, "error.cause", cause.Error())
+				attrs = append(attrs, "error.cause", truncateUTF8(cause.Error(), maxLoggedCauseBytes))
 			}
 			for k, v := range e.Fields() {
 				attrs = append(attrs, k, v)

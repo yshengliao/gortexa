@@ -13,6 +13,13 @@ touches it names the api version it needs.
 
 ### Security
 
+- interceptor: the validation cause the Logger records is bounded. The
+  client-facing message was already capped at 10 violations / 512 bytes, but
+  the full `*protovalidate.ValidationError` was still wrapped as the cause and
+  rendered in the ERROR record one line per violation, so a request with a
+  large repeated field produced a multi-megabyte log line per request. The
+  cause is now the bounded rendering, and `error.cause` is truncated to 2 KiB
+  for any wrapped error.
 - auth: the JWKS refresh no longer runs under the key-set lock. A token
   naming an unknown kid triggers a refresh on the request path (once per 30s
   gap), and the HTTP fetch, bounded only by its 5s timeout, used to hold the
