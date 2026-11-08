@@ -173,7 +173,7 @@ func TestReadyzSnapshotConsistent(t *testing.T) {
 	app.health.Register("degraded-dep", func(context.Context) health.State { return health.Degraded })
 
 	rec := httptest.NewRecorder()
-	app.handleReadyz(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	app.handleReadyzDetailed(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("readyz code = %d, want 200 (degraded still serves)", rec.Code)

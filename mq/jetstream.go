@@ -35,6 +35,19 @@ const jsMaxDeliver = 10
 // AckWait with its first step and redeliver any handler slower than 1s.
 var jsNakBackoff = []time.Duration{time.Second, 5 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute}
 
+// jsAckWait is set explicitly on the consumer (it was the server default,
+// 30s, left implicit). A handler that outlives it has its message redelivered
+// while still running and, because Consume dispatches sequentially, processed
+// again right after the first attempt acks; deliver therefore signals
+// InProgress every jsAckWait/2 while the handler runs. A variable so tests can
+// shorten it.
+var jsAckWait = 30 * time.Second
+
+// jsHandlerTimeout bounds one handler invocation through its ctx. InProgress
+// keeps the server from redelivering a slow message, so without a ceiling a
+// hung handler would hold its ack-pending slot forever.
+const jsHandlerTimeout = 10 * time.Minute
+
 // jsClient implements Publisher and Subscriber on NATS JetStream. Relative to
 // the core-NATS client it adds durability: Publish blocks on the server's
 // PubAck, and a handler error triggers redelivery (at-least-once), so
@@ -110,16 +123,11 @@ func NewJetStream(cfg config.MQConfig) (Publisher, Subscriber, error) {
 // misuse as InvalidArgument instead of a permanent-but-retryable server
 // error.
 func validateJSTopic(topic string) error {
-	if err := validateTopic(topic); err != nil {
-		return err
-	}
-	for tok := range strings.SplitSeq(topic, ".") {
-		switch tok {
-		case "*", ">":
+	if err := ValidateLiteralTopic(topic); err != nil {
+		if strings.ContainsAny(topic, "*>") {
 			return apperr.New(apperr.CatInvalidArgument, "mq: wildcard topics are not supported by the jetstream driver (core nats only)")
-		case "":
-			return apperr.New(apperr.CatInvalidArgument, "mq: topic contains an empty token")
 		}
+		return err
 	}
 	return nil
 }
@@ -271,6 +279,7 @@ func (c *jsClient) Subscribe(ctx context.Context, topic string, h Handler) error
 		// stream carries more subjects than this topic.
 		FilterSubject: topic,
 		MaxDeliver:    jsMaxDeliver,
+		AckWait:       jsAckWait,
 	}
 	if c.groupID != "" {
 		// Load-balance: group members share one durable consumer; the server
@@ -336,12 +345,42 @@ func (c *jsClient) deliver(ctx context.Context, h Handler) jetstream.MessageHand
 		c.hwg.Add(1)
 		c.mu.Unlock()
 		defer c.hwg.Done()
-		if err := safeInvoke(ctx, msg.Subject(), h, messageFromWire(msg.Data(), msg.Headers())); err != nil {
+		hctx, cancel := context.WithTimeout(ctx, jsHandlerTimeout)
+		defer cancel()
+		stop := keepInProgress(hctx, msg)
+		err := safeInvoke(hctx, msg.Subject(), h, messageFromWire(msg.Data(), msg.Headers()))
+		stop()
+		if err != nil {
 			jsSettleFailed(msg, err)
 			return
 		}
 		_ = msg.Ack()
 	}
+}
+
+// keepInProgress extends the server's ack wait every jsAckWait/2 until stop
+// is called or ctx ends, so a handler slower than AckWait is not redelivered
+// mid-flight. Errors are ignored: a failed InProgress just means the server
+// redelivers as before.
+func keepInProgress(ctx context.Context, msg jetstream.Msg) (stop func()) {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		t := time.NewTicker(jsAckWait / 2)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				_ = msg.InProgress()
+			}
+		}
+	}()
+	return func() { close(done); <-finished }
 }
 
 // jsSettleFailed settles a delivery whose handler failed. InvalidArgument

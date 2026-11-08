@@ -70,7 +70,7 @@ func WithAdminListener(addr string) Option {
 func (a *App) adminHealthHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", a.handleHealthz)
-	mux.HandleFunc("/readyz", a.handleReadyz)
+	mux.HandleFunc("/readyz", a.handleReadyzDetailed)
 	return mux
 }
 

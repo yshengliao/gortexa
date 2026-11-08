@@ -130,6 +130,27 @@ func validateTopic(topic string) error {
 	return nil
 }
 
+// ValidateLiteralTopic reports whether topic names exactly one NATS subject:
+// non-empty, no whitespace, and no wildcard ("*", ">") or empty token. Use it
+// before building a topic from request data: a tenant id of ">" or "*" turns
+// "events."+tenant into a subscription to every tenant's stream, and "a.b"
+// crosses a token boundary. The core-NATS Subscribe deliberately accepts
+// wildcards (see the package doc); Publish and the jetstream driver never do.
+func ValidateLiteralTopic(topic string) error {
+	if err := validateTopic(topic); err != nil {
+		return err
+	}
+	for tok := range strings.SplitSeq(topic, ".") {
+		switch tok {
+		case "*", ">":
+			return apperr.New(apperr.CatInvalidArgument, "mq: topic contains a wildcard token")
+		case "":
+			return apperr.New(apperr.CatInvalidArgument, "mq: topic contains an empty token")
+		}
+	}
+	return nil
+}
+
 // Publisher publishes messages to a topic. Close honours ctx as a shutdown
 // budget: on expiry it returns early while the underlying teardown finishes in
 // the background (see closeWithin).

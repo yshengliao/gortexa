@@ -11,8 +11,28 @@ touches it names the api version it needs.
 
 ## [Unreleased]
 
+### Breaking
+
+- kernel: the public port's `/readyz` body is now `{"status": ...}` only. The
+  per-check inventory (`checks`, one entry per registered dependency with its
+  live state) is served solely by the admin listener's `/readyz`
+  (`kernel.WithAdminListener`); on the public port it listed every dependency
+  by name and live state to unauthenticated callers. The `readiness not
+  serving` log line still carries `checks`.
+
 ### Security
 
+- mq: `Publish` on both drivers (and every JetStream topic) rejects a topic
+  with a wildcard (`*`, `>`) or empty token as `InvalidArgument`; a topic
+  built from request data could otherwise widen a subject. The core-NATS
+  `Subscribe` deliberately still accepts wildcards. New
+  `mq.ValidateLiteralTopic` exposes the check for request-derived topics.
+- mq/jetstream: the consumer sets `AckWait` explicitly (30s) and the driver
+  extends it (`InProgress`) every 15s while the handler runs, so a slow handler
+  is not redelivered mid-flight and processed twice; the handler context is
+  cancelled after 10 minutes so a hung handler cannot hold its ack-pending
+  slot forever.
+- kernel: see Breaking for the public `/readyz` body.
 - config: a YAML integer that does not fit the target's sized integer field
   fails loading instead of being truncated (`db.max_conns: 4294967306` used
   to become 10 silently). `Secret` implements `encoding.TextMarshaler`, so
@@ -33,6 +53,15 @@ touches it names the api version it needs.
 - storage: a typed-nil `*DBTracer` passed to `BuildPoolConfig`/`NewPool` is
   dropped instead of being wired into pgx, where it passed the interface
   nil-check and panicked on the first query.
+
+### Added
+
+- config: `server.shutdown_delay` (`ServerConfig.ShutdownDelay`, default `0s`)
+  keeps the listener open, answering 503 / `NOT_SERVING`, between the
+  readiness flip and the listener close, so load balancers observe the flip
+  before connections are refused. It runs before the drain, so
+  `shutdown_timeout` starts after it.
+- mq: `ValidateLiteralTopic`.
 
 ### Changed
 

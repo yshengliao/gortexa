@@ -372,7 +372,20 @@ func (a *App) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
+// handleReadyz serves the public port's readiness: the aggregate status only.
+// The per-check inventory (dependency names and their live state) is served
+// by the admin listener (handleReadyzDetailed); on the public port it told any
+// unauthenticated caller what the service depends on and when it was degraded.
 func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	a.serveReadyz(w, r, false)
+}
+
+// handleReadyzDetailed is the admin listener's /readyz: status plus checks.
+func (a *App) handleReadyzDetailed(w http.ResponseWriter, r *http.Request) {
+	a.serveReadyz(w, r, true)
+}
+
+func (a *App) serveReadyz(w http.ResponseWriter, r *http.Request, detailed bool) {
 	if a.health.Draining() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining"})
 		return
@@ -404,7 +417,11 @@ func (a *App) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	} else {
 		a.notReady.Store(false)
 	}
-	writeJSON(w, code, map[string]any{"status": overall.String(), "checks": checks})
+	body := map[string]any{"status": overall.String()}
+	if detailed {
+		body["checks"] = checks
+	}
+	writeJSON(w, code, body)
 }
 
 func writeJSON(w http.ResponseWriter, code int, body any) {
@@ -514,6 +531,16 @@ func (a *App) serve(ctx context.Context, ln net.Listener) error {
 func (a *App) Shutdown(ctx context.Context) error {
 	a.shutdownOnce.Do(func() {
 		a.health.Drain()
+		// Pre-stop grace: stay reachable (answering 503 / NOT_SERVING) long
+		// enough for load balancers to see the flip before the listener goes.
+		if d := a.cfg.Server.ShutdownDelay; d > 0 {
+			timer := time.NewTimer(d)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+			}
+		}
 		tctx := ctx
 		if a.cfg.Server.ShutdownTimeout > 0 {
 			var cancel context.CancelFunc

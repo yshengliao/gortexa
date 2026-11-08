@@ -145,7 +145,9 @@ func messageFromWire(data []byte, h nats.Header) Message {
 }
 
 func (c *natsClient) Publish(ctx context.Context, topic string, m Message) error {
-	if err := validateTopic(topic); err != nil {
+	// A publish to a wildcard subject is never intended; it only happens when
+	// the topic was built from untrusted input, and the broker would accept it.
+	if err := ValidateLiteralTopic(topic); err != nil {
 		return err
 	}
 	if err := checkReservedHeaders(m.Headers); err != nil {
