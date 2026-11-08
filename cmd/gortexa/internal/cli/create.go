@@ -83,7 +83,7 @@ func createProject(dest, module, repo, ref string) error {
 	if _, err := os.Stat(dest); err == nil {
 		return fmt.Errorf("destination %q already exists", dest)
 	}
-	fmt.Printf("==> cloning %s (%s) → %s\n", repo, ref, dest)
+	fmt.Printf("==> cloning %s (%s) → %s\n", redactURL(repo), ref, dest) // never echo an embedded token
 	// "--" ends option parsing so repo/dest can never be read as git flags.
 	if err := runCmd(".", "git", "clone", "--depth", "1", "--branch", ref, "--", repo, dest); err != nil {
 		return fmt.Errorf("clone layout: %w", err)

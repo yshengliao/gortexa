@@ -21,6 +21,14 @@ import (
 
 func newBridgeServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	_, ts := newBridgeAndServer(t)
+	return ts
+}
+
+// newBridgeAndServer is newBridgeServer that also hands back the Bridge, for
+// tests that reconfigure it while it serves.
+func newBridgeAndServer(t *testing.T) (*mcp.Bridge, *httptest.Server) {
+	t.Helper()
 	conn := testutil.NewTestServer(t, func(s *grpc.Server) {
 		resourcev1.RegisterResourceServiceServer(s, logic.NewResourceService())
 	})
@@ -34,7 +42,7 @@ func newBridgeServer(t *testing.T) *httptest.Server {
 	}
 	ts := httptest.NewServer(bridge.Handler())
 	t.Cleanup(ts.Close)
-	return ts
+	return bridge, ts
 }
 
 func rpc(t *testing.T, url, bearer string, payload map[string]any) map[string]any {
