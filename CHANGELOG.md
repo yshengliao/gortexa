@@ -13,6 +13,15 @@ touches it names the api version it needs.
 
 ## [0.28.5] - 2026-11-08
 
+Security patch release from the fifth independent review round: a
+dependency audit plus a code review of every package, with 6 P1 (Medium) and
+8 P2 (Low) findings fixed across #128–#138. Nothing in `api/` changed, so the
+api module stays at `api/v0.28.0`. Companion documentation shipped in
+gortexa-docs #27 (new limits and v0.28.5 pins), #28 (shutdown delay, readyz,
+mq topics, AckWait), #29 (build fix) and #30 (Deployment → Security notes for
+the informational findings). Follow-ups tracked as #140 (TLS for the redis
+cache driver) and #141 (optional `iat` validation).
+
 ### Breaking
 
 - kernel: the public port's `/readyz` body is now `{"status": ...}` only. The
@@ -20,7 +29,7 @@ touches it names the api version it needs.
   live state) is served solely by the admin listener's `/readyz`
   (`kernel.WithAdminListener`); on the public port it listed every dependency
   by name and live state to unauthenticated callers. The `readiness not
-  serving` log line still carries `checks`.
+  serving` log line still carries `checks`. (#138)
 
 ### Security
 
@@ -30,14 +39,14 @@ touches it names the api version it needs.
   heap until OOM. A full cache evicts an existing entry (an expired one when
   found among the first few visited, otherwise an arbitrary one) to admit a
   new key; updating a live key never evicts. A negative TTL is refused as
-  `InvalidArgument` instead of storing the entry forever.
+  `InvalidArgument` instead of storing the entry forever. (#134)
 - health: `Health.Watch` streams are also capped per client address (64;
   IPv6 keyed by its /64), under the existing global cap of 1024. Watch is
   unauthenticated and exempt from load shedding, so one source could fill
   every slot and sit on it, after which every other client's Watch failed
   with `ResourceExhausted` — which a gRPC client using client-side health
   checking reads as the backend being down. A stream with no network peer
-  (an in-process caller) is subject to the global cap only.
+  (an in-process caller) is subject to the global cap only. (#133)
 - MCP: a JSON-RPC batch serves `tools/list` and `initialize` at most once
   each (further copies get a `-32600` element). Both are answered without
   Invoke, so the interceptor chain never governed them, and `tools/list`
@@ -46,21 +55,21 @@ touches it names the api version it needs.
   `tools/list` result is now serialized once. A string `id` longer than 256
   bytes is rejected like a numeric id longer than 32 characters, since the
   id is echoed and copied into a span attribute before the chain runs; the
-  tracer provider also caps span attribute values at 4 KiB.
+  tracer provider also caps span attribute values at 4 KiB. (#132)
 - interceptor: the validation cause the Logger records is bounded. The
   client-facing message was already capped at 10 violations / 512 bytes, but
   the full `*protovalidate.ValidationError` was still wrapped as the cause and
   rendered in the ERROR record one line per violation, so a request with a
   large repeated field produced a multi-megabyte log line per request. The
   cause is now the bounded rendering, and `error.cause` is truncated to 2 KiB
-  for any wrapped error.
+  for any wrapped error. (#131)
 - auth: the JWKS refresh no longer runs under the key-set lock. A token
   naming an unknown kid triggers a refresh on the request path (once per 30s
   gap), and the HTTP fetch, bounded only by its 5s timeout, used to hold the
   mutex every other verification needs, so a slow issuer stalled all token
   checks, including those signed by known keys. The refresh gap is claimed
   under the lock, the fetch runs outside it, and concurrent callers are
-  served from the current set meanwhile.
+  served from the current set meanwhile. (#130)
 - kernel: external gRPC streams on the h2c port now have a first-message
   deadline (`server.grpc_first_message_timeout`, default 30s; negative
   disables). grpc-go's ServeHTTP mode reads the request message before the
@@ -69,7 +78,7 @@ touches it names the api version it needs.
   that no server timeout ended (`read_timeout` is disabled by design,
   `idle_timeout` only fires on a stream-less connection). The deadline is
   cleared on the first body read, so slow bodies and long-lived streams are
-  unaffected. The per-connection HTTP/2 stream budget is pinned to 250.
+  unaffected. The per-connection HTTP/2 stream budget is pinned to 250. (#129)
 - Dependencies: `golang.org/x/net` v0.62.0 in the root module (GO-2026-6866,
   GO-2026-6860; `html` package, not reachable from gortexa). The `tools/`
   module moves to `golang.org/x/net` v0.62.0, `github.com/klauspost/compress`
@@ -79,42 +88,41 @@ touches it names the api version it needs.
   carries `toolchain go1.27.3` like the root module, so the dev tools build on
   the patched standard library (GO-2026-6809, GO-2026-6617). `api/go.mod` is
   left untouched: any change there is an api release, and the module has no
-  reachable stdlib exposure.
+  reachable stdlib exposure. (#128)
 - `make vuln` now also scans the `api/` module and the pinned tool binaries in
   `tools/` (`govulncheck tool`); previously only the root module was covered,
-  which is why the tools advisories above went unnoticed by CI.
-
+  which is why the tools advisories above went unnoticed by CI. (#128)
 - mq: `Publish` on both drivers (and every JetStream topic) rejects a topic
   with a wildcard (`*`, `>`) or empty token as `InvalidArgument`; a topic
   built from request data could otherwise widen a subject. The core-NATS
   `Subscribe` deliberately still accepts wildcards. New
-  `mq.ValidateLiteralTopic` exposes the check for request-derived topics.
+  `mq.ValidateLiteralTopic` exposes the check for request-derived topics. (#138)
 - mq/jetstream: the consumer sets `AckWait` explicitly (30s) and the driver
   extends it (`InProgress`) every 15s while the handler runs, so a slow handler
   is not redelivered mid-flight and processed twice; the handler context is
   cancelled after 10 minutes so a hung handler cannot hold its ack-pending
-  slot forever.
+  slot forever. (#138)
 - kernel: see Breaking for the public `/readyz` body.
 - config: a YAML integer that does not fit the target's sized integer field
   fails loading instead of being truncated (`db.max_conns: 4294967306` used
   to become 10 silently). `Secret` implements `encoding.TextMarshaler`, so
-  yaml.v3, encoding/xml and encoding/csv emit the mask, not the raw value.
+  yaml.v3, encoding/xml and encoding/csv emit the mask, not the raw value. (#137)
 - MCP: `SetAllowedOrigins` swaps the browser-origin allowlist atomically; a
   reload after `Run` was a data race against every request and briefly
   rejected all browser origins. The default mask floor for
   `genai_capture_content` now covers the common spellings (access / refresh /
   id / api token, client secret, secret / private key, cookie, credentials,
-  session id, password hash, x-api-key), and key folding also drops hyphens.
+  session id, password hash, x-api-key), and key folding also drops hyphens. (#137)
 - cli: `gortexa create` no longer echoes `--repo` with embedded credentials
-  to the console.
+  to the console. (#137)
 - apperr: the caller-provided message that `InvalidArgument` and
   `Unauthenticated` forward is capped at 4 KiB (rune-safe, marked). A handler
   embedding a request field in the message otherwise reflected an arbitrarily
   large value into the gRPC status trailer, the HTTP body and the MCP
-  envelope. Applies to `*apperr.Error` and to a forwarded downstream status.
+  envelope. Applies to `*apperr.Error` and to a forwarded downstream status. (#136)
 - storage: a typed-nil `*DBTracer` passed to `BuildPoolConfig`/`NewPool` is
   dropped instead of being wired into pgx, where it passed the interface
-  nil-check and panicked on the first query.
+  nil-check and panicked on the first query. (#136)
 
 ### Added
 
@@ -122,8 +130,8 @@ touches it names the api version it needs.
   keeps the listener open, answering 503 / `NOT_SERVING`, between the
   readiness flip and the listener close, so load balancers observe the flip
   before connections are refused. It runs before the drain, so
-  `shutdown_timeout` starts after it.
-- mq: `ValidateLiteralTopic`.
+  `shutdown_timeout` starts after it. (#138)
+- mq: `ValidateLiteralTopic`. (#138)
 
 ### Changed
 
@@ -131,7 +139,7 @@ touches it names the api version it needs.
   (`Aborted`, `ResourceExhausted`, `NotFound`, `Unknown`, `DataLoss`, …) as
   neutral instead of success, so they no longer reset the consecutive-failure
   counter and hide an outage. Failures remain `Unavailable`, `Internal` and
-  `DeadlineExceeded`; a plain `error` still resolves to `Internal` and counts.
+  `DeadlineExceeded`; a plain `error` still resolves to `Internal` and counts. (#136)
 
 ## [0.28.4] - 2026-11-04
 
