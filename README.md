@@ -4,7 +4,7 @@
 [![Docs](https://img.shields.io/badge/docs-gortexa.sheng.page-2563EB)](https://gortexa.sheng.page)
 [![Status](https://img.shields.io/badge/status-active-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![AI generated](https://img.shields.io/badge/AI%20generated-Fable%205.1%20%7C%20Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
+[![AI generated](https://img.shields.io/badge/AI%20generated-Mythos%205.1%20%7C%20Fable%205.1%20%7C%20Opus%204.8%20%7C%20Gemini%203.1%20Pro%20%7C%20Codex%205.5-8A2BE2)](#provenance)
 
 A contract-first, batteries-included **gRPC framework** for Go 1.27. Protobuf is
 the single source of truth; **one h2c port** multiplexes three protocols:
@@ -312,13 +312,14 @@ end-to-end large-body handling rather than any single hot path.
 
 ## Provenance
 
-Gortexa was built with AI-assisted development and hardened through **four
+Gortexa was built with AI-assisted development and hardened through **five
 independent model review rounds** — correctness, concurrency, security, and
 protocol conformance — with every actionable finding fixed and verified
 (`make build / vet / test -race / lint`):
 
 | Model | Role |
 |---|---|
+| **Claude Mythos 5.1** | Fifth review: dependency and code security audit for v0.28.5 — 14 P1/P2 hardening fixes (#128–#138), `make vuln` coverage of all three modules, and the bilingual security notes |
 | **Claude Fable 5.1** (succeeding Fable 5) | Fourth full-codebase review, hardening fixes and comprehensive test coverage; the v0.28 api-module split review, its release process, and the bilingual docs pipeline |
 | **Claude Opus 4.8** | Design, implementation, and consolidation |
 | **Gemini 3.1 Pro** (Jules) | Second independent review |
