@@ -11,6 +11,25 @@ touches it names the api version it needs.
 
 ## [Unreleased]
 
+### Security
+
+- apperr: the caller-provided message that `InvalidArgument` and
+  `Unauthenticated` forward is capped at 4 KiB (rune-safe, marked). A handler
+  embedding a request field in the message otherwise reflected an arbitrarily
+  large value into the gRPC status trailer, the HTTP body and the MCP
+  envelope. Applies to `*apperr.Error` and to a forwarded downstream status.
+- storage: a typed-nil `*DBTracer` passed to `BuildPoolConfig`/`NewPool` is
+  dropped instead of being wired into pgx, where it passed the interface
+  nil-check and panicked on the first query.
+
+### Changed
+
+- interceptor: the circuit breaker treats gRPC codes it has no model for
+  (`Aborted`, `ResourceExhausted`, `NotFound`, `Unknown`, `DataLoss`, …) as
+  neutral instead of success, so they no longer reset the consecutive-failure
+  counter and hide an outage. Failures remain `Unavailable`, `Internal` and
+  `DeadlineExceeded`; a plain `error` still resolves to `Internal` and counts.
+
 ## [0.28.5] - 2026-11-07
 
 ### Security

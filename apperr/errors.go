@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"strings"
 	"sync"
 
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -193,9 +194,32 @@ func (r *Registry) internal() Mapping {
 	return Mapping{CatInternal, codes.Internal, http.StatusInternalServerError, false, "internal error"}
 }
 
+// maxForwardedMessageBytes bounds the caller-provided message the two client
+// categories forward. A handler that embeds a request field in an
+// InvalidArgument message otherwise reflects an arbitrarily large value into
+// the gRPC status (a multi-MB grpc-message trailer most clients reject as a
+// transport error), the HTTP body and the MCP envelope; the head of the message
+// is what tells the caller what to fix.
+const maxForwardedMessageBytes = 4096
+
+// boundForwarded truncates s on a rune boundary (gRPC status strings must be
+// valid UTF-8) and marks the cut.
+func boundForwarded(s string) string {
+	if len(s) <= maxForwardedMessageBytes {
+		return s
+	}
+	return strings.ToValidUTF8(s[:maxForwardedMessageBytes], "") + "…(truncated)"
+}
+
 // resolve reduces any error to its mapping and the client-safe message to emit.
-// Internal (and any unrecognized error) yields only the SafeMessage.
+// Internal (and any unrecognized error) yields only the SafeMessage. A
+// forwarded caller message is bounded by maxForwardedMessageBytes.
 func (r *Registry) resolve(err error) (Mapping, string) {
+	m, msg := r.resolveUnbounded(err)
+	return m, boundForwarded(msg)
+}
+
+func (r *Registry) resolveUnbounded(err error) (Mapping, string) {
 	if err == nil {
 		m, _ := r.Lookup(CatInternal)
 		return m, ""
